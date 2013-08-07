@@ -38,7 +38,7 @@
 #include <linux/platform_data/tegra_usb.h>
 #include <linux/mfd/tps6586x.h>
 #include <linux/memblock.h>
-#include <linux/i2c/atmel_mxt_ts.h>
+/*#include <linux/i2c/atmel_mxt_ts.h>*/
 #include <linux/tegra_uart.h>
 #include <linux/antares_dock.h>
 #include <linux/interrupt.h>
@@ -589,7 +589,7 @@ static struct platform_device *antares_devices[] __initdata = {
 	&antares_audio_device,
 };
 
-
+#ifdef CONFIG_TOUCHSCREEN_ATMEL_MXT
 static struct mxt_platform_data atmel_mxt_info = {
 	.x_line		= 27,
 	.y_line		= 42,
@@ -609,25 +609,22 @@ static struct i2c_board_info __initdata i2c_info[] = {
 	 .platform_data = &atmel_mxt_info,
 	 },
 };
-
-static int __init antares_touch_init_atmel(void)
+#endif
+/*static int __init antares_touch_init_atmel(void)
 {
-	tegra_gpio_enable(TEGRA_GPIO_PV6);
-	tegra_gpio_enable(TEGRA_GPIO_PQ7);
+      tegra_gpio_enable(TEGRA_GPIO_PV6);
+      tegra_gpio_enable(TEGRA_GPIO_PQ7);
 
-	gpio_request(TEGRA_GPIO_PV6, "atmel-irq");
-	gpio_direction_input(TEGRA_GPIO_PV6);
+      gpio_request(TEGRA_GPIO_PV6, "atmel-irq");
+      gpio_direction_input(TEGRA_GPIO_PV6);
 
-	gpio_request(TEGRA_GPIO_PQ7, "atmel-reset");
-	gpio_direction_output(TEGRA_GPIO_PQ7, 0);
-	msleep(1);
-	gpio_set_value(TEGRA_GPIO_PQ7, 1);
-	msleep(100);
+      gpio_request(TEGRA_GPIO_PQ7, "atmel-reset");
+      gpio_direction_output(TEGRA_GPIO_PQ7, 0);
+      msleep(1);
+      gpio_set_value(TEGRA_GPIO_PQ7, 1);
+      msleep(100);
 
-	i2c_register_board_info(0, i2c_info, 1);
-
-	return 0;
-}
+      i2c_register_board_info(0, antares_i2c_bus1_touch_info, 1); */
 
 #ifdef CONFIG_TOUCHSCREEN_PANJIT_I2C
 static struct panjit_i2c_ts_platform_data panjit_data = {
@@ -648,10 +645,10 @@ static int __init antares_touch_init_panjit(void)
 
 	tegra_gpio_enable(TEGRA_GPIO_PQ7);
 	i2c_register_board_info(0, antares_i2c_bus1_touch_info, 1);
-
-	return 0;
-}
 #endif
+/*	return 0;
+} */
+
 
 #ifdef CONFIG_TOUCHSCREEN_ATMEL_MT_T9
 /* Atmel MaxTouch touchscreen              Driver data */
@@ -671,23 +668,23 @@ static u8 valid_interrupt(void)
 }
 
 static struct mxt_platform_data Atmel_mxt_info = {
-	/* Maximum number of simultaneous touches to report. */
-	.numtouch = 10,
-	// TODO: no need for any hw-specific things at init/exit?
-	.init_platform_hw = NULL,
-	.exit_platform_hw = NULL,
-	.max_x = 1366,
-	.max_y = 768,
-	.valid_interrupt = &valid_interrupt,
-	.read_chg = &read_chg,
+/* Maximum number of simultaneous touches to report. */
+       .numtouch = 10,
+// TODO: no need for any hw-specific things at init/exit?
+       .init_platform_hw = NULL,
+       .exit_platform_hw = NULL,
+       .max_x = 1279,
+       .max_y = 799,
+       .valid_interrupt = &valid_interrupt,
+       .read_chg = &read_chg,
 };
 
 static struct i2c_board_info __initdata i2c_info[] = {
-	{
-	 I2C_BOARD_INFO("maXTouch", MXT_I2C_ADDRESS),
-	 .irq = TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PV6),
-	 .platform_data = &Atmel_mxt_info,
-	 },
+{
+     I2C_BOARD_INFO("maXTouch", MXT_I2C_ADDRESS),
+     .irq = TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PV6),
+     .platform_data = &Atmel_mxt_info,
+   },
 };
 
 static int __init antares_touch_init_atmel(void)
@@ -911,9 +908,9 @@ static void __init tegra_antares_init(void)
 	if (BoardInfo.sku) {
 		pr_info("Initializing Atmel touch driver\n");
 		antares_touch_init_atmel();
-	} else {
+	/*} else {
 		pr_info("Initializing Panjit touch driver\n");
-		antares_touch_init_panjit();
+		antares_touch_init_panjit(); */
 	}
 #elif defined(CONFIG_TOUCHSCREEN_EGALAX_I2C)
 	pr_info("Initializing eGalax touch driver\n");
