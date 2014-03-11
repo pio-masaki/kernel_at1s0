@@ -25,9 +25,6 @@
 #ifndef _LOGGING_H_
 #define _LOGGING_H_
 
-#define LOWORD(dw) ((unsigned short)(dw))
-#define HIWORD(dw) ((unsigned short)(((unsigned int) (dw) >> 16) & 0xFFFF))
-
 /* #include <linux/init.h> */
 /* #include <linux/module.h> */
 

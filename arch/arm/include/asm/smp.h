@@ -33,7 +33,7 @@ struct seq_file;
 /*
  * generate IPI list text
  */
-extern void show_ipi_list(struct seq_file *, int);
+extern void show_ipi_list(struct seq_file *p);
 
 /*
  * Called from assembly code, this handles an IPI.
@@ -45,6 +45,10 @@ asmlinkage void do_IPI(int ipinr, struct pt_regs *regs);
  */
 extern void smp_init_cpus(void);
 
+/*
+ * Move global data into per-processor storage.
+ */
+extern void smp_store_cpu_info(unsigned int cpuid);
 
 /*
  * Raise an IPI cross call on CPUs in callmap.
@@ -67,11 +71,6 @@ asmlinkage void secondary_start_kernel(void);
  * Perform platform specific initialisation of the specified CPU.
  */
 extern void platform_secondary_init(unsigned int cpu);
-
-/*
- * Initialize cpu_possible map, and enable coherency
- */
-extern void platform_smp_prepare_cpus(unsigned int);
 
 /*
  * Initial data for bringing up a secondary CPU.
@@ -98,6 +97,6 @@ extern void arch_send_call_function_ipi_mask(const struct cpumask *mask);
 /*
  * show local interrupt info
  */
-extern void show_local_irqs(struct seq_file *, int);
+extern void show_local_irqs(struct seq_file *);
 
 #endif /* ifndef __ASM_ARM_SMP_H */

@@ -17,8 +17,8 @@
 
 #include <linux/debugfs.h>
 
-#include "bfad_drv.h"
-#include "bfad_im.h"
+#include <bfad_drv.h>
+#include <bfad_im.h>
 
 /*
  * BFA debufs interface
@@ -28,7 +28,7 @@
  * mount -t debugfs none /sys/kernel/debug
  *
  * BFA Hierarchy:
- *	- bfa/host#
+ * 	- bfa/host#
  * where the host number corresponds to the one under /sys/class/scsi_host/host#
  *
  * Debugging service available per host:
@@ -90,7 +90,7 @@ bfad_debugfs_open_fwtrc(struct inode *inode, struct file *file)
 	memset(fw_debug->debug_buffer, 0, fw_debug->buffer_len);
 
 	spin_lock_irqsave(&bfad->bfad_lock, flags);
-	rc = bfa_ioc_debug_fwtrc(&bfad->bfa.ioc,
+	rc = bfa_debug_fwtrc(&bfad->bfa,
 			fw_debug->debug_buffer,
 			&fw_debug->buffer_len);
 	spin_unlock_irqrestore(&bfad->bfad_lock, flags);
@@ -134,7 +134,7 @@ bfad_debugfs_open_fwsave(struct inode *inode, struct file *file)
 	memset(fw_debug->debug_buffer, 0, fw_debug->buffer_len);
 
 	spin_lock_irqsave(&bfad->bfad_lock, flags);
-	rc = bfa_ioc_debug_fwsave(&bfad->bfa.ioc,
+	rc = bfa_debug_fwsave(&bfad->bfa,
 			fw_debug->debug_buffer,
 			&fw_debug->buffer_len);
 	spin_unlock_irqrestore(&bfad->bfad_lock, flags);
@@ -208,7 +208,7 @@ bfad_debugfs_read(struct file *file, char __user *buf,
 	if (!debug || !debug->debug_buffer)
 		return 0;
 
-	return simple_read_from_buffer(buf, nbytes, pos,
+	return memory_read_from_buffer(buf, nbytes, pos,
 				debug->debug_buffer, debug->buffer_len);
 }
 
@@ -217,7 +217,7 @@ bfad_debugfs_read(struct file *file, char __user *buf,
 #define BFA_REG_ADDRSZ(__bfa)	\
 	((bfa_ioc_devid(&(__bfa)->ioc) == BFA_PCI_DEVICE_ID_CT) ?	\
 		BFA_REG_CT_ADDRSZ : BFA_REG_CB_ADDRSZ)
-#define BFA_REG_ADDRMSK(__bfa)  ((u32)(BFA_REG_ADDRSZ(__bfa) - 1))
+#define BFA_REG_ADDRMSK(__bfa)  ((uint32_t)(BFA_REG_ADDRSZ(__bfa) - 1))
 
 static bfa_status_t
 bfad_reg_offset_check(struct bfa_s *bfa, u32 offset, u32 len)
@@ -254,7 +254,7 @@ bfad_debugfs_read_regrd(struct file *file, char __user *buf,
 	if (!bfad->regdata)
 		return 0;
 
-	rc = simple_read_from_buffer(buf, nbytes, pos,
+	rc = memory_read_from_buffer(buf, nbytes, pos,
 			bfad->regdata, bfad->reglen);
 
 	if ((*pos + nbytes) >= bfad->reglen) {
@@ -279,31 +279,15 @@ bfad_debugfs_write_regrd(struct file *file, const char __user *buf,
 	u32 *regbuf;
 	void __iomem *rb, *reg_addr;
 	unsigned long flags;
-	void *kern_buf;
 
-	kern_buf = kzalloc(nbytes, GFP_KERNEL);
-
-	if (!kern_buf) {
-		printk(KERN_INFO "bfad[%d]: Failed to allocate buffer\n",
-				bfad->inst_no);
-		return -ENOMEM;
-	}
-
-	if (copy_from_user(kern_buf, (void  __user *)buf, nbytes)) {
-		kfree(kern_buf);
-		return -ENOMEM;
-	}
-
-	rc = sscanf(kern_buf, "%x:%x", &addr, &len);
+	rc = sscanf(buf, "%x:%x", &addr, &len);
 	if (rc < 2) {
 		printk(KERN_INFO
 			"bfad[%d]: %s failed to read user buf\n",
 			bfad->inst_no, __func__);
-		kfree(kern_buf);
 		return -EINVAL;
 	}
 
-	kfree(kern_buf);
 	kfree(bfad->regdata);
 	bfad->regdata = NULL;
 	bfad->reglen = 0;
@@ -334,7 +318,7 @@ bfad_debugfs_write_regrd(struct file *file, const char __user *buf,
 	regbuf =  (u32 *)bfad->regdata;
 	spin_lock_irqsave(&bfad->bfad_lock, flags);
 	for (i = 0; i < len; i++) {
-		*regbuf = readl(reg_addr);
+		*regbuf = bfa_reg_read(reg_addr);
 		regbuf++;
 		reg_addr += sizeof(u32);
 	}
@@ -355,30 +339,14 @@ bfad_debugfs_write_regwr(struct file *file, const char __user *buf,
 	int addr, val, rc;
 	void __iomem *reg_addr;
 	unsigned long flags;
-	void *kern_buf;
 
-	kern_buf = kzalloc(nbytes, GFP_KERNEL);
-
-	if (!kern_buf) {
-		printk(KERN_INFO "bfad[%d]: Failed to allocate buffer\n",
-				bfad->inst_no);
-		return -ENOMEM;
-	}
-
-	if (copy_from_user(kern_buf, (void  __user *)buf, nbytes)) {
-		kfree(kern_buf);
-		return -ENOMEM;
-	}
-
-	rc = sscanf(kern_buf, "%x:%x", &addr, &val);
+	rc = sscanf(buf, "%x:%x", &addr, &val);
 	if (rc < 2) {
 		printk(KERN_INFO
 			"bfad[%d]: %s failed to read user buf\n",
 			bfad->inst_no, __func__);
-		kfree(kern_buf);
 		return -EINVAL;
 	}
-	kfree(kern_buf);
 
 	addr &= BFA_REG_ADDRMSK(bfa); /* offset only 17 bit and word align */
 
@@ -391,9 +359,9 @@ bfad_debugfs_write_regwr(struct file *file, const char __user *buf,
 		return -EINVAL;
 	}
 
-	reg_addr = (bfa_ioc_bar0(ioc)) + addr;
+	reg_addr = (uint32_t *) ((uint8_t *) bfa_ioc_bar0(ioc) + addr);
 	spin_lock_irqsave(&bfad->bfad_lock, flags);
-	writel(val, reg_addr);
+	bfa_reg_write(reg_addr, val);
 	spin_unlock_irqrestore(&bfad->bfad_lock, flags);
 
 	return nbytes;

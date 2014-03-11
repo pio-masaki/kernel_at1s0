@@ -56,6 +56,7 @@ xfs_dir_ialloc(
 	mode_t		mode,
 	xfs_nlink_t	nlink,
 	xfs_dev_t	rdev,
+	cred_t		*credp,
 	prid_t		prid,		/* project id */
 	int		okalloc,	/* ok to allocate new space */
 	xfs_inode_t	**ipp,		/* pointer to inode; it will be
@@ -92,7 +93,7 @@ xfs_dir_ialloc(
 	 * transaction commit so that no other process can steal
 	 * the inode(s) that we've just allocated.
 	 */
-	code = xfs_ialloc(tp, dp, mode, nlink, rdev, prid, okalloc,
+	code = xfs_ialloc(tp, dp, mode, nlink, rdev, credp, prid, okalloc,
 			  &ialloc_context, &call_again, &ip);
 
 	/*
@@ -196,7 +197,7 @@ xfs_dir_ialloc(
 		 * other allocations in this allocation group,
 		 * this call should always succeed.
 		 */
-		code = xfs_ialloc(tp, dp, mode, nlink, rdev, prid,
+		code = xfs_ialloc(tp, dp, mode, nlink, rdev, credp, prid,
 				  okalloc, &ialloc_context, &call_again, &ip);
 
 		/*
@@ -234,7 +235,7 @@ xfs_droplink(
 {
 	int	error;
 
-	xfs_trans_ichgtime(tp, ip, XFS_ICHGTIME_CHG);
+	xfs_ichgtime(ip, XFS_ICHGTIME_CHG);
 
 	ASSERT (ip->i_d.di_nlink > 0);
 	ip->i_d.di_nlink--;
@@ -298,7 +299,7 @@ xfs_bumplink(
 {
 	if (ip->i_d.di_nlink >= XFS_MAXLINK)
 		return XFS_ERROR(EMLINK);
-	xfs_trans_ichgtime(tp, ip, XFS_ICHGTIME_CHG);
+	xfs_ichgtime(ip, XFS_ICHGTIME_CHG);
 
 	ASSERT(ip->i_d.di_nlink > 0);
 	ip->i_d.di_nlink++;

@@ -1150,7 +1150,8 @@ struct crypto4xx_alg_common crypto4xx_alg[] = {
 /**
  * Module Initialization Routine
  */
-static int __init crypto4xx_probe(struct platform_device *ofdev)
+static int __init crypto4xx_probe(struct platform_device *ofdev,
+				  const struct of_device_id *match)
 {
 	int rc;
 	struct resource res;
@@ -1279,7 +1280,7 @@ static const struct of_device_id crypto4xx_match[] = {
 	{ },
 };
 
-static struct platform_driver crypto4xx_driver = {
+static struct of_platform_driver crypto4xx_driver = {
 	.driver = {
 		.name = "crypto4xx",
 		.owner = THIS_MODULE,
@@ -1291,12 +1292,12 @@ static struct platform_driver crypto4xx_driver = {
 
 static int __init crypto4xx_init(void)
 {
-	return platform_driver_register(&crypto4xx_driver);
+	return of_register_platform_driver(&crypto4xx_driver);
 }
 
 static void __exit crypto4xx_exit(void)
 {
-	platform_driver_unregister(&crypto4xx_driver);
+	of_unregister_platform_driver(&crypto4xx_driver);
 }
 
 module_init(crypto4xx_init);

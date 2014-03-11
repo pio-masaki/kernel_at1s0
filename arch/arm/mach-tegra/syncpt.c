@@ -23,8 +23,6 @@
 #include <linux/irq.h>
 #include <linux/io.h>
 
-#include <asm/mach/irq.h>
-
 #include <mach/iomap.h>
 #include <mach/irqs.h>
 
@@ -35,37 +33,38 @@ enum {
 	HOST1X_SYNC_SYNCPT_THRESH_INT_DISABLE = 0x60
 };
 
-static void syncpt_thresh_mask(struct irq_data *data)
+static void syncpt_thresh_mask(unsigned int irq)
 {
-	(void)data;
+	(void)irq;
 }
 
-static void syncpt_thresh_unmask(struct irq_data *data)
+static void syncpt_thresh_unmask(unsigned int irq)
 {
-	(void)data;
+	(void)irq;
 }
 
 static void syncpt_thresh_cascade(unsigned int irq, struct irq_desc *desc)
 {
-	void __iomem *sync_regs = irq_desc_get_handler_data(desc);
-	unsigned long reg;
+	void __iomem *sync_regs = get_irq_desc_data(desc);
+	u32 reg;
 	int id;
-	struct irq_chip *chip = irq_desc_get_chip(desc);
 
-	chained_irq_enter(chip, desc);
+	desc->chip->ack(irq);
 
 	reg = readl(sync_regs + HOST1X_SYNC_SYNCPT_THRESH_CPU0_INT_STATUS);
 
-	for_each_set_bit(id, &reg, 32)
+	while ((id = __fls(reg)) >= 0) {
+		reg ^= BIT(id);
 		generic_handle_irq(id + INT_SYNCPT_THRESH_BASE);
+	}
 
-	chained_irq_exit(chip, desc);
+	desc->chip->unmask(irq);
 }
 
 static struct irq_chip syncpt_thresh_irq = {
 	.name		= "syncpt",
-	.irq_mask	= syncpt_thresh_mask,
-	.irq_unmask	= syncpt_thresh_unmask
+	.mask		= syncpt_thresh_mask,
+	.unmask		= syncpt_thresh_unmask
 };
 
 static int __init syncpt_init_irq(void)
@@ -85,14 +84,15 @@ static int __init syncpt_init_irq(void)
 
 	for (i = 0; i < INT_SYNCPT_THRESH_NR; i++) {
 		irq = INT_SYNCPT_THRESH_BASE + i;
-		irq_set_chip_and_handler(irq, &syncpt_thresh_irq,
-			handle_simple_irq);
-		irq_set_chip_data(irq, sync_regs);
+		set_irq_chip(irq, &syncpt_thresh_irq);
+		set_irq_chip_data(irq, sync_regs);
+		set_irq_handler(irq, handle_simple_irq);
 		set_irq_flags(irq, IRQF_VALID);
 	}
-	irq_set_chained_handler(INT_HOST1X_MPCORE_SYNCPT,
-		syncpt_thresh_cascade);
-	irq_set_handler_data(INT_HOST1X_MPCORE_SYNCPT, sync_regs);
+	if (set_irq_data(INT_HOST1X_MPCORE_SYNCPT, sync_regs))
+		BUG();
+	set_irq_chained_handler(INT_HOST1X_MPCORE_SYNCPT,
+				syncpt_thresh_cascade);
 
 	return 0;
 }

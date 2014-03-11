@@ -166,12 +166,10 @@ static netdev_tx_t veth_xmit(struct sk_buff *skb, struct net_device *dev)
 	if (!(rcv->flags & IFF_UP))
 		goto tx_drop;
 
-	/* don't change ip_summed == CHECKSUM_PARTIAL, as that
-	   will cause bad checksum on forwarded packets */
-	if (skb->ip_summed == CHECKSUM_NONE)
+	if (dev->features & NETIF_F_NO_CSUM)
 		skb->ip_summed = rcv_priv->ip_summed;
 
-	length = skb->len;
+	length = skb->len + ETH_HLEN;
 	if (dev_forward_skb(rcv, skb) != NET_RX_SUCCESS)
 		goto rx_drop;
 
@@ -252,7 +250,7 @@ static int veth_close(struct net_device *dev)
 
 static int is_valid_veth_mtu(int new_mtu)
 {
-	return new_mtu >= MIN_MTU && new_mtu <= MAX_MTU;
+	return (new_mtu >= MIN_MTU && new_mtu <= MAX_MTU);
 }
 
 static int veth_change_mtu(struct net_device *dev, int new_mtu)

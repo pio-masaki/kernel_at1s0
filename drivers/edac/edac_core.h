@@ -41,11 +41,9 @@
 #define MC_PROC_NAME_MAX_LEN	7
 
 #if PAGE_SHIFT < 20
-#define PAGES_TO_MiB(pages)	((pages) >> (20 - PAGE_SHIFT))
-#define MiB_TO_PAGES(mb)	((mb) << (20 - PAGE_SHIFT))
+#define PAGES_TO_MiB( pages )	( ( pages ) >> ( 20 - PAGE_SHIFT ) )
 #else				/* PAGE_SHIFT > 20 */
-#define PAGES_TO_MiB(pages)	((pages) << (PAGE_SHIFT - 20))
-#define MiB_TO_PAGES(mb)	((mb) >> (PAGE_SHIFT - 20))
+#define PAGES_TO_MiB( pages )	( ( pages ) << ( PAGE_SHIFT - 20 ) )
 #endif
 
 #define edac_printk(level, prefix, fmt, arg...) \
@@ -68,10 +66,9 @@
 #define EDAC_PCI "PCI"
 #define EDAC_DEBUG "DEBUG"
 
-extern const char *edac_mem_types[];
-
 #ifdef CONFIG_EDAC_DEBUG
 extern int edac_debug_level;
+extern const char *edac_mem_types[];
 
 #define edac_debug_printk(level, fmt, arg...)                           \
 	do {                                                            \
@@ -164,7 +161,7 @@ enum mem_type {
 /* chipset Error Detection and Correction capabilities and mode */
 enum edac_type {
 	EDAC_UNKNOWN = 0,	/* Unknown if ECC is available */
-	EDAC_NONE,		/* Doesn't support ECC */
+	EDAC_NONE,		/* Doesnt support ECC */
 	EDAC_RESERVED,		/* Reserved ECC type */
 	EDAC_PARITY,		/* Detects parity errors */
 	EDAC_EC,		/* Error Checking - no correction */
@@ -233,7 +230,7 @@ enum scrub_type {
  *			of these in parallel provides 64 bits which is common
  *			for a memory stick.
  *
- * Memory Stick:	A printed circuit board that aggregates multiple
+ * Memory Stick:	A printed circuit board that agregates multiple
  *			memory devices in parallel.  This is the atomic
  *			memory component that is purchaseable by Joe consumer
  *			and loaded into a memory socket.
@@ -259,7 +256,7 @@ enum scrub_type {
  *			for single channel are 64 bits, for dual channel 128
  *			bits.
  *
- * Single-Ranked stick:	A Single-ranked stick has 1 chip-select row of memory.
+ * Single-Ranked stick:	A Single-ranked stick has 1 chip-select row of memmory.
  *			Motherboards commonly drive two chip-select pins to
  *			a memory stick. A single-ranked stick, will occupy
  *			only one of those rows. The other will be unused.
@@ -331,7 +328,7 @@ struct csrow_info {
 
 struct mcidev_sysfs_group {
 	const char *name;				/* group name */
-	const struct mcidev_sysfs_attribute *mcidev_attr; /* group attributes */
+	struct mcidev_sysfs_attribute *mcidev_attr;	/* group attributes */
 };
 
 struct mcidev_sysfs_group_kobj {
@@ -339,7 +336,7 @@ struct mcidev_sysfs_group_kobj {
 
 	struct kobject kobj;		/* kobj for the group */
 
-	const struct mcidev_sysfs_group *grp;	/* group description table */
+	struct mcidev_sysfs_group *grp;	/* group description table */
 	struct mem_ctl_info *mci;	/* the parent */
 };
 
@@ -350,7 +347,7 @@ struct mcidev_sysfs_group_kobj {
 struct mcidev_sysfs_attribute {
 	/* It should use either attr or grp */
 	struct attribute attr;
-	const struct mcidev_sysfs_group *grp;	/* Points to a group of attributes */
+	struct mcidev_sysfs_group *grp;	/* Points to a group of attributes */
 
 	/* Ops for show/store values at the attribute - not used on group */
         ssize_t (*show)(struct mem_ctl_info *,char *);
@@ -385,9 +382,9 @@ struct mem_ctl_info {
 
 	/* Get the current sdram memory scrub rate from the internal
 	   representation and converts it to the closest matching
-	   bandwidth in bytes/sec.
+	   bandwith in bytes/sec.
 	 */
-	int (*get_sdram_scrub_rate) (struct mem_ctl_info * mci);
+	int (*get_sdram_scrub_rate) (struct mem_ctl_info * mci, u32 * bw);
 
 
 	/* pointer to edac checking routine */
@@ -443,7 +440,7 @@ struct mem_ctl_info {
 	 * If attributes are desired, then set to array of attributes
 	 * If no attributes are desired, leave NULL
 	 */
-	const struct mcidev_sysfs_attribute *mc_driver_sysfs_attributes;
+	struct mcidev_sysfs_attribute *mc_driver_sysfs_attributes;
 
 	/* work struct for this MC */
 	struct delayed_work work;
@@ -813,7 +810,6 @@ extern struct mem_ctl_info *edac_mc_alloc(unsigned sz_pvt, unsigned nr_csrows,
 extern int edac_mc_add_mc(struct mem_ctl_info *mci);
 extern void edac_mc_free(struct mem_ctl_info *mci);
 extern struct mem_ctl_info *edac_mc_find(int idx);
-extern struct mem_ctl_info *find_mci_by_dev(struct device *dev);
 extern struct mem_ctl_info *edac_mc_del_mc(struct device *dev);
 extern int edac_mc_find_csrow_by_page(struct mem_ctl_info *mci,
 				      unsigned long page);
@@ -823,7 +819,7 @@ extern int edac_mc_find_csrow_by_page(struct mem_ctl_info *mci,
  * There are a limited number of error logging registers that can
  * be exausted.  When all registers are exhausted and an additional
  * error occurs then an error overflow register records that an
- * error occurred and the type of error, but doesn't have any
+ * error occured and the type of error, but doesn't have any
  * further information.  The ce/ue versions make for cleaner
  * reporting logic and function interface - reduces conditional
  * statement clutter and extra function arguments.

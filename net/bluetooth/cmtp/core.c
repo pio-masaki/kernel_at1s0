@@ -78,7 +78,6 @@ static void __cmtp_unlink_session(struct cmtp_session *session)
 
 static void __cmtp_copy_session(struct cmtp_session *session, struct cmtp_conninfo *ci)
 {
-	memset(ci, 0, sizeof(*ci));
 	bacpy(&ci->bdaddr, &session->bdaddr);
 
 	ci->flags = session->flags;
@@ -115,8 +114,7 @@ static inline void cmtp_add_msgpart(struct cmtp_session *session, int id, const 
 
 	size = (skb) ? skb->len + count : count;
 
-	nskb = alloc_skb(size, GFP_ATOMIC);
-	if (!nskb) {
+	if (!(nskb = alloc_skb(size, GFP_ATOMIC))) {
 		BT_ERR("Can't allocate memory for CAPI message");
 		return;
 	}
@@ -217,8 +215,7 @@ static void cmtp_process_transmit(struct cmtp_session *session)
 
 	BT_DBG("session %p", session);
 
-	nskb = alloc_skb(session->mtu, GFP_ATOMIC);
-	if (!nskb) {
+	if (!(nskb = alloc_skb(session->mtu, GFP_ATOMIC))) {
 		BT_ERR("Can't allocate memory for new frame");
 		return;
 	}
@@ -226,8 +223,7 @@ static void cmtp_process_transmit(struct cmtp_session *session)
 	while ((skb = skb_dequeue(&session->transmit))) {
 		struct cmtp_scb *scb = (void *) skb->cb;
 
-		tail = session->mtu - nskb->len;
-		if (tail < 5) {
+		if ((tail = (session->mtu - nskb->len)) < 5) {
 			cmtp_send_frame(session, nskb->data, nskb->len);
 			skb_trim(nskb, 0);
 			tail = session->mtu;
@@ -325,9 +321,13 @@ static int cmtp_session(void *arg)
 int cmtp_add_connection(struct cmtp_connadd_req *req, struct socket *sock)
 {
 	struct cmtp_session *session, *s;
+	bdaddr_t src, dst;
 	int i, err;
 
 	BT_DBG("");
+
+	baswap(&src, &bt_sk(sock->sk)->src);
+	baswap(&dst, &bt_sk(sock->sk)->dst);
 
 	session = kzalloc(sizeof(struct cmtp_session), GFP_KERNEL);
 	if (!session)
@@ -347,7 +347,7 @@ int cmtp_add_connection(struct cmtp_connadd_req *req, struct socket *sock)
 
 	BT_DBG("mtu %d", session->mtu);
 
-	sprintf(session->name, "%s", batostr(&bt_sk(sock->sk)->dst));
+	sprintf(session->name, "%s", batostr(&dst));
 
 	session->sock  = sock;
 	session->state = BT_CONFIG;
@@ -469,6 +469,8 @@ int cmtp_get_conninfo(struct cmtp_conninfo *ci)
 
 static int __init cmtp_init(void)
 {
+	l2cap_load();
+
 	BT_INFO("CMTP (CAPI Emulation) ver %s", VERSION);
 
 	cmtp_init_sockets();

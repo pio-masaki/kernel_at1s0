@@ -80,10 +80,6 @@
 #define O_SYNC		(__O_SYNC|O_DSYNC)
 #endif
 
-#ifndef O_PATH
-#define O_PATH		010000000
-#endif
-
 #ifndef O_NDELAY
 #define O_NDELAY	O_NONBLOCK
 #endif
@@ -126,7 +122,7 @@
 
 struct f_owner_ex {
 	int	type;
-	__kernel_pid_t	pid;
+	pid_t	pid;
 };
 
 /* for F_[GET|SET]FL */

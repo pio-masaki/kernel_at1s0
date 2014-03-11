@@ -10,7 +10,6 @@
  *    Author(s): Christian Borntraeger <borntraeger@de.ibm.com>
  */
 
-#include <linux/kernel_stat.h>
 #include <linux/init.h>
 #include <linux/bootmem.h>
 #include <linux/err.h>
@@ -26,7 +25,6 @@
 #include <asm/kvm_virtio.h>
 #include <asm/setup.h>
 #include <asm/s390_ext.h>
-#include <asm/irq.h>
 
 #define VIRTIO_SUBCODE_64 0x0D00
 
@@ -34,7 +32,6 @@
  * The pointer to our (page) of device descriptions.
  */
 static void *kvm_devices;
-struct work_struct hotplug_work;
 
 struct kvm_device {
 	struct virtio_device vdev;
@@ -331,86 +328,33 @@ static void scan_devices(void)
 }
 
 /*
- * match for a kvm device with a specific desc pointer
- */
-static int match_desc(struct device *dev, void *data)
-{
-	if ((ulong)to_kvmdev(dev_to_virtio(dev))->desc == (ulong)data)
-		return 1;
-
-	return 0;
-}
-
-/*
- * hotplug_device tries to find changes in the device page.
- */
-static void hotplug_devices(struct work_struct *dummy)
-{
-	unsigned int i;
-	struct kvm_device_desc *d;
-	struct device *dev;
-
-	for (i = 0; i < PAGE_SIZE; i += desc_size(d)) {
-		d = kvm_devices + i;
-
-		/* end of list */
-		if (d->type == 0)
-			break;
-
-		/* device already exists */
-		dev = device_find_child(kvm_root, d, match_desc);
-		if (dev) {
-			/* XXX check for hotplug remove */
-			put_device(dev);
-			continue;
-		}
-
-		/* new device */
-		printk(KERN_INFO "Adding new virtio device %p\n", d);
-		add_kvm_device(d, i);
-	}
-}
-
-/*
  * we emulate the request_irq behaviour on top of s390 extints
  */
-static void kvm_extint_handler(unsigned int ext_int_code,
-			       unsigned int param32, unsigned long param64)
+static void kvm_extint_handler(u16 code)
 {
 	struct virtqueue *vq;
 	u16 subcode;
-	u32 param;
+	int config_changed;
 
-	subcode = ext_int_code >> 16;
+	subcode = S390_lowcore.cpu_addr;
 	if ((subcode & 0xff00) != VIRTIO_SUBCODE_64)
 		return;
-	kstat_cpu(smp_processor_id()).irqs[EXTINT_VRT]++;
 
 	/* The LSB might be overloaded, we have to mask it */
-	vq = (struct virtqueue *)(param64 & ~1UL);
+	vq = (struct virtqueue *)(S390_lowcore.ext_params2 & ~1UL);
 
-	/* We use ext_params to decide what this interrupt means */
-	param = param32 & VIRTIO_PARAM_MASK;
+	/* We use the LSB of extparam, to decide, if this interrupt is a config
+	 * change or a "standard" interrupt */
+	config_changed = S390_lowcore.ext_params & 1;
 
-	switch (param) {
-	case VIRTIO_PARAM_CONFIG_CHANGED:
-	{
+	if (config_changed) {
 		struct virtio_driver *drv;
 		drv = container_of(vq->vdev->dev.driver,
 				   struct virtio_driver, driver);
 		if (drv->config_changed)
 			drv->config_changed(vq->vdev);
-
-		break;
-	}
-	case VIRTIO_PARAM_DEV_ADD:
-		schedule_work(&hotplug_work);
-		break;
-	case VIRTIO_PARAM_VRING_INTERRUPT:
-	default:
+	} else
 		vring_interrupt(0, vq);
-		break;
-	}
 }
 
 /*
@@ -438,8 +382,6 @@ static int __init kvm_devices_init(void)
 	}
 
 	kvm_devices = (void *) real_memory_size;
-
-	INIT_WORK(&hotplug_work, hotplug_devices);
 
 	ctl_set_bit(0, 9);
 	register_external_interrupt(0x2603, kvm_extint_handler);

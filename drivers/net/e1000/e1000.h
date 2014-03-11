@@ -310,9 +310,6 @@ struct e1000_adapter {
 	int need_ioport;
 
 	bool discarding;
-
-	struct work_struct fifo_stall_task;
-	struct work_struct phy_info_task;
 };
 
 enum e1000_state_t {

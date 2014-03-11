@@ -20,6 +20,7 @@
  */
 
 #include <linux/kvm_host.h>
+#include <linux/hash.h>
 
 #include <asm/kvm_ppc.h>
 #include <asm/kvm_book3s.h>
@@ -27,9 +28,24 @@
 #include <asm/machdep.h>
 #include <asm/mmu_context.h>
 #include <asm/hw_irq.h>
-#include "trace.h"
 
 #define PTE_SIZE 12
+#define VSID_ALL 0
+
+/* #define DEBUG_MMU */
+/* #define DEBUG_SLB */
+
+#ifdef DEBUG_MMU
+#define dprintk_mmu(a, ...) printk(KERN_INFO a, __VA_ARGS__)
+#else
+#define dprintk_mmu(a, ...) do { } while(0)
+#endif
+
+#ifdef DEBUG_SLB
+#define dprintk_slb(a, ...) printk(KERN_INFO a, __VA_ARGS__)
+#else
+#define dprintk_slb(a, ...) do { } while(0)
+#endif
 
 void kvmppc_mmu_invalidate_pte(struct kvm_vcpu *vcpu, struct hpte_cache *pte)
 {
@@ -42,39 +58,34 @@ void kvmppc_mmu_invalidate_pte(struct kvm_vcpu *vcpu, struct hpte_cache *pte)
  * a hash, so we don't waste cycles on looping */
 static u16 kvmppc_sid_hash(struct kvm_vcpu *vcpu, u64 gvsid)
 {
-	return (u16)(((gvsid >> (SID_MAP_BITS * 7)) & SID_MAP_MASK) ^
-		     ((gvsid >> (SID_MAP_BITS * 6)) & SID_MAP_MASK) ^
-		     ((gvsid >> (SID_MAP_BITS * 5)) & SID_MAP_MASK) ^
-		     ((gvsid >> (SID_MAP_BITS * 4)) & SID_MAP_MASK) ^
-		     ((gvsid >> (SID_MAP_BITS * 3)) & SID_MAP_MASK) ^
-		     ((gvsid >> (SID_MAP_BITS * 2)) & SID_MAP_MASK) ^
-		     ((gvsid >> (SID_MAP_BITS * 1)) & SID_MAP_MASK) ^
-		     ((gvsid >> (SID_MAP_BITS * 0)) & SID_MAP_MASK));
+	return hash_64(gvsid, SID_MAP_BITS);
 }
-
 
 static struct kvmppc_sid_map *find_sid_vsid(struct kvm_vcpu *vcpu, u64 gvsid)
 {
 	struct kvmppc_sid_map *map;
 	u16 sid_map_mask;
 
-	if (vcpu->arch.shared->msr & MSR_PR)
+	if (vcpu->arch.msr & MSR_PR)
 		gvsid |= VSID_PR;
 
 	sid_map_mask = kvmppc_sid_hash(vcpu, gvsid);
 	map = &to_book3s(vcpu)->sid_map[sid_map_mask];
-	if (map->valid && (map->guest_vsid == gvsid)) {
-		trace_kvm_book3s_slb_found(gvsid, map->host_vsid);
+	if (map->guest_vsid == gvsid) {
+		dprintk_slb("SLB: Searching: 0x%llx -> 0x%llx\n",
+			    gvsid, map->host_vsid);
 		return map;
 	}
 
 	map = &to_book3s(vcpu)->sid_map[SID_MAP_MASK - sid_map_mask];
-	if (map->valid && (map->guest_vsid == gvsid)) {
-		trace_kvm_book3s_slb_found(gvsid, map->host_vsid);
+	if (map->guest_vsid == gvsid) {
+		dprintk_slb("SLB: Searching 0x%llx -> 0x%llx\n",
+			    gvsid, map->host_vsid);
 		return map;
 	}
 
-	trace_kvm_book3s_slb_fail(sid_map_mask, gvsid);
+	dprintk_slb("SLB: Searching %d/%d: 0x%llx -> not found\n",
+		    sid_map_mask, SID_MAP_MASK - sid_map_mask, gvsid);
 	return NULL;
 }
 
@@ -90,13 +101,18 @@ int kvmppc_mmu_map_page(struct kvm_vcpu *vcpu, struct kvmppc_pte *orig_pte)
 	struct kvmppc_sid_map *map;
 
 	/* Get host physical address for gpa */
-	hpaddr = kvmppc_gfn_to_pfn(vcpu, orig_pte->raddr >> PAGE_SHIFT);
-	if (is_error_pfn(hpaddr)) {
+	hpaddr = gfn_to_pfn(vcpu->kvm, orig_pte->raddr >> PAGE_SHIFT);
+	if (kvm_is_error_hva(hpaddr)) {
 		printk(KERN_INFO "Couldn't get guest page for gfn %lx!\n", orig_pte->eaddr);
 		return -EINVAL;
 	}
 	hpaddr <<= PAGE_SHIFT;
-	hpaddr |= orig_pte->raddr & (~0xfffULL & ~PAGE_MASK);
+#if PAGE_SHIFT == 12
+#elif PAGE_SHIFT == 16
+	hpaddr |= orig_pte->raddr & 0xf000;
+#else
+#error Unknown page size
+#endif
 
 	/* and write the mapping ea -> hpa into the pt */
 	vcpu->arch.mmu.esid_to_vsid(vcpu, orig_pte->eaddr >> SID_SHIFT, &vsid);
@@ -145,7 +161,10 @@ map_again:
 	} else {
 		struct hpte_cache *pte = kvmppc_mmu_hpte_cache_next(vcpu);
 
-		trace_kvm_book3s_64_mmu_map(rflags, hpteg, va, hpaddr, orig_pte);
+		dprintk_mmu("KVM: %c%c Map 0x%lx: [%lx] 0x%lx (0x%llx) -> %lx\n",
+			    ((rflags & HPTE_R_PP) == 3) ? '-' : 'w',
+			    (rflags & HPTE_R_N) ? '-' : 'x',
+			    orig_pte->eaddr, hpteg, va, orig_pte->vpage, hpaddr);
 
 		/* The ppc_md code may give us a secondary entry even though we
 		   asked for a primary. Fix up. */
@@ -172,7 +191,7 @@ static struct kvmppc_sid_map *create_sid_map(struct kvm_vcpu *vcpu, u64 gvsid)
 	u16 sid_map_mask;
 	static int backwards_map = 0;
 
-	if (vcpu->arch.shared->msr & MSR_PR)
+	if (vcpu->arch.msr & MSR_PR)
 		gvsid |= VSID_PR;
 
 	/* We might get collisions that trap in preceding order, so let's
@@ -200,7 +219,8 @@ static struct kvmppc_sid_map *create_sid_map(struct kvm_vcpu *vcpu, u64 gvsid)
 	map->guest_vsid = gvsid;
 	map->valid = true;
 
-	trace_kvm_book3s_slb_map(sid_map_mask, gvsid, map->host_vsid);
+	dprintk_slb("SLB: New mapping at %d: 0x%llx -> 0x%llx\n",
+		    sid_map_mask, gvsid, map->host_vsid);
 
 	return map;
 }
@@ -272,7 +292,7 @@ int kvmppc_mmu_map_segment(struct kvm_vcpu *vcpu, ulong eaddr)
 	to_svcpu(vcpu)->slb[slb_index].esid = slb_esid;
 	to_svcpu(vcpu)->slb[slb_index].vsid = slb_vsid;
 
-	trace_kvm_book3s_slbmte(slb_vsid, slb_esid);
+	dprintk_slb("slbmte %#llx, %#llx\n", slb_vsid, slb_esid);
 
 	return 0;
 }
@@ -286,7 +306,7 @@ void kvmppc_mmu_flush_segments(struct kvm_vcpu *vcpu)
 void kvmppc_mmu_destroy(struct kvm_vcpu *vcpu)
 {
 	kvmppc_mmu_hpte_destroy(vcpu);
-	__destroy_context(to_book3s(vcpu)->context_id[0]);
+	__destroy_context(to_book3s(vcpu)->context_id);
 }
 
 int kvmppc_mmu_init(struct kvm_vcpu *vcpu)
@@ -297,10 +317,10 @@ int kvmppc_mmu_init(struct kvm_vcpu *vcpu)
 	err = __init_new_context();
 	if (err < 0)
 		return -1;
-	vcpu3s->context_id[0] = err;
+	vcpu3s->context_id = err;
 
-	vcpu3s->vsid_max = ((vcpu3s->context_id[0] + 1) << USER_ESID_BITS) - 1;
-	vcpu3s->vsid_first = vcpu3s->context_id[0] << USER_ESID_BITS;
+	vcpu3s->vsid_max = ((vcpu3s->context_id + 1) << USER_ESID_BITS) - 1;
+	vcpu3s->vsid_first = vcpu3s->context_id << USER_ESID_BITS;
 	vcpu3s->vsid_next = vcpu3s->vsid_first;
 
 	kvmppc_mmu_hpte_init(vcpu);

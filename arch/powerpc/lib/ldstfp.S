@@ -17,8 +17,6 @@
 #include <asm/asm-offsets.h>
 #include <linux/errno.h>
 
-#ifdef CONFIG_PPC_FPU
-
 #define STKFRM	(PPC_MIN_STKFRM + 16)
 
 	.macro	extab	instr,handler
@@ -83,7 +81,7 @@ _GLOBAL(do_lfs)
 	mfmsr	r6
 	ori	r7,r6,MSR_FP
 	cmpwi	cr7,r3,0
-	MTMSRD(r7)
+	mtmsrd	r7
 	isync
 	beq	cr7,1f
 	stfd	fr0,STKFRM-16(r1)
@@ -95,7 +93,7 @@ _GLOBAL(do_lfs)
 	lfd	fr0,STKFRM-16(r1)
 4:	PPC_LL	r0,STKFRM+PPC_LR_STKOFF(r1)
 	mtlr	r0
-	MTMSRD(r6)
+	mtmsrd	r6
 	isync
 	mr	r3,r9
 	addi	r1,r1,STKFRM
@@ -110,7 +108,7 @@ _GLOBAL(do_lfd)
 	mfmsr	r6
 	ori	r7,r6,MSR_FP
 	cmpwi	cr7,r3,0
-	MTMSRD(r7)
+	mtmsrd	r7
 	isync
 	beq	cr7,1f
 	stfd	fr0,STKFRM-16(r1)
@@ -122,7 +120,7 @@ _GLOBAL(do_lfd)
 	lfd	fr0,STKFRM-16(r1)
 4:	PPC_LL	r0,STKFRM+PPC_LR_STKOFF(r1)
 	mtlr	r0
-	MTMSRD(r6)
+	mtmsrd	r6
 	isync
 	mr	r3,r9
 	addi	r1,r1,STKFRM
@@ -137,7 +135,7 @@ _GLOBAL(do_stfs)
 	mfmsr	r6
 	ori	r7,r6,MSR_FP
 	cmpwi	cr7,r3,0
-	MTMSRD(r7)
+	mtmsrd	r7
 	isync
 	beq	cr7,1f
 	stfd	fr0,STKFRM-16(r1)
@@ -149,7 +147,7 @@ _GLOBAL(do_stfs)
 	lfd	fr0,STKFRM-16(r1)
 4:	PPC_LL	r0,STKFRM+PPC_LR_STKOFF(r1)
 	mtlr	r0
-	MTMSRD(r6)
+	mtmsrd	r6
 	isync
 	mr	r3,r9
 	addi	r1,r1,STKFRM
@@ -164,7 +162,7 @@ _GLOBAL(do_stfd)
 	mfmsr	r6
 	ori	r7,r6,MSR_FP
 	cmpwi	cr7,r3,0
-	MTMSRD(r7)
+	mtmsrd	r7
 	isync
 	beq	cr7,1f
 	stfd	fr0,STKFRM-16(r1)
@@ -176,7 +174,7 @@ _GLOBAL(do_stfd)
 	lfd	fr0,STKFRM-16(r1)
 4:	PPC_LL	r0,STKFRM+PPC_LR_STKOFF(r1)
 	mtlr	r0
-	MTMSRD(r6)
+	mtmsrd	r6
 	isync
 	mr	r3,r9
 	addi	r1,r1,STKFRM
@@ -231,7 +229,7 @@ _GLOBAL(do_lvx)
 	oris	r7,r6,MSR_VEC@h
 	cmpwi	cr7,r3,0
 	li	r8,STKFRM-16
-	MTMSRD(r7)
+	mtmsrd	r7
 	isync
 	beq	cr7,1f
 	stvx	vr0,r1,r8
@@ -243,7 +241,7 @@ _GLOBAL(do_lvx)
 	lvx	vr0,r1,r8
 4:	PPC_LL	r0,STKFRM+PPC_LR_STKOFF(r1)
 	mtlr	r0
-	MTMSRD(r6)
+	mtmsrd	r6
 	isync
 	mr	r3,r9
 	addi	r1,r1,STKFRM
@@ -259,7 +257,7 @@ _GLOBAL(do_stvx)
 	oris	r7,r6,MSR_VEC@h
 	cmpwi	cr7,r3,0
 	li	r8,STKFRM-16
-	MTMSRD(r7)
+	mtmsrd	r7
 	isync
 	beq	cr7,1f
 	stvx	vr0,r1,r8
@@ -271,7 +269,7 @@ _GLOBAL(do_stvx)
 	lvx	vr0,r1,r8
 4:	PPC_LL	r0,STKFRM+PPC_LR_STKOFF(r1)
 	mtlr	r0
-	MTMSRD(r6)
+	mtmsrd	r6
 	isync
 	mr	r3,r9
 	addi	r1,r1,STKFRM
@@ -327,7 +325,7 @@ _GLOBAL(do_lxvd2x)
 	oris	r7,r6,MSR_VSX@h
 	cmpwi	cr7,r3,0
 	li	r8,STKFRM-16
-	MTMSRD(r7)
+	mtmsrd	r7
 	isync
 	beq	cr7,1f
 	STXVD2X(0,r1,r8)
@@ -339,7 +337,7 @@ _GLOBAL(do_lxvd2x)
 	LXVD2X(0,r1,r8)
 4:	PPC_LL	r0,STKFRM+PPC_LR_STKOFF(r1)
 	mtlr	r0
-	MTMSRD(r6)
+	mtmsrd	r6
 	isync
 	mr	r3,r9
 	addi	r1,r1,STKFRM
@@ -355,7 +353,7 @@ _GLOBAL(do_stxvd2x)
 	oris	r7,r6,MSR_VSX@h
 	cmpwi	cr7,r3,0
 	li	r8,STKFRM-16
-	MTMSRD(r7)
+	mtmsrd	r7
 	isync
 	beq	cr7,1f
 	STXVD2X(0,r1,r8)
@@ -367,7 +365,7 @@ _GLOBAL(do_stxvd2x)
 	LXVD2X(0,r1,r8)
 4:	PPC_LL	r0,STKFRM+PPC_LR_STKOFF(r1)
 	mtlr	r0
-	MTMSRD(r6)
+	mtmsrd	r6
 	isync
 	mr	r3,r9
 	addi	r1,r1,STKFRM
@@ -375,5 +373,3 @@ _GLOBAL(do_stxvd2x)
 	extab	2b,3b
 
 #endif /* CONFIG_VSX */
-
-#endif	/* CONFIG_PPC_FPU */

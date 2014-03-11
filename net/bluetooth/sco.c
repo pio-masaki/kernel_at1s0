@@ -44,13 +44,15 @@
 #include <net/sock.h>
 
 #include <asm/system.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
 #include <net/bluetooth/sco.h>
 
-static int disable_esco;
+#define VERSION "0.6"
+
+static int disable_esco = 0;
 
 static const struct proto_ops sco_sock_ops;
 
@@ -136,17 +138,16 @@ static inline struct sock *sco_chan_get(struct sco_conn *conn)
 
 static int sco_conn_del(struct hci_conn *hcon, int err)
 {
-	struct sco_conn *conn = hcon->sco_data;
+	struct sco_conn *conn;
 	struct sock *sk;
 
-	if (!conn)
+	if (!(conn = hcon->sco_data))
 		return 0;
 
 	BT_DBG("hcon %p conn %p, err %d", hcon, conn, err);
 
 	/* Kill socket */
-	sk = sco_chan_get(conn);
-	if (sk) {
+	if ((sk = sco_chan_get(conn))) {
 		bh_lock_sock(sk);
 		sco_sock_clear_timer(sk);
 		sco_chan_del(sk, err);
@@ -185,11 +186,12 @@ static int sco_connect(struct sock *sk)
 
 	BT_DBG("%s -> %s", batostr(src), batostr(dst));
 
-	hdev = hci_get_route(dst, src);
-	if (!hdev)
+	if (!(hdev = hci_get_route(dst, src)))
 		return -EHOSTUNREACH;
 
 	hci_dev_lock_bh(hdev);
+
+	err = -ENOMEM;
 
 	if (lmp_esco_capable(hdev) && !disable_esco)
 		type = ESCO_LINK;
@@ -198,16 +200,14 @@ static int sco_connect(struct sock *sk)
 		pkt_type &= SCO_ESCO_MASK;
 	}
 
-	hcon = hci_connect(hdev, type, pkt_type, dst, BT_SECURITY_LOW, HCI_AT_NO_BONDING);
-	if (IS_ERR(hcon)) {
-		err = PTR_ERR(hcon);
+	hcon = hci_connect(hdev, type, pkt_type, dst,
+					BT_SECURITY_LOW, HCI_AT_NO_BONDING);
+	if (!hcon)
 		goto done;
-	}
 
 	conn = sco_conn_add(hcon, 0);
 	if (!conn) {
 		hci_conn_put(hcon);
-		err = -ENOMEM;
 		goto done;
 	}
 
@@ -526,8 +526,7 @@ static int sco_sock_connect(struct socket *sock, struct sockaddr *addr, int alen
 	bacpy(&bt_sk(sk)->dst, &sa.sco_bdaddr);
 	sco_pi(sk)->pkt_type = sa.sco_pkt_type;
 
-	err = sco_connect(sk);
-	if (err)
+	if ((err = sco_connect(sk)))
 		goto done;
 
 	err = bt_sock_wait_state(sk, BT_CONNECTED,
@@ -718,7 +717,6 @@ static int sco_sock_getsockopt_old(struct socket *sock, int optname, char __user
 			break;
 		}
 
-		memset(&cinfo, 0, sizeof(cinfo));
 		cinfo.hci_handle = sco_pi(sk)->conn->hcon->handle;
 		memcpy(cinfo.dev_class, sco_pi(sk)->conn->hcon->dev_class, 3);
 
@@ -847,14 +845,13 @@ static void sco_chan_del(struct sock *sk, int err)
 
 static void sco_conn_ready(struct sco_conn *conn)
 {
-	struct sock *parent;
-	struct sock *sk = conn->sk;
+	struct sock *parent, *sk;
 
 	BT_DBG("conn %p", conn);
 
 	sco_conn_lock(conn);
 
-	if (sk) {
+	if ((sk = conn->sk)) {
 		sco_sock_clear_timer(sk);
 		bh_lock_sock(sk);
 		sk->sk_state = BT_CONNECTED;
@@ -902,7 +899,7 @@ static int sco_connect_ind(struct hci_dev *hdev, bdaddr_t *bdaddr, __u8 type)
 	int lm = 0;
 
 	if (type != SCO_LINK && type != ESCO_LINK)
-		return -EINVAL;
+		return 0;
 
 	BT_DBG("hdev %s, bdaddr %s", hdev->name, batostr(bdaddr));
 
@@ -928,7 +925,7 @@ static int sco_connect_cfm(struct hci_conn *hcon, __u8 status)
 	BT_DBG("hcon %p bdaddr %s status %d", hcon, batostr(&hcon->dst), status);
 
 	if (hcon->type != SCO_LINK && hcon->type != ESCO_LINK)
-		return -EINVAL;
+		return 0;
 
 	if (!status) {
 		struct sco_conn *conn;
@@ -947,7 +944,7 @@ static int sco_disconn_cfm(struct hci_conn *hcon, __u8 reason)
 	BT_DBG("hcon %p reason %d", hcon, reason);
 
 	if (hcon->type != SCO_LINK && hcon->type != ESCO_LINK)
-		return -EINVAL;
+		return 0;
 
 	sco_conn_del(hcon, bt_err(reason));
 
@@ -1039,7 +1036,7 @@ static struct hci_proto sco_hci_proto = {
 	.recv_scodata	= sco_recv_scodata
 };
 
-int __init sco_init(void)
+static int __init sco_init(void)
 {
 	int err;
 
@@ -1067,6 +1064,7 @@ int __init sco_init(void)
 			BT_ERR("Failed to create SCO debug file");
 	}
 
+	BT_INFO("SCO (Voice Link) ver %s", VERSION);
 	BT_INFO("SCO socket layer initialized");
 
 	return 0;
@@ -1076,7 +1074,7 @@ error:
 	return err;
 }
 
-void __exit sco_exit(void)
+static void __exit sco_exit(void)
 {
 	debugfs_remove(sco_debugfs);
 
@@ -1089,5 +1087,14 @@ void __exit sco_exit(void)
 	proto_unregister(&sco_proto);
 }
 
+module_init(sco_init);
+module_exit(sco_exit);
+
 module_param(disable_esco, bool, 0644);
 MODULE_PARM_DESC(disable_esco, "Disable eSCO connection creation");
+
+MODULE_AUTHOR("Marcel Holtmann <marcel@holtmann.org>");
+MODULE_DESCRIPTION("Bluetooth SCO ver " VERSION);
+MODULE_VERSION(VERSION);
+MODULE_LICENSE("GPL");
+MODULE_ALIAS("bt-proto-2");

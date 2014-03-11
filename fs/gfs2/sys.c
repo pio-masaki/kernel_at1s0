@@ -230,10 +230,7 @@ static ssize_t demote_rq_store(struct gfs2_sbd *sdp, const char *buf, size_t len
 
 	if (gltype > LM_TYPE_JOURNAL)
 		return -EINVAL;
-	if (gltype == LM_TYPE_NONDISK && glnum == GFS2_TRANS_LOCK)
-		glops = &gfs2_trans_glops;
-	else
-		glops = gfs2_glops_list[gltype];
+	glops = gfs2_glops_list[gltype];
 	if (glops == NULL)
 		return -EINVAL;
 	if (!test_and_set_bit(SDF_DEMOTE, &sdp->sd_flags))
@@ -402,32 +399,31 @@ static ssize_t recover_status_show(struct gfs2_sbd *sdp, char *buf)
 
 static ssize_t jid_show(struct gfs2_sbd *sdp, char *buf)
 {
-	return sprintf(buf, "%d\n", sdp->sd_lockstruct.ls_jid);
+	return sprintf(buf, "%u\n", sdp->sd_lockstruct.ls_jid);
 }
 
 static ssize_t jid_store(struct gfs2_sbd *sdp, const char *buf, size_t len)
 {
-        int jid;
+        unsigned jid;
 	int rv;
 
-	rv = sscanf(buf, "%d", &jid);
+	rv = sscanf(buf, "%u", &jid);
 	if (rv != 1)
 		return -EINVAL;
 
 	spin_lock(&sdp->sd_jindex_spin);
 	rv = -EINVAL;
+	if (sdp->sd_args.ar_spectator)
+		goto out;
 	if (sdp->sd_lockstruct.ls_ops->lm_mount == NULL)
 		goto out;
 	rv = -EBUSY;
-	if (test_bit(SDF_NOJOURNALID, &sdp->sd_flags) == 0)
+	if (test_and_clear_bit(SDF_NOJOURNALID, &sdp->sd_flags) == 0)
 		goto out;
-	rv = 0;
-	if (sdp->sd_args.ar_spectator && jid > 0)
-		rv = jid = -EINVAL;
 	sdp->sd_lockstruct.ls_jid = jid;
-	clear_bit(SDF_NOJOURNALID, &sdp->sd_flags);
 	smp_mb__after_clear_bit();
 	wake_up_bit(&sdp->sd_flags, SDF_NOJOURNALID);
+	rv = 0;
 out:
 	spin_unlock(&sdp->sd_jindex_spin);
 	return rv ? rv : len;
@@ -621,7 +617,7 @@ static int gfs2_uevent(struct kset *kset, struct kobject *kobj,
 	add_uevent_var(env, "LOCKTABLE=%s", sdp->sd_table_name);
 	add_uevent_var(env, "LOCKPROTO=%s", sdp->sd_proto_name);
 	if (!test_bit(SDF_NOJOURNALID, &sdp->sd_flags))
-		add_uevent_var(env, "JOURNALID=%d", sdp->sd_lockstruct.ls_jid);
+		add_uevent_var(env, "JOURNALID=%u", sdp->sd_lockstruct.ls_jid);
 	if (gfs2_uuid_valid(uuid))
 		add_uevent_var(env, "UUID=%pUB", uuid);
 	return 0;

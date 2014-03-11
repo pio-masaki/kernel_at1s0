@@ -86,19 +86,6 @@ static inline struct inet_request_sock *inet_rsk(const struct request_sock *sk)
 	return (struct inet_request_sock *)sk;
 }
 
-struct inet_cork {
-	unsigned int		flags;
-	unsigned int		fragsize;
-	struct ip_options	*opt;
-	struct dst_entry	*dst;
-	int			length; /* Total length of all frames */
-	__be32			addr;
-	struct flowi		fl;
-	struct page		*page;
-	u32			off;
-	u8			tx_flags;
-};
-
 struct ip_mc_socklist;
 struct ipv6_pinfo;
 struct rtable;
@@ -129,9 +116,8 @@ struct inet_sock {
 	struct ipv6_pinfo	*pinet6;
 #endif
 	/* Socket demultiplex comparisons on incoming packets. */
-#define inet_daddr		sk.__sk_common.skc_daddr
-#define inet_rcv_saddr		sk.__sk_common.skc_rcv_saddr
-
+	__be32			inet_daddr;
+	__be32			inet_rcv_saddr;
 	__be16			inet_dport;
 	__u16			inet_num;
 	__be32			inet_saddr;
@@ -155,8 +141,16 @@ struct inet_sock {
 				nodefrag:1;
 	int			mc_index;
 	__be32			mc_addr;
-	struct ip_mc_socklist __rcu	*mc_list;
-	struct inet_cork	cork;
+	struct ip_mc_socklist	*mc_list;
+	struct {
+		unsigned int		flags;
+		unsigned int		fragsize;
+		struct ip_options	*opt;
+		struct dst_entry	*dst;
+		int			length; /* Total length of all frames */
+		__be32			addr;
+		struct flowi		fl;
+	} cork;
 };
 
 #define IPCORK_OPT	1	/* ip-options has been held in ipcork.opt */
@@ -224,13 +218,7 @@ static inline struct request_sock *inet_reqsk_alloc(struct request_sock_ops *ops
 
 static inline __u8 inet_sk_flowi_flags(const struct sock *sk)
 {
-	__u8 flags = 0;
-
-	if (inet_sk(sk)->transparent)
-		flags |= FLOWI_FLAG_ANYSRC;
-	if (sk->sk_protocol == IPPROTO_TCP)
-		flags |= FLOWI_FLAG_PRECOW_METRICS;
-	return flags;
+	return inet_sk(sk)->transparent ? FLOWI_FLAG_ANYSRC : 0;
 }
 
 #endif	/* _INET_SOCK_H */

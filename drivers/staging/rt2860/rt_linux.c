@@ -118,7 +118,8 @@ void RTMP_OS_Mod_Timer(struct timer_list *pTimer,
 	mod_timer(pTimer, jiffies + timeout);
 }
 
-void RTMP_OS_Del_Timer(struct timer_list *pTimer, OUT BOOLEAN *pCancelled)
+void RTMP_OS_Del_Timer(struct timer_list *pTimer,
+		       OUT BOOLEAN * pCancelled)
 {
 	if (timer_pending(pTimer)) {
 		*pCancelled = del_timer_sync(pTimer);
@@ -241,7 +242,8 @@ void RTMPFreeAdapter(struct rt_rtmp_adapter *pAd)
 
 	os_cookie = (struct os_cookie *)pAd->OS_Cookie;
 
-	kfree(pAd->BeaconBuf);
+	if (pAd->BeaconBuf)
+		kfree(pAd->BeaconBuf);
 
 	NdisFreeSpinLock(&pAd->MgmtRingLock);
 
@@ -263,7 +265,8 @@ void RTMPFreeAdapter(struct rt_rtmp_adapter *pAd)
 	release_firmware(pAd->firmware);
 
 	vfree(pAd);		/* pci_free_consistent(os_cookie->pci_dev,sizeof(struct rt_rtmp_adapter),pAd,os_cookie->pAd_pa); */
-	kfree(os_cookie);
+	if (os_cookie)
+		kfree(os_cookie);
 }
 
 BOOLEAN OS_Need_Clone_Packet(void)
@@ -283,7 +286,7 @@ BOOLEAN OS_Need_Clone_Packet(void)
 	Arguments:
 		pAd 	Pointer to our adapter
 		pInsAMSDUHdr	EWC A-MSDU format has extra 14-bytes header. if TRUE, insert this 14-byte hdr in front of MSDU.
-		*pSrcTotalLen			return total packet length. This length is calculated with 802.3 format packet.
+		*pSrcTotalLen			return total packet length. This lenght is calculated with 802.3 format packet.
 
 	Return Value:
 		NDIS_STATUS_SUCCESS
@@ -318,7 +321,7 @@ int RTMPCloneNdisPacket(struct rt_rtmp_adapter *pAd,
 
 	RTMP_SET_PACKET_SOURCE(OSPKT_TO_RTPKT(pkt), PKTSRC_NDIS);
 
-	printk(KERN_DEBUG "###Clone###\n");
+	printk("###Clone###\n");
 
 	return NDIS_STATUS_SUCCESS;
 }
@@ -340,8 +343,9 @@ int RTMPAllocateNdisPacket(struct rt_rtmp_adapter *pAd,
 					   RTMP_PKT_TAIL_PADDING);
 	if (pPacket == NULL) {
 		*ppPacket = NULL;
-		pr_devel("RTMPAllocateNdisPacket Fail\n");
-
+#ifdef DEBUG
+		printk("RTMPAllocateNdisPacket Fail\n");
+#endif
 		return NDIS_STATUS_FAILURE;
 	}
 	/* 2. clone the frame content */
@@ -597,15 +601,15 @@ void hex_dump(char *str, unsigned char *pSrcBufVA, unsigned int SrcBufLen)
 		return;
 
 	pt = pSrcBufVA;
-	printk(KERN_DEBUG "%s: %p, len = %d\n", str, pSrcBufVA, SrcBufLen);
+	printk("%s: %p, len = %d\n", str, pSrcBufVA, SrcBufLen);
 	for (x = 0; x < SrcBufLen; x++) {
 		if (x % 16 == 0)
-			printk(KERN_DEBUG "0x%04x : ", x);
-		printk(KERN_DEBUG "%02x ", ((unsigned char)pt[x]));
+			printk("0x%04x : ", x);
+		printk("%02x ", ((unsigned char)pt[x]));
 		if (x % 16 == 15)
-			printk(KERN_DEBUG "\n");
+			printk("\n");
 	}
-	printk(KERN_DEBUG "\n");
+	printk("\n");
 }
 
 /*
@@ -678,7 +682,9 @@ void RTMPSendWirelessEvent(struct rt_rtmp_adapter *pAd,
 
 		if (pAddr)
 			pBufPtr +=
-			    sprintf(pBufPtr, "(RT2860) STA(%pM) ", pAddr);
+			    sprintf(pBufPtr,
+				    "(RT2860) STA(%02x:%02x:%02x:%02x:%02x:%02x) ",
+				    PRINT_MAC(pAddr));
 		else if (BssIdx < MAX_MBSSID_NUM)
 			pBufPtr +=
 			    sprintf(pBufPtr, "(RT2860) BSS(wlan%d) ", BssIdx);
@@ -763,13 +769,13 @@ void send_monitor_packets(struct rt_rtmp_adapter *pAd, struct rt_rx_blk *pRxBlk)
 		/* QOS */
 		if (pRxBlk->pHeader->FC.SubType & 0x08) {
 			header_len += 2;
-			/* Data skip QOS control field */
+			/* Data skip QOS contorl field */
 			pRxBlk->DataSize -= 2;
 		}
 		/* Order bit: A-Ralink or HTC+ */
 		if (pRxBlk->pHeader->FC.Order) {
 			header_len += 4;
-			/* Data skip HTC control field */
+			/* Data skip HTC contorl field */
 			pRxBlk->DataSize -= 4;
 		}
 		/* Copy Header */
@@ -850,7 +856,7 @@ void send_monitor_packets(struct rt_rtmp_adapter *pAd, struct rt_rx_blk *pRxBlk)
 									 RSSI1,
 									 RSSI_1),
 				    ConvertToRssi(pAd, pRxBlk->pRxWI->RSSI2,
-						  RSSI_2));
+						  RSSI_2));;
 
 	ph->signal.did = DIDmsg_lnxind_wlansniffrm_signal;
 	ph->signal.status = 0;
@@ -922,7 +928,7 @@ int RtmpOSIRQRequest(struct net_device *pNetDev)
 		    request_irq(_pObj->pci_dev->irq, rt2860_interrupt, SA_SHIRQ,
 				(net_dev)->name, (net_dev));
 		if (retval != 0)
-			printk(KERN_ERR "rt2860: request_irq  ERROR(%d)\n", retval);
+			printk("RT2860: request_irq  ERROR(%d)\n", retval);
 	}
 
 	return retval;
@@ -1018,7 +1024,7 @@ int RtmpOSTaskKill(struct rt_rtmp_os_task *pTask)
 	}
 #else
 	CHECK_PID_LEGALITY(pTask->taskPID) {
-		printk(KERN_INFO "Terminate the task(%s) with pid(%d)!\n",
+		printk("Terminate the task(%s) with pid(%d)!\n",
 		       pTask->taskName, GET_PID_NUMBER(pTask->taskPID));
 		mb();
 		pTask->task_killed = 1;
@@ -1171,7 +1177,7 @@ int RtmpOSNetDevAddrSet(struct net_device *pNetDev, u8 *pMacAddr)
 	net_dev = pNetDev;
 	GET_PAD_FROM_NET_DEV(pAd, net_dev);
 
-	/* work-around for SuSE, due to them having their own interface name management system. */
+	/* work-around for the SuSE due to it has it's own interface name management system. */
 	{
 		NdisZeroMemory(pAd->StaCfg.dev_name, 16);
 		NdisMoveMemory(pAd->StaCfg.dev_name, net_dev->name,
@@ -1296,7 +1302,7 @@ int RtmpOSNetDevAttach(struct net_device *pNetDev,
 	int ret, rtnl_locked = FALSE;
 
 	DBGPRINT(RT_DEBUG_TRACE, ("RtmpOSNetDevAttach()--->\n"));
-	/* If we need hook some callback function to the net device structure, now do it. */
+	/* If we need hook some callback function to the net device structrue, now do it. */
 	if (pDevOpHook) {
 		struct rt_rtmp_adapter *pAd = NULL;
 
@@ -1307,8 +1313,9 @@ int RtmpOSNetDevAttach(struct net_device *pNetDev,
 		/* OS specific flags, here we used to indicate if we are virtual interface */
 		pNetDev->priv_flags = pDevOpHook->priv_flags;
 
-		if (pAd->OpMode == OPMODE_STA)
+		if (pAd->OpMode == OPMODE_STA) {
 			pNetDev->wireless_handlers = &rt28xx_iw_handler_def;
+		}
 
 		/* copy the net device mac address to the net_device structure. */
 		NdisMoveMemory(pNetDev->dev_addr, &pDevOpHook->devAddr[0],
@@ -1347,10 +1354,10 @@ struct net_device *RtmpOSNetDevCreate(struct rt_rtmp_adapter *pAd,
 		return NULL;
 	}
 
-	/* find an available interface name, max 32 interfaces */
+	/* find a available interface name, max 32 interfaces */
 	status = RtmpOSNetDevRequestName(pAd, pNetDev, pNamePrefix, devNum);
 	if (status != NDIS_STATUS_SUCCESS) {
-		/* error! no available ra name can be used! */
+		/* error! no any available ra name can be used! */
 		DBGPRINT(RT_DEBUG_ERROR,
 			 ("Assign interface name (%s with suffix 0~32) failed...\n",
 			  pNamePrefix));

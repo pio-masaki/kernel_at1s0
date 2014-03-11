@@ -199,7 +199,7 @@ static inline void refill_rspq(struct adapter *adapter,
  *	need_skb_unmap - does the platform need unmapping of sk_buffs?
  *
  *	Returns true if the platform needs sk_buff unmapping.  The compiler
- *	optimizes away unnecessary code if this returns true.
+ *	optimizes away unecessary code if this returns true.
  */
 static inline int need_skb_unmap(void)
 {
@@ -296,10 +296,8 @@ static void free_tx_desc(struct adapter *adapter, struct sge_txq *q,
 		if (d->skb) {	/* an SGL is present */
 			if (need_unmap)
 				unmap_skb(d->skb, q, cidx, pdev);
-			if (d->eop) {
+			if (d->eop)
 				kfree_skb(d->skb);
-				d->skb = NULL;
-			}
 		}
 		++d;
 		if (++cidx == q->size) {
@@ -1147,7 +1145,7 @@ static void write_tx_pkt_wr(struct adapter *adap, struct sk_buff *skb,
 	cpl->len = htonl(skb->len);
 	cntrl = V_TXPKT_INTF(pi->port_id);
 
-	if (vlan_tx_tag_present(skb))
+	if (vlan_tx_tag_present(skb) && pi->vlan_grp)
 		cntrl |= F_TXPKT_VLAN_VLD | V_TXPKT_VLAN(vlan_tx_tag_get(skb));
 
 	tso_info = V_LSO_MSS(skb_shinfo(skb)->gso_size);
@@ -1281,7 +1279,7 @@ netdev_tx_t t3_eth_xmit(struct sk_buff *skb, struct net_device *dev)
 		qs->port_stats[SGE_PSTAT_TX_CSUM]++;
 	if (skb_shinfo(skb)->gso_size)
 		qs->port_stats[SGE_PSTAT_TSO]++;
-	if (vlan_tx_tag_present(skb))
+	if (vlan_tx_tag_present(skb) && pi->vlan_grp)
 		qs->port_stats[SGE_PSTAT_VLANINS]++;
 
 	/*
@@ -2024,7 +2022,7 @@ static void rx_eth(struct adapter *adap, struct sge_rspq *rq,
 		qs->port_stats[SGE_PSTAT_RX_CSUM_GOOD]++;
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 	} else
-		skb_checksum_none_assert(skb);
+		skb->ip_summed = CHECKSUM_NONE;
 	skb_record_rx_queue(skb, qs - &adap->sge.qs[0]);
 
 	if (unlikely(p->vlan_valid)) {
@@ -2556,7 +2554,7 @@ static inline int handle_responses(struct adapter *adap, struct sge_rspq *q)
  * The MSI-X interrupt handler for an SGE response queue for the non-NAPI case
  * (i.e., response queue serviced in hard interrupt).
  */
-static irqreturn_t t3_sge_intr_msix(int irq, void *cookie)
+irqreturn_t t3_sge_intr_msix(int irq, void *cookie)
 {
 	struct sge_qset *qs = cookie;
 	struct adapter *adap = qs->adap;
@@ -3321,4 +3319,41 @@ void t3_sge_prep(struct adapter *adap, struct sge_params *p)
 	}
 
 	spin_lock_init(&adap->sge.reg_lock);
+}
+
+/**
+ *	t3_get_desc - dump an SGE descriptor for debugging purposes
+ *	@qs: the queue set
+ *	@qnum: identifies the specific queue (0..2: Tx, 3:response, 4..5: Rx)
+ *	@idx: the descriptor index in the queue
+ *	@data: where to dump the descriptor contents
+ *
+ *	Dumps the contents of a HW descriptor of an SGE queue.  Returns the
+ *	size of the descriptor.
+ */
+int t3_get_desc(const struct sge_qset *qs, unsigned int qnum, unsigned int idx,
+		unsigned char *data)
+{
+	if (qnum >= 6)
+		return -EINVAL;
+
+	if (qnum < 3) {
+		if (!qs->txq[qnum].desc || idx >= qs->txq[qnum].size)
+			return -EINVAL;
+		memcpy(data, &qs->txq[qnum].desc[idx], sizeof(struct tx_desc));
+		return sizeof(struct tx_desc);
+	}
+
+	if (qnum == 3) {
+		if (!qs->rspq.desc || idx >= qs->rspq.size)
+			return -EINVAL;
+		memcpy(data, &qs->rspq.desc[idx], sizeof(struct rsp_desc));
+		return sizeof(struct rsp_desc);
+	}
+
+	qnum -= 4;
+	if (!qs->fl[qnum].desc || idx >= qs->fl[qnum].size)
+		return -EINVAL;
+	memcpy(data, &qs->fl[qnum].desc[idx], sizeof(struct rx_desc));
+	return sizeof(struct rx_desc);
 }

@@ -21,8 +21,6 @@
 #include "ext4_jbd2.h"
 #include "mballoc.h"
 
-#include <trace/events/ext4.h>
-
 /*
  * balloc.c contains the blocks allocation and deallocation routines
  */
@@ -173,8 +171,7 @@ unsigned ext4_init_block_bitmap(struct super_block *sb, struct buffer_head *bh,
 		 * less than the blocksize * 8 ( which is the size
 		 * of bitmap ), set rest of the block bitmap to 1
 		 */
-		ext4_mark_bitmap_end(group_blocks, sb->s_blocksize * 8,
-				     bh->b_data);
+		mark_bitmap_end(group_blocks, sb->s_blocksize * 8, bh->b_data);
 	}
 	return free_blocks - ext4_group_used_meta_blocks(sb, block_group, gdp);
 }
@@ -344,7 +341,6 @@ ext4_read_block_bitmap(struct super_block *sb, ext4_group_t block_group)
 	 * We do it here so the bitmap uptodate bit
 	 * get set with buffer lock held.
 	 */
-	trace_ext4_read_block_bitmap_load(sb, block_group);
 	set_bitmap_uptodate(bh);
 	if (bh_submit_read(bh) < 0) {
 		put_bh(bh);
@@ -493,7 +489,7 @@ error_return:
  * Check if filesystem has nblocks free & available for allocation.
  * On success return 1, return 0 on failure.
  */
-static int ext4_has_free_blocks(struct ext4_sb_info *sbi, s64 nblocks)
+int ext4_has_free_blocks(struct ext4_sb_info *sbi, s64 nblocks)
 {
 	s64 free_blocks, dirty_blocks, root_blocks;
 	struct percpu_counter *fbc = &sbi->s_freeblocks_counter;
@@ -547,7 +543,7 @@ int ext4_claim_free_blocks(struct ext4_sb_info *sbi,
  *
  * ext4_should_retry_alloc() is called when ENOSPC is returned, and if
  * it is profitable to retry the operation, this function will wait
- * for the current or committing transaction to complete, and then
+ * for the current or commiting transaction to complete, and then
  * return TRUE.
  *
  * if the total number of retries exceed three times, return FALSE.
@@ -595,8 +591,7 @@ ext4_fsblk_t ext4_new_meta_blocks(handle_t *handle, struct inode *inode,
 	 * Account for the allocated meta blocks.  We will never
 	 * fail EDQUOT for metdata, but we do account for it.
 	 */
-	if (!(*errp) &&
-	    ext4_test_inode_state(inode, EXT4_STATE_DELALLOC_RESERVED)) {
+	if (!(*errp) && EXT4_I(inode)->i_delalloc_reserved_flag) {
 		spin_lock(&EXT4_I(inode)->i_block_reservation_lock);
 		EXT4_I(inode)->i_allocated_meta_blocks += ar.len;
 		spin_unlock(&EXT4_I(inode)->i_block_reservation_lock);

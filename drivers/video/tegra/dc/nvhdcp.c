@@ -26,6 +26,7 @@
 #include <asm/atomic.h>
 
 #include <mach/dc.h>
+#include <mach/nvhost.h>
 #include <mach/kfuse.h>
 
 #include <video/nvhdcp.h>
@@ -444,11 +445,7 @@ static int wait_key_ctrl(struct tegra_dc_hdmi_data *hdmi, u32 mask, u32 value)
 	do {
 		msleep(1);
 		ctrl = tegra_hdmi_readl(hdmi, HDMI_NV_PDISP_KEY_CTRL);
-#ifdef CONFIG_MACH_ANTARES
-		if (!!(ctrl & (mask)) == value)
-#else
 		if (((ctrl ^ value) & mask) == 0)
-#endif
 			break;
 	} while (--retries);
 	if (!retries) {
@@ -669,11 +666,7 @@ static int load_kfuse(struct tegra_dc_hdmi_data *hdmi)
 	tegra_hdmi_writel(hdmi, ctrl | PKEY_REQUEST_RELOAD_TRIGGER
 					| LOCAL_KEYS , HDMI_NV_PDISP_KEY_CTRL);
 
-#ifdef CONFIG_MACH_ANTARES
-	e = wait_key_ctrl(hdmi, PKEY_LOADED, 1);
-#else
 	e = wait_key_ctrl(hdmi, PKEY_LOADED, PKEY_LOADED);
-#endif
 	if (e) {
 		nvhdcp_err("key reload timeout\n");
 		return -EIO;
@@ -903,7 +896,7 @@ static void nvhdcp_downstream_worker(struct work_struct *work)
 	nvhdcp_vdbg("An is 0x%016llx\n", nvhdcp->a_n);
 	if (verify_ksv(nvhdcp->a_ksv)) {
 		nvhdcp_err("Aksv verify failure! (0x%016llx)\n", nvhdcp->a_ksv);
-		goto disable;
+		goto failure;
 	}
 
 	/* write Ainfo to receiver - set 1.1 only if b_caps supports it */
@@ -1027,11 +1020,6 @@ lost_hdmi:
 	hdcp_ctrl_run(hdmi, 0);
 
 err:
-	mutex_unlock(&nvhdcp->lock);
-	return;
-disable:
-	nvhdcp->state = STATE_OFF;
-	nvhdcp_set_plugged(nvhdcp, false);
 	mutex_unlock(&nvhdcp->lock);
 	return;
 }

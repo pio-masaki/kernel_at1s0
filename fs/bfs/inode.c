@@ -12,6 +12,7 @@
 #include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/fs.h>
+#include <linux/smp_lock.h>
 #include <linux/buffer_head.h>
 #include <linux/vfs.h>
 #include <linux/writeback.h>
@@ -214,10 +215,14 @@ static void bfs_put_super(struct super_block *s)
 	if (!info)
 		return;
 
+	lock_kernel();
+
 	mutex_destroy(&info->bfs_lock);
 	kfree(info->si_imap);
 	kfree(info);
 	s->s_fs_info = NULL;
+
+	unlock_kernel();
 }
 
 static int bfs_statfs(struct dentry *dentry, struct kstatfs *buf)
@@ -248,16 +253,9 @@ static struct inode *bfs_alloc_inode(struct super_block *sb)
 	return &bi->vfs_inode;
 }
 
-static void bfs_i_callback(struct rcu_head *head)
-{
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
-	kmem_cache_free(bfs_inode_cachep, BFS_I(inode));
-}
-
 static void bfs_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, bfs_i_callback);
+	kmem_cache_free(bfs_inode_cachep, BFS_I(inode));
 }
 
 static void init_once(void *foo)
@@ -457,16 +455,16 @@ out:
 	return ret;
 }
 
-static struct dentry *bfs_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data)
+static int bfs_get_sb(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, bfs_fill_super);
+	return get_sb_bdev(fs_type, flags, dev_name, data, bfs_fill_super, mnt);
 }
 
 static struct file_system_type bfs_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "bfs",
-	.mount		= bfs_mount,
+	.get_sb		= bfs_get_sb,
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };

@@ -22,6 +22,7 @@
 #include <linux/in.h>
 #include <linux/uio.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/mutex.h>
 #include <linux/kthread.h>
 #include <linux/freezer.h>
@@ -129,6 +130,15 @@ lockd(void *vrqstp)
 
 	dprintk("NFS locking service started (ver " LOCKD_VERSION ").\n");
 
+	/*
+	 * FIXME: it would be nice if lockd didn't spend its entire life
+	 * running under the BKL. At the very least, it would be good to
+	 * have someone clarify what it's intended to protect here. I've
+	 * seen some handwavy posts about posix locking needing to be
+	 * done under the BKL, but it's far from clear.
+	 */
+	lock_kernel();
+
 	if (!nlm_timeout)
 		nlm_timeout = LOCKD_DFLT_TIMEO;
 	nlmsvc_timeout = nlm_timeout * HZ;
@@ -185,6 +195,7 @@ lockd(void *vrqstp)
 	if (nlmsvc_ops)
 		nlmsvc_invalidate_all();
 	nlm_shutdown_hosts();
+	unlock_kernel();
 	return 0;
 }
 
@@ -195,7 +206,7 @@ static int create_lockd_listener(struct svc_serv *serv, const char *name,
 
 	xprt = svc_find_xprt(serv, name, family, 0);
 	if (xprt == NULL)
-		return svc_create_xprt(serv, name, &init_net, family, port,
+		return svc_create_xprt(serv, name, family, port,
 						SVC_SOCK_DEFAULTS);
 	svc_xprt_put(xprt);
 	return 0;

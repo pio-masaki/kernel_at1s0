@@ -711,14 +711,14 @@ static int __devinit a2065_init_one(struct zorro_dev *z,
 		return -EBUSY;
 	r2 = request_mem_region(mem_start, A2065_RAM_SIZE, "RAM");
 	if (!r2) {
-		release_mem_region(base_addr, sizeof(struct lance_regs));
+		release_resource(r1);
 		return -EBUSY;
 	}
 
 	dev = alloc_etherdev(sizeof(struct lance_private));
 	if (dev == NULL) {
-		release_mem_region(base_addr, sizeof(struct lance_regs));
-		release_mem_region(mem_start, A2065_RAM_SIZE);
+		release_resource(r1);
+		release_resource(r2);
 		return -ENOMEM;
 	}
 
@@ -764,8 +764,8 @@ static int __devinit a2065_init_one(struct zorro_dev *z,
 
 	err = register_netdev(dev);
 	if (err) {
-		release_mem_region(base_addr, sizeof(struct lance_regs));
-		release_mem_region(mem_start, A2065_RAM_SIZE);
+		release_resource(r1);
+		release_resource(r2);
 		free_netdev(dev);
 		return err;
 	}

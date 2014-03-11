@@ -72,7 +72,9 @@
 #include <linux/serial_core.h>
 #include <linux/serial.h>
 
-
+#ifndef MOD_PACKAGE_VERSION
+#define MOD_PACKAGE_VERSION		"1.6.0"
+#endif
 #define MOD_AUTHOR			"Option Wireless"
 #define MOD_DESCRIPTION			"USB High Speed Option driver"
 #define MOD_LICENSE			"GPL"
@@ -295,6 +297,10 @@ struct hso_device {
 	struct mutex mutex;
 };
 
+/* Device type */
+#define HSO_DEV_STATIC  	1
+#define HSO_DEV_DYNAMIC 	2
+
 /* Type of interface */
 #define HSO_INTF_MASK		0xFF00
 #define	HSO_INTF_MUX		0x0100
@@ -315,6 +321,7 @@ struct hso_device {
 #define	HSO_PORT_DIAG		0x10
 #define	HSO_PORT_MODEM		0x11
 #define	HSO_PORT_NETWORK	0x12
+#define	HSO_PORT_LOADER		0x13
 
 /* Additional device info */
 #define HSO_INFO_MASK		0xFF000000
@@ -324,7 +331,7 @@ struct hso_device {
 /* Prototypes                                                                */
 /*****************************************************************************/
 /* Serial driver functions */
-static int hso_serial_tiocmset(struct tty_struct *tty,
+static int hso_serial_tiocmset(struct tty_struct *tty, struct file *file,
 			       unsigned int set, unsigned int clear);
 static void ctrl_callback(struct urb *urb);
 static int put_rxbuf_data(struct urb *urb, struct hso_serial *serial);
@@ -399,7 +406,7 @@ static int disable_net;
 
 /* driver info */
 static const char driver_name[] = "hso";
-static const char tty_filename[] = "ttyHS";
+static const char tty_filename[] = "ttyHSO";
 static const char *version = __FILE__ ": " MOD_AUTHOR;
 /* the usb driver itself (registered in hso_init) */
 static struct usb_driver hso_driver;
@@ -409,11 +416,23 @@ static struct hso_device *serial_table[HSO_SERIAL_TTY_MINORS];
 static struct hso_device *network_table[HSO_MAX_NET_DEVICES];
 static spinlock_t serial_table_lock;
 
+struct hso_dev_config {
+	u8 dev_type;
+	s16 num_entries;
+	const s32 *entries;
+};
+
+
 static const s32 default_port_spec[] = {
 	HSO_INTF_MUX | HSO_PORT_NETWORK,
 	HSO_INTF_BULK | HSO_PORT_DIAG,
-	HSO_INTF_BULK | HSO_PORT_MODEM,
-	0
+	HSO_INTF_BULK | HSO_PORT_MODEM
+};
+
+static const struct hso_dev_config default_config = {
+	HSO_DEV_STATIC,
+	sizeof(default_port_spec)/sizeof(default_port_spec[0]),
+	default_port_spec
 };
 
 static const s32 icon321_port_spec[] = {
@@ -421,16 +440,67 @@ static const s32 icon321_port_spec[] = {
 	HSO_INTF_BULK | HSO_PORT_DIAG2,
 	HSO_INTF_BULK | HSO_PORT_MODEM,
 	HSO_INTF_BULK | HSO_PORT_DIAG,
-	0
+};
+
+static const struct hso_dev_config icon321_config = {
+	HSO_DEV_STATIC,
+	sizeof(icon321_port_spec)/sizeof(icon321_port_spec[0]),
+	icon321_port_spec
+};
+
+static const s32 gi65x_1_port_spec[] = {
+	0,
+	0,
+	0,
+	HSO_INTF_BULK | HSO_PORT_MODEM,
+	HSO_INTF_BULK | HSO_PORT_APP,
+	HSO_INTF_BULK | HSO_PORT_DIAG,
+};
+
+static const struct hso_dev_config gi65x_1_config = {
+	HSO_DEV_STATIC,
+	sizeof(gi65x_1_port_spec)/sizeof(gi65x_1_port_spec[0]),
+	gi65x_1_port_spec
+};
+
+static const s32 gi65x_2_port_spec[] = {
+	0,
+	0,
+	0,
+	0,
+	HSO_INTF_BULK | HSO_PORT_MODEM,
+	HSO_INTF_BULK | HSO_PORT_APP,
+	HSO_INTF_BULK | HSO_PORT_DIAG,
+};
+
+
+static const struct hso_dev_config gi65x_2_config = {
+	HSO_DEV_STATIC,
+	sizeof(gi65x_2_port_spec)/sizeof(gi65x_2_port_spec[0]),
+	gi65x_2_port_spec
+};
+
+static const struct hso_dev_config dynamic_config = {
+	HSO_DEV_DYNAMIC,
+	0,
+	NULL
 };
 
 #define default_port_device(vendor, product)	\
 	USB_DEVICE(vendor, product),	\
-		.driver_info = (kernel_ulong_t)default_port_spec
+		.driver_info = (kernel_ulong_t)&default_config
 
 #define icon321_port_device(vendor, product)	\
 	USB_DEVICE(vendor, product),	\
-		.driver_info = (kernel_ulong_t)icon321_port_spec
+		.driver_info = (kernel_ulong_t)&icon321_config
+
+#define dynamic_port_device(vendor, product)	\
+	USB_DEVICE(vendor, product),	\
+		.driver_info = (kernel_ulong_t)&dynamic_config
+
+#define gi65x_port_device(vendor, product, subtype) \
+	USB_DEVICE(vendor, product),	\
+		.driver_info = (kernel_ulong_t)&gi65x_ ##subtype##_config
 
 /* list of devices we support */
 static const struct usb_device_id hso_ids[] = {
@@ -456,38 +526,41 @@ static const struct usb_device_id hso_ids[] = {
 	{icon321_port_device(0x0af0, 0xd013)},	/* Module HSxPA */
 	{icon321_port_device(0x0af0, 0xd031)},	/* Icon-321 */
 	{icon321_port_device(0x0af0, 0xd033)},	/* Icon-322 */
-	{USB_DEVICE(0x0af0, 0x7301)},		/* GE40x */
-	{USB_DEVICE(0x0af0, 0x7361)},		/* GE40x */
-	{USB_DEVICE(0x0af0, 0x7381)},		/* GE40x */
-	{USB_DEVICE(0x0af0, 0x7401)},		/* GI 0401 */
-	{USB_DEVICE(0x0af0, 0x7501)},		/* GTM 382 */
-	{USB_DEVICE(0x0af0, 0x7601)},		/* GE40x */
-	{USB_DEVICE(0x0af0, 0x7701)},
-	{USB_DEVICE(0x0af0, 0x7706)},
-	{USB_DEVICE(0x0af0, 0x7801)},
-	{USB_DEVICE(0x0af0, 0x7901)},
-	{USB_DEVICE(0x0af0, 0x7A01)},
-	{USB_DEVICE(0x0af0, 0x7A05)},
-	{USB_DEVICE(0x0af0, 0x8200)},
-	{USB_DEVICE(0x0af0, 0x8201)},
-	{USB_DEVICE(0x0af0, 0x8300)},
-	{USB_DEVICE(0x0af0, 0x8302)},
-	{USB_DEVICE(0x0af0, 0x8304)},
-	{USB_DEVICE(0x0af0, 0x8400)},
-	{USB_DEVICE(0x0af0, 0x8600)},
-	{USB_DEVICE(0x0af0, 0x8800)},
-	{USB_DEVICE(0x0af0, 0x8900)},
-	{USB_DEVICE(0x0af0, 0x9000)},
-	{USB_DEVICE(0x0af0, 0xd035)},
-	{USB_DEVICE(0x0af0, 0xd055)},
-	{USB_DEVICE(0x0af0, 0xd155)},
-	{USB_DEVICE(0x0af0, 0xd255)},
-	{USB_DEVICE(0x0af0, 0xd057)},
-	{USB_DEVICE(0x0af0, 0xd157)},
-	{USB_DEVICE(0x0af0, 0xd257)},
-	{USB_DEVICE(0x0af0, 0xd357)},
-	{USB_DEVICE(0x0af0, 0xd058)},
-	{USB_DEVICE(0x0af0, 0xc100)},
+	{dynamic_port_device(0x0af0, 0x7301)},          /* GE40x */
+	{dynamic_port_device(0x0af0, 0x7361)},          /* GE40x */
+	{dynamic_port_device(0x0af0, 0x7381)},          /* GE40x */
+	{dynamic_port_device(0x0af0, 0x7401)},          /* GI 0401 */
+	{dynamic_port_device(0x0af0, 0x7501)},          /* GTM 382 */
+	{dynamic_port_device(0x0af0, 0x7601)},          /* GE40x */
+	{dynamic_port_device(0x0af0, 0x7701)},
+	{dynamic_port_device(0x0af0, 0x7706)},
+	{dynamic_port_device(0x0af0, 0x7801)},
+	{dynamic_port_device(0x0af0, 0x7901)},
+	{dynamic_port_device(0x0af0, 0x7A01)},
+	{dynamic_port_device(0x0af0, 0x7A05)},
+	{dynamic_port_device(0x0af0, 0x8200)},
+	{dynamic_port_device(0x0af0, 0x8201)},
+	{dynamic_port_device(0x0af0, 0x8300)},
+	{dynamic_port_device(0x0af0, 0x8302)},
+	{dynamic_port_device(0x0af0, 0x8304)},
+	{dynamic_port_device(0x0af0, 0x8400)},
+	{dynamic_port_device(0x0af0, 0x8600)},
+	{dynamic_port_device(0x0af0, 0x8701)},
+	{dynamic_port_device(0x0af0, 0x8800)},
+	{dynamic_port_device(0x0af0, 0x8900)},
+	{dynamic_port_device(0x0af0, 0x9000)},
+	{dynamic_port_device(0x0af0, 0xd035)},
+	{dynamic_port_device(0x0af0, 0xd055)},
+	{dynamic_port_device(0x0af0, 0xd155)},
+	{dynamic_port_device(0x0af0, 0xd255)},
+	{dynamic_port_device(0x0af0, 0xd057)},
+	{dynamic_port_device(0x0af0, 0xd157)},
+	{dynamic_port_device(0x0af0, 0xd257)},
+	{dynamic_port_device(0x0af0, 0xd357)},
+	{dynamic_port_device(0x0af0, 0xd058)},
+	{dynamic_port_device(0x0af0, 0xc100)},
+	{gi65x_port_device(0x0d46, 0x45a9, 1)},
+	{gi65x_port_device(0x0d46, 0x45ad, 2)},
 	{}
 };
 MODULE_DEVICE_TABLE(usb, hso_ids);
@@ -533,6 +606,9 @@ static ssize_t hso_sysfs_show_porttype(struct device *dev,
 		break;
 	case HSO_PORT_NETWORK:
 		port_name = "Network";
+		break;
+	case HSO_PORT_LOADER:
+		port_name = "Loader";
 		break;
 	default:
 		port_name = "Unknown";
@@ -843,7 +919,16 @@ static netdev_tx_t hso_net_start_xmit(struct sk_buff *skb,
 	return NETDEV_TX_OK;
 }
 
+static void hso_get_drvinfo(struct net_device *net, struct ethtool_drvinfo *info)
+{
+	struct hso_net *odev = netdev_priv(net);
+
+	strncpy(info->driver, driver_name, ETHTOOL_BUSINFO_LEN);
+	usb_make_path(odev->parent->usb, info->bus_info, sizeof info->bus_info);
+}
+
 static const struct ethtool_ops ops = {
+	.get_drvinfo = hso_get_drvinfo,
 	.get_link = ethtool_op_get_link
 };
 
@@ -1335,7 +1420,7 @@ static int hso_serial_open(struct tty_struct *tty, struct file *filp)
 
 	/* done */
 	if (result)
-		hso_serial_tiocmset(tty, TIOCM_RTS | TIOCM_DTR, 0);
+		hso_serial_tiocmset(tty, NULL, TIOCM_RTS | TIOCM_DTR, 0);
 err_out:
 	mutex_unlock(&serial->parent->mutex);
 	return result;
@@ -1625,11 +1710,11 @@ hso_wait_modem_status(struct hso_serial *serial, unsigned long arg)
  * NB: both 1->0 and 0->1 transitions are counted except for
  *     RI where only 0->1 is counted.
  */
-static int hso_get_count(struct tty_struct *tty,
-		  struct serial_icounter_struct *icount)
+static int hso_get_count(struct hso_serial *serial,
+			  struct serial_icounter_struct __user *icnt)
 {
+	struct serial_icounter_struct icount;
 	struct uart_icount cnow;
-	struct hso_serial *serial = get_serial_by_tty(tty);
 	struct hso_tiocmget  *tiocmget = serial->tiocmget;
 
 	memset(&icount, 0, sizeof(struct serial_icounter_struct));
@@ -1640,23 +1725,23 @@ static int hso_get_count(struct tty_struct *tty,
 	memcpy(&cnow, &tiocmget->icount, sizeof(struct uart_icount));
 	spin_unlock_irq(&serial->serial_lock);
 
-	icount->cts         = cnow.cts;
-	icount->dsr         = cnow.dsr;
-	icount->rng         = cnow.rng;
-	icount->dcd         = cnow.dcd;
-	icount->rx          = cnow.rx;
-	icount->tx          = cnow.tx;
-	icount->frame       = cnow.frame;
-	icount->overrun     = cnow.overrun;
-	icount->parity      = cnow.parity;
-	icount->brk         = cnow.brk;
-	icount->buf_overrun = cnow.buf_overrun;
+	icount.cts         = cnow.cts;
+	icount.dsr         = cnow.dsr;
+	icount.rng         = cnow.rng;
+	icount.dcd         = cnow.dcd;
+	icount.rx          = cnow.rx;
+	icount.tx          = cnow.tx;
+	icount.frame       = cnow.frame;
+	icount.overrun     = cnow.overrun;
+	icount.parity      = cnow.parity;
+	icount.brk         = cnow.brk;
+	icount.buf_overrun = cnow.buf_overrun;
 
-	return 0;
+	return copy_to_user(icnt, &icount, sizeof(icount)) ? -EFAULT : 0;
 }
 
 
-static int hso_serial_tiocmget(struct tty_struct *tty)
+static int hso_serial_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	int retval;
 	struct hso_serial *serial = get_serial_by_tty(tty);
@@ -1687,7 +1772,7 @@ static int hso_serial_tiocmget(struct tty_struct *tty)
 	return retval;
 }
 
-static int hso_serial_tiocmset(struct tty_struct *tty,
+static int hso_serial_tiocmset(struct tty_struct *tty, struct file *file,
 			       unsigned int set, unsigned int clear)
 {
 	int val = 0;
@@ -1730,10 +1815,11 @@ static int hso_serial_tiocmset(struct tty_struct *tty,
 			       USB_CTRL_SET_TIMEOUT);
 }
 
-static int hso_serial_ioctl(struct tty_struct *tty,
+static int hso_serial_ioctl(struct tty_struct *tty, struct file *file,
 			    unsigned int cmd, unsigned long arg)
 {
 	struct hso_serial *serial =  get_serial_by_tty(tty);
+	void __user *uarg = (void __user *)arg;
 	int ret = 0;
 	D4("IOCTL cmd: %d, arg: %ld", cmd, arg);
 
@@ -1742,6 +1828,10 @@ static int hso_serial_ioctl(struct tty_struct *tty,
 	switch (cmd) {
 	case TIOCMIWAIT:
 		ret = hso_wait_modem_status(serial, arg);
+		break;
+
+	case TIOCGICOUNT:
+		ret = hso_get_count(serial, uarg);
 		break;
 	default:
 		ret = -ENOIOCTLCMD;
@@ -2121,6 +2211,9 @@ static void hso_log_port(struct hso_device *hso_dev)
 		break;
 	case HSO_PORT_NETWORK:
 		port_type = "Network";
+		break;
+	case HSO_PORT_LOADER:
+		port_type = "Loader";
 		break;
 	default:
 		port_type = "Unknown";
@@ -2633,8 +2726,8 @@ static void hso_free_tiomget(struct hso_serial *serial)
 		return;
 	tiocmget = serial->tiocmget;
 	if (tiocmget) {
-		usb_free_urb(tiocmget->urb);
-		tiocmget->urb = NULL;
+			usb_free_urb(tiocmget->urb);
+			tiocmget->urb = NULL;
 		serial->tiocmget = NULL;
 		kfree(tiocmget);
 	}
@@ -2903,6 +2996,9 @@ static int hso_get_config_data(struct usb_interface *interface)
 	case 0xb:
 		result = HSO_PORT_VOICE;
 		break;
+	case 0xc:
+		result = HSO_PORT_LOADER;
+		break;
 	default:
 		result = 0;
 	}
@@ -2920,23 +3016,35 @@ static int hso_get_config_data(struct usb_interface *interface)
 static int hso_probe(struct usb_interface *interface,
 		     const struct usb_device_id *id)
 {
-	int mux, i, if_num, port_spec;
+	int mux, i, if_num, port_spec=0;
 	unsigned char port_mask;
 	struct hso_device *hso_dev = NULL;
 	struct hso_shared_int *shared_int;
 	struct hso_device *tmp_dev = NULL;
+	const struct hso_dev_config *cnf;
 
 	if_num = interface->altsetting->desc.bInterfaceNumber;
 
-	/* Get the interface/port specification from either driver_info or from
-	 * the device itself */
-	if (id->driver_info)
-		port_spec = ((u32 *)(id->driver_info))[if_num];
-	else
+	/* Get the device configuration from driver_info */
+	if(likely(id->driver_info)) {
+		cnf = (struct hso_dev_config *)id->driver_info;
+		switch(cnf->dev_type) {
+		case HSO_DEV_STATIC:
+			if(if_num <= cnf->num_entries)
+				port_spec = (s32)cnf->entries[if_num];
+		break;
+		case HSO_DEV_DYNAMIC:
 		port_spec = hso_get_config_data(interface);
+		break;
+		default:
+			return -ENODEV;
+		break;
+		}
+	} else
+		return -ENODEV;
 
 	if (interface->cur_altsetting->desc.bInterfaceClass != 0xFF) {
-		dev_err(&interface->dev, "Not our interface\n");
+		dev_info(&interface->dev, "Not our interface\n");
 		return -ENODEV;
 	}
 	/* Check if we need to switch to alt interfaces prior to port
@@ -3277,7 +3385,6 @@ static const struct tty_operations hso_serial_ops = {
 	.chars_in_buffer = hso_serial_chars_in_buffer,
 	.tiocmget = hso_serial_tiocmget,
 	.tiocmset = hso_serial_tiocmset,
-	.get_icount = hso_get_count,
 	.unthrottle = hso_unthrottle
 };
 
@@ -3367,6 +3474,7 @@ module_exit(hso_exit);
 MODULE_AUTHOR(MOD_AUTHOR);
 MODULE_DESCRIPTION(MOD_DESCRIPTION);
 MODULE_LICENSE(MOD_LICENSE);
+MODULE_INFO(PackageVersion, MOD_PACKAGE_VERSION);
 
 /* change the debug level (eg: insmod hso.ko debug=0x04) */
 MODULE_PARM_DESC(debug, "Level of debug [0x01 | 0x02 | 0x04 | 0x08 | 0x10]");

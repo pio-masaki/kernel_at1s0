@@ -2,7 +2,7 @@
  * Driver for One Laptop Per Child ‘CAFÉ’ controller, aka Marvell 88ALP01
  *
  * The data sheet for this device can be found at:
- *    http://wiki.laptop.org/go/Datasheets 
+ *    http://www.marvell.com/products/pcconn/88ALP01.jsp
  *
  * Copyright © 2006 Red Hat, Inc.
  * Copyright © 2006 David Woodhouse <dwmw2@infradead.org>

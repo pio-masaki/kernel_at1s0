@@ -101,7 +101,7 @@ int fscache_submit_exclusive_op(struct fscache_object *object,
 		object->n_ops++;
 		object->n_exclusive++;	/* reads and writes must wait */
 
-		if (object->n_ops > 1) {
+		if (object->n_ops > 0) {
 			atomic_inc(&op->usage);
 			list_add_tail(&op->pend_link, &object->pending_ops);
 			fscache_stat(&fscache_n_op_pend);

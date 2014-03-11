@@ -684,9 +684,10 @@ void fc_disc_stop(struct fc_lport *lport)
 {
 	struct fc_disc *disc = &lport->disc;
 
-	if (disc->pending)
+	if (disc) {
 		cancel_delayed_work_sync(&disc->disc_work);
-	fc_disc_stop_rports(disc);
+		fc_disc_stop_rports(disc);
+	}
 }
 
 /**

@@ -39,7 +39,7 @@
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/gfp.h>
 #include <asm/irq.h>
 #include <asm/io.h>
@@ -79,7 +79,6 @@
 					 dev.rec_sample_rate /		\
 					 dev.rec_channels)
 
-static DEFINE_MUTEX(msnd_pinnacle_mutex);
 static multisound_dev_t			dev;
 
 #ifndef HAVE_DSPCODEH
@@ -652,12 +651,12 @@ static long dev_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	ret = -EINVAL;
 
-	mutex_lock(&msnd_pinnacle_mutex);
+	lock_kernel();
 	if (minor == dev.dsp_minor)
 		ret = dsp_ioctl(file, cmd, arg);
 	else if (minor == dev.mixer_minor)
 		ret = mixer_ioctl(cmd, arg);
-	mutex_unlock(&msnd_pinnacle_mutex);
+	unlock_kernel();
 
 	return ret;
 }
@@ -762,7 +761,7 @@ static int dev_open(struct inode *inode, struct file *file)
 	int minor = iminor(inode);
 	int err = 0;
 
-	mutex_lock(&msnd_pinnacle_mutex);
+	lock_kernel();
 	if (minor == dev.dsp_minor) {
 		if ((file->f_mode & FMODE_WRITE &&
 		     test_bit(F_AUDIO_WRITE_INUSE, &dev.flags)) ||
@@ -792,7 +791,7 @@ static int dev_open(struct inode *inode, struct file *file)
 	} else
 		err = -EINVAL;
 out:
-	mutex_unlock(&msnd_pinnacle_mutex);
+	unlock_kernel();
 	return err;
 }
 
@@ -801,14 +800,14 @@ static int dev_release(struct inode *inode, struct file *file)
 	int minor = iminor(inode);
 	int err = 0;
 
-	mutex_lock(&msnd_pinnacle_mutex);
+	lock_kernel();
 	if (minor == dev.dsp_minor)
 		err = dsp_release(file);
 	else if (minor == dev.mixer_minor) {
 		/* nothing */
 	} else
 		err = -EINVAL;
-	mutex_unlock(&msnd_pinnacle_mutex);
+	unlock_kernel();
 	return err;
 }
 
@@ -1118,7 +1117,6 @@ static const struct file_operations dev_fileops = {
 	.unlocked_ioctl	= dev_ioctl,
 	.open		= dev_open,
 	.release	= dev_release,
-	.llseek		= noop_llseek,
 };
 
 static int reset_dsp(void)

@@ -46,12 +46,11 @@ int ip4_datagram_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 		if (!saddr)
 			saddr = inet->mc_addr;
 	}
-	rt = ip_route_connect(usin->sin_addr.s_addr, saddr,
-			      RT_CONN_FLAGS(sk), oif,
-			      sk->sk_protocol,
-			      inet->inet_sport, usin->sin_port, sk, true);
-	if (IS_ERR(rt)) {
-		err = PTR_ERR(rt);
+	err = ip_route_connect(&rt, usin->sin_addr.s_addr, saddr,
+			       RT_CONN_FLAGS(sk), oif,
+			       sk->sk_protocol,
+			       inet->inet_sport, usin->sin_port, sk, 1);
+	if (err) {
 		if (err == -ENETUNREACH)
 			IP_INC_STATS_BH(sock_net(sk), IPSTATS_MIB_OUTNOROUTES);
 		return err;
@@ -74,6 +73,6 @@ int ip4_datagram_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 	inet->inet_id = jiffies;
 
 	sk_dst_set(sk, &rt->dst);
-	return 0;
+	return(0);
 }
 EXPORT_SYMBOL(ip4_datagram_connect);

@@ -14,7 +14,7 @@
 #include <asm/mach/arch.h>
 #include <asm/mach-types.h>
 #include <mach/generic.h>
-#include <mach/hardware.h>
+#include <mach/spear.h>
 
 /* padmux devices to enable */
 static struct pmx_dev *pmx_devs[] = {
@@ -28,7 +28,7 @@ static struct pmx_dev *pmx_devs[] = {
 	/* spear300 specific devices */
 	&pmx_fsmc_2_chips,
 	&pmx_clcd,
-	&pmx_telecom_sdhci_4bit,
+	&pmx_telecom_sdio_4bit,
 	&pmx_gpio1,
 };
 
@@ -51,13 +51,14 @@ static void __init spear300_evb_init(void)
 {
 	unsigned int i;
 
-	/* padmux initialization, must be done before spear300_init */
+	/* call spear300 machine init function */
+	spear300_init();
+
+	/* padmux initialization */
 	pmx_driver.mode = &photo_frame_mode;
 	pmx_driver.devs = pmx_devs;
 	pmx_driver.devs_count = ARRAY_SIZE(pmx_devs);
-
-	/* call spear300 machine init function */
-	spear300_init();
+	spear300_pmx_init();
 
 	/* Add Platform Devices */
 	platform_add_devices(plat_devs, ARRAY_SIZE(plat_devs));
@@ -71,6 +72,6 @@ MACHINE_START(SPEAR300, "ST-SPEAR300-EVB")
 	.boot_params	=	0x00000100,
 	.map_io		=	spear3xx_map_io,
 	.init_irq	=	spear3xx_init_irq,
-	.timer		=	&spear3xx_timer,
+	.timer		=	&spear_sys_timer,
 	.init_machine	=	spear300_evb_init,
 MACHINE_END

@@ -28,7 +28,7 @@ int force_sensor;
 static int dump_bridge;
 int dump_sensor;
 
-static const struct usb_device_id m5602_table[] = {
+static const __devinitdata struct usb_device_id m5602_table[] = {
 	{USB_DEVICE(0x0402, 0x5602)},
 	{}
 };
@@ -406,12 +406,18 @@ static struct usb_driver sd_driver = {
 /* -- module insert / remove -- */
 static int __init mod_m5602_init(void)
 {
-	return usb_register(&sd_driver);
+	int ret;
+	ret = usb_register(&sd_driver);
+	if (ret < 0)
+		return ret;
+	PDEBUG(D_PROBE, "registered");
+	return 0;
 }
 
 static void __exit mod_m5602_exit(void)
 {
 	usb_deregister(&sd_driver);
+	PDEBUG(D_PROBE, "deregistered");
 }
 
 module_init(mod_m5602_init);

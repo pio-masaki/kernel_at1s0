@@ -64,6 +64,7 @@
 #define ACPI_PROCESSOR_CLASS            "processor"
 #define _COMPONENT              ACPI_PROCESSOR_COMPONENT
 ACPI_MODULE_NAME("processor_idle");
+#define ACPI_PROCESSOR_FILE_POWER	"power"
 #define PM_TIMER_TICK_NS		(1000000000ULL/PM_TIMER_FREQUENCY)
 #define C2_OVERHEAD			1	/* 1us */
 #define C3_OVERHEAD			1	/* 1us */
@@ -78,13 +79,6 @@ module_param(bm_check_disable, uint, 0000);
 
 static unsigned int latency_factor __read_mostly = 2;
 module_param(latency_factor, uint, 0644);
-
-static int disabled_by_idle_boot_param(void)
-{
-	return boot_option_idle_override == IDLE_POLL ||
-		boot_option_idle_override == IDLE_FORCE_MWAIT ||
-		boot_option_idle_override == IDLE_HALT;
-}
 
 /*
  * IBM ThinkPad R40e crashes mysteriously when going into C2 or C3.
@@ -462,7 +456,7 @@ static int acpi_processor_get_power_info_cst(struct acpi_processor *pr)
 				continue;
 			}
 			if (cx.type == ACPI_STATE_C1 &&
-			    (boot_option_idle_override == IDLE_NOMWAIT)) {
+					(idle_halt || idle_nomwait)) {
 				/*
 				 * In most cases the C1 space_id obtained from
 				 * _CST object is FIXED_HARDWARE access mode.
@@ -753,7 +747,7 @@ static int acpi_idle_enter_c1(struct cpuidle_device *dev,
 	struct acpi_processor *pr;
 	struct acpi_processor_cx *cx = cpuidle_get_statedata(state);
 
-	pr = __this_cpu_read(processors);
+	pr = __get_cpu_var(processors);
 
 	if (unlikely(!pr))
 		return 0;
@@ -794,7 +788,7 @@ static int acpi_idle_enter_simple(struct cpuidle_device *dev,
 	s64 idle_time_ns;
 	s64 idle_time;
 
-	pr = __this_cpu_read(processors);
+	pr = __get_cpu_var(processors);
 
 	if (unlikely(!pr))
 		return 0;
@@ -871,7 +865,7 @@ static int acpi_idle_enter_bm(struct cpuidle_device *dev,
 	s64 idle_time;
 
 
-	pr = __this_cpu_read(processors);
+	pr = __get_cpu_var(processors);
 
 	if (unlikely(!pr))
 		return 0;
@@ -1019,10 +1013,12 @@ static int acpi_processor_setup_cpuidle(struct acpi_processor *pr)
 		strncpy(state->desc, cx->desc, CPUIDLE_DESC_LEN);
 		state->exit_latency = cx->latency;
 		state->target_residency = cx->latency * latency_factor;
+		state->power_usage = cx->power;
 
 		state->flags = 0;
 		switch (cx->type) {
 			case ACPI_STATE_C1:
+			state->flags |= CPUIDLE_FLAG_SHALLOW;
 			if (cx->entry_method == ACPI_CSTATE_FFH)
 				state->flags |= CPUIDLE_FLAG_TIME_VALID;
 
@@ -1031,13 +1027,16 @@ static int acpi_processor_setup_cpuidle(struct acpi_processor *pr)
 			break;
 
 			case ACPI_STATE_C2:
+			state->flags |= CPUIDLE_FLAG_BALANCED;
 			state->flags |= CPUIDLE_FLAG_TIME_VALID;
 			state->enter = acpi_idle_enter_simple;
 			dev->safe_state = state;
 			break;
 
 			case ACPI_STATE_C3:
+			state->flags |= CPUIDLE_FLAG_DEEP;
 			state->flags |= CPUIDLE_FLAG_TIME_VALID;
+			state->flags |= CPUIDLE_FLAG_CHECK_BM;
 			state->enter = pr->flags.bm_check ?
 					acpi_idle_enter_bm :
 					acpi_idle_enter_simple;
@@ -1061,7 +1060,7 @@ int acpi_processor_cst_has_changed(struct acpi_processor *pr)
 {
 	int ret = 0;
 
-	if (disabled_by_idle_boot_param())
+	if (boot_option_idle_override)
 		return 0;
 
 	if (!pr)
@@ -1092,10 +1091,19 @@ int __cpuinit acpi_processor_power_init(struct acpi_processor *pr,
 	acpi_status status = 0;
 	static int first_run;
 
-	if (disabled_by_idle_boot_param())
+	if (boot_option_idle_override)
 		return 0;
 
 	if (!first_run) {
+		if (idle_halt) {
+			/*
+			 * When the boot option of "idle=halt" is added, halt
+			 * is used for CPU IDLE.
+			 * In such case C2/C3 is meaningless. So the max_cstate
+			 * is set to one.
+			 */
+			max_cstate = 1;
+		}
 		dmi_check_system(processor_power_dmi_table);
 		max_cstate = acpi_processor_cstate_check(max_cstate);
 		if (max_cstate < ACPI_C_STATES_MAX)
@@ -1136,7 +1144,7 @@ int __cpuinit acpi_processor_power_init(struct acpi_processor *pr,
 int acpi_processor_power_exit(struct acpi_processor *pr,
 			      struct acpi_device *device)
 {
-	if (disabled_by_idle_boot_param())
+	if (boot_option_idle_override)
 		return 0;
 
 	cpuidle_unregister_device(&pr->power.dev);

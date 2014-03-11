@@ -59,8 +59,4 @@ void do_hardwall_trap(struct pt_regs *, int fault_num);
 void do_breakpoint(struct pt_regs *, int fault_num);
 
 
-#ifdef __tilegx__
-void gx_singlestep_handle(struct pt_regs *, int fault_num);
-#endif
-
 #endif /* _ASM_TILE_SYSCALLS_H */

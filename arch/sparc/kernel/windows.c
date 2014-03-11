@@ -9,6 +9,7 @@
 #include <linux/string.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 
 #include <asm/uaccess.h>
 

@@ -4,8 +4,6 @@
  * Copyright (C) 2010 Google, Inc.
  * Author: Erik Gilling <konkers@android.com>
  *
- * Copyright (C) 2010-2011 NVIDIA Corporation
- *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
  * may be copied, distributed, and modified under those terms.
@@ -17,89 +15,67 @@
  *
  */
 
-
-#include <linux/debugfs.h>
+#ifdef CONFIG_PROC_FS
+#include <linux/proc_fs.h>
+#endif
+#if defined(DEBUG) || defined(CONFIG_PROC_FS)
+#include <linux/seq_file.h>
+#endif
 #include <linux/fb.h>
 #include <linux/i2c.h>
-#include <linux/seq_file.h>
 #include <linux/vmalloc.h>
 
 #include "edid.h"
-
-struct tegra_edid_pvt {
-	struct kref			refcnt;
-	struct tegra_edid_hdmi_eld	eld;
-	bool				support_stereo;
-	bool				support_underscan;
-	/* Note: dc_edid must remain the last member */
-	struct tegra_dc_edid		dc_edid;
-};
 
 struct tegra_edid {
 	struct i2c_client	*client;
 	struct i2c_board_info	info;
 	int			bus;
 
-	struct tegra_edid_pvt	*data;
-
-	struct mutex		lock;
+	u8			*data;
+	unsigned		len;
+	u8			support_stereo;
+	struct tegra_edid_hdmi_eld		eld;
 };
 
-#if defined(DEBUG) || defined(CONFIG_DEBUG_FS)
+#if defined(DEBUG) || defined(CONFIG_PROC_FS)
 static int tegra_edid_show(struct seq_file *s, void *unused)
 {
 	struct tegra_edid *edid = s->private;
-	struct tegra_dc_edid *data;
-	u8 *buf;
 	int i;
 
-	data = tegra_edid_get_data(edid);
-	if (!data) {
-		seq_printf(s, "No EDID\n");
-		return 0;
-	}
-
-	buf = data->buf;
-
-	for (i = 0; i < data->len; i++) {
-		if (i % 16 == 0)
-			seq_printf(s, "edid[%03x] =", i);
-
-		seq_printf(s, " %02x", buf[i]);
+	seq_printf(s, "I2C channel %d EDID :\n", edid->bus);
+	for (i = 0; i < edid->len; i++) {
+		seq_printf(s, " %02x", edid->data[i]);
 
 		if (i % 16 == 15)
 			seq_printf(s, "\n");
 	}
 
-	tegra_edid_put_data(data);
-
 	return 0;
 }
 #endif
 
-#ifdef CONFIG_DEBUG_FS
-static int tegra_edid_debug_open(struct inode *inode, struct file *file)
+#ifdef CONFIG_PROC_FS
+static int tegra_edid_proc_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, tegra_edid_show, inode->i_private);
+	return single_open(file, tegra_edid_show, PDE(inode)->data);
 }
 
-static const struct file_operations tegra_edid_debug_fops = {
-	.open		= tegra_edid_debug_open,
+static const struct file_operations tegra_edid_proc_fops = {
+	.owner          = THIS_MODULE,
+	.open		= tegra_edid_proc_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };
 
-void tegra_edid_debug_add(struct tegra_edid *edid)
+void tegra_edid_proc_add(struct tegra_edid *edid)
 {
 	char name[] = "edidX";
 
 	snprintf(name, sizeof(name), "edid%1d", edid->bus);
-	debugfs_create_file(name, S_IRUGO, NULL, edid, &tegra_edid_debug_fops);
-}
-#else
-void tegra_edid_debug_add(struct tegra_edid *edid)
-{
+	proc_create_data(name, S_IRUGO, NULL, &tegra_edid_proc_fops, edid);
 }
 #endif
 
@@ -133,13 +109,9 @@ static void tegra_edid_dump(struct tegra_edid *edid)
 		i += 256;
 	}
 }
-#else
-static void tegra_edid_dump(struct tegra_edid *edid)
-{
-}
 #endif
 
-int tegra_edid_read_block(struct tegra_edid *edid, int block, u8 *data)
+static int tegra_edid_read_block(struct tegra_edid *edid, int block, u8 *data)
 {
 	u8 block_buf[] = {block >> 1};
 	u8 cmd_buf[] = {(block & 0x1) * 128};
@@ -176,23 +148,18 @@ int tegra_edid_read_block(struct tegra_edid *edid, int block, u8 *data)
 
 	status = i2c_transfer(edid->client->adapter, m, msg_len);
 
-	if (status < 0) {
-		printk(KERN_ERR "failed to read EDID block: %d\n", status);
+	if (status < 0)
 		return status;
-	}
 
-	if (status != msg_len) {
-		printk(KERN_ERR "failed to read EDID block: status=%d, msg_len=%d\n", status, msg_len);
+	if (status != msg_len)
 		return -EIO;
-	}
 
 	return 0;
 }
 
-int tegra_edid_parse_ext_block(const u8 *raw, int idx,
-			       struct tegra_edid_pvt *edid)
+int tegra_edid_parse_ext_block(u8 *raw, int idx, struct tegra_edid *edid)
 {
-	const u8 *ptr;
+	u8 *ptr;
 	u8 tmp;
 	u8 code;
 	int len;
@@ -215,12 +182,6 @@ int tegra_edid_parse_ext_block(const u8 *raw, int idx,
 			basic_audio = true;
 		}
 	}
-
-	if (raw[3] & 0x80)
-		edid->support_underscan = 1;
-	else
-		edid->support_underscan = 0;
-
 	ptr = &raw[4];
 
 	while (ptr < &raw[idx]) {
@@ -240,7 +201,7 @@ int tegra_edid_parse_ext_block(const u8 *raw, int idx,
 			edid->eld.sad_count = len;
 			edid->eld.conn_type = 0x00;
 			edid->eld.support_hdcp = 0x00;
-			for (i = 0; (i < len) && (i < ELD_MAX_SAD); i ++)
+			for (i = 0; (i < len) && (i < ELD_MAX_SAD); i++)
 				edid->eld.sad[i] = ptr[i + 1];
 			len++;
 			ptr += len; /* adding the header */
@@ -320,99 +281,13 @@ int tegra_edid_mode_support_stereo(struct fb_videomode *mode)
 	if (!mode)
 		return 0;
 
-	if (mode->xres == 1280 &&
-		mode->yres == 720 &&
-		((mode->refresh == 60) || (mode->refresh == 50)))
+	if (mode->xres == 1280 && mode->yres == 720 && mode->refresh == 60)
 		return 1;
 
-	/* Disabling 1080p stereo mode due to bug 869099. */
-	/* Must re-enable this to 1 once it is fixed. */
-	if (mode->xres == 1920 && mode->yres == 1080 && mode->refresh == 24)
-		return 0;
+	if (mode->xres == 1280 && mode->yres == 720 && mode->refresh == 50)
+		return 1;
 
 	return 0;
-}
-
-static void data_release(struct kref *ref)
-{
-	struct tegra_edid_pvt *data =
-		container_of(ref, struct tegra_edid_pvt, refcnt);
-	vfree(data);
-}
-
-int tegra_edid_get_monspecs_test(struct tegra_edid *edid,
-			struct fb_monspecs *specs, unsigned char *edid_ptr)
-{
-	int i, j, ret;
-	int extension_blocks;
-	struct tegra_edid_pvt *new_data, *old_data;
-	u8 *data;
-
-	new_data = vmalloc(SZ_32K + sizeof(struct tegra_edid_pvt));
-	if (!new_data)
-		return -ENOMEM;
-
-	kref_init(&new_data->refcnt);
-
-	new_data->support_stereo = 0;
-	new_data->support_underscan = 0;
-
-	data = new_data->dc_edid.buf;
-	memcpy(data, edid_ptr, 128);
-
-	memset(specs, 0x0, sizeof(struct fb_monspecs));
-	memset(&new_data->eld, 0x0, sizeof(new_data->eld));
-	fb_edid_to_monspecs(data, specs);
-	if (specs->modedb == NULL) {
-		ret = -EINVAL;
-		goto fail;
-	}
-
-	memcpy(new_data->eld.monitor_name, specs->monitor,
-					sizeof(specs->monitor));
-
-	new_data->eld.mnl = strlen(new_data->eld.monitor_name) + 1;
-	new_data->eld.product_id[0] = data[0x8];
-	new_data->eld.product_id[1] = data[0x9];
-	new_data->eld.manufacture_id[0] = data[0xA];
-	new_data->eld.manufacture_id[1] = data[0xB];
-
-	extension_blocks = data[0x7e];
-	for (i = 1; i <= extension_blocks; i++) {
-		memcpy(data+128, edid_ptr+128, 128);
-
-		if (data[i * 128] == 0x2) {
-			fb_edid_add_monspecs(data + i * 128, specs);
-
-			tegra_edid_parse_ext_block(data + i * 128,
-					data[i * 128 + 2], new_data);
-
-			if (new_data->support_stereo) {
-				for (j = 0; j < specs->modedb_len; j++) {
-					if (tegra_edid_mode_support_stereo(
-						&specs->modedb[j]))
-						specs->modedb[j].vmode |=
-						FB_VMODE_STEREO_FRAME_PACK;
-				}
-			}
-		}
-	}
-
-	new_data->dc_edid.len = i * 128;
-
-	mutex_lock(&edid->lock);
-	old_data = edid->data;
-	edid->data = new_data;
-	mutex_unlock(&edid->lock);
-
-	if (old_data)
-		kref_put(&old_data->refcnt, data_release);
-
-	tegra_edid_dump(edid);
-	return 0;
-fail:
-	vfree(new_data);
-	return ret;
 }
 
 int tegra_edid_get_monspecs(struct tegra_edid *edid, struct fb_monspecs *specs)
@@ -421,53 +296,39 @@ int tegra_edid_get_monspecs(struct tegra_edid *edid, struct fb_monspecs *specs)
 	int j;
 	int ret;
 	int extension_blocks;
-	struct tegra_edid_pvt *new_data, *old_data;
-	u8 *data;
 
-	new_data = vmalloc(SZ_32K + sizeof(struct tegra_edid_pvt));
-	if (!new_data) {
-		printk(KERN_ERR "******** tegra_edid_get_monspecs(): vmalloc() failed");
-		return -ENOMEM;
-	}
+	edid->support_stereo = 0;
 
-	kref_init(&new_data->refcnt);
-
-	new_data->support_stereo = 0;
-
-	data = new_data->dc_edid.buf;
-
-	ret = tegra_edid_read_block(edid, 0, data);
+	ret = tegra_edid_read_block(edid, 0, edid->data);
 	if (ret)
-		goto fail;
+		return ret;
 
 	memset(specs, 0x0, sizeof(struct fb_monspecs));
-	memset(&new_data->eld, 0x0, sizeof(new_data->eld));
-	fb_edid_to_monspecs(data, specs);
-	if (specs->modedb == NULL) {
-		ret = -EINVAL;
-		goto fail;
-	}
-	memcpy(new_data->eld.monitor_name, specs->monitor, sizeof(specs->monitor));
-	new_data->eld.mnl = strlen(new_data->eld.monitor_name) + 1;
-	new_data->eld.product_id[0] = data[0x8];
-	new_data->eld.product_id[1] = data[0x9];
-	new_data->eld.manufacture_id[0] = data[0xA];
-	new_data->eld.manufacture_id[1] = data[0xB];
+	memset(&edid->eld, 0x0, sizeof(struct tegra_edid_hdmi_eld));
+	fb_edid_to_monspecs(edid->data, specs);
+	if (specs->modedb == NULL)
+		return -EINVAL;
+	memcpy(edid->eld.monitor_name, specs->monitor, sizeof(specs->monitor));
+	edid->eld.mnl = strlen(edid->eld.monitor_name) + 1;
+	edid->eld.product_id[0] = edid->data[0x8];
+	edid->eld.product_id[1] = edid->data[0x9];
+	edid->eld.manufacture_id[0] = edid->data[0xA];
+	edid->eld.manufacture_id[1] = edid->data[0xB];
 
-	extension_blocks = data[0x7e];
+	extension_blocks = edid->data[0x7e];
 
 	for (i = 1; i <= extension_blocks; i++) {
-		ret = tegra_edid_read_block(edid, i, data + i * 128);
+		ret = tegra_edid_read_block(edid, i, edid->data + i * 128);
 		if (ret < 0)
 			break;
 
-		if (data[i * 128] == 0x2) {
-			fb_edid_add_monspecs(data + i * 128, specs);
+		if (edid->data[i * 128] == 0x2) {
+			fb_edid_add_monspecs(edid->data + i * 128, specs);
 
-			tegra_edid_parse_ext_block(data + i * 128,
-					data[i * 128 + 2], new_data);
+			tegra_edid_parse_ext_block(edid->data + i * 128,
+					edid->data[i * 128 + 2], edid);
 
-			if (new_data->support_stereo) {
+			if (edid->support_stereo) {
 				for (j = 0; j < specs->modedb_len; j++) {
 					if (tegra_edid_mode_support_stereo(
 						&specs->modedb[j]))
@@ -478,38 +339,21 @@ int tegra_edid_get_monspecs(struct tegra_edid *edid, struct fb_monspecs *specs)
 		}
 	}
 
-	new_data->dc_edid.len = i * 128;
+	edid->len = i * 128;
 
-	mutex_lock(&edid->lock);
-	old_data = edid->data;
-	edid->data = new_data;
-	mutex_unlock(&edid->lock);
-
-	if (old_data)
-		kref_put(&old_data->refcnt, data_release);
-
+#ifdef DEBUG
 	tegra_edid_dump(edid);
+#endif
 	return 0;
-
-fail:
-	vfree(new_data);
-	return ret;
 }
 
-int tegra_edid_underscan_supported(struct tegra_edid *edid)
+int tegra_edid_get_eld(struct tegra_edid *edid,
+			struct tegra_edid_hdmi_eld *elddata)
 {
-	if ((!edid) || (!edid->data))
-		return 0;
-
-	return edid->data->support_underscan;
-}
-
-int tegra_edid_get_eld(struct tegra_edid *edid, struct tegra_edid_hdmi_eld *elddata)
-{
-	if (!elddata || !edid->data)
+	if (!elddata)
 		return -EFAULT;
 
-	memcpy(elddata,&edid->data->eld,sizeof(struct tegra_edid_hdmi_eld));
+	memcpy(elddata, &edid->eld, sizeof(struct tegra_edid_hdmi_eld));
 
 	return 0;
 }
@@ -524,7 +368,11 @@ struct tegra_edid *tegra_edid_create(int bus)
 	if (!edid)
 		return ERR_PTR(-ENOMEM);
 
-	mutex_init(&edid->lock);
+	edid->data = vmalloc(SZ_32K);
+	if (!edid->data) {
+		err = -ENOMEM;
+		goto free_edid;
+	}
 	strlcpy(edid->info.type, "tegra_edid", sizeof(edid->info.type));
 	edid->bus = bus;
 	edid->info.addr = 0x50;
@@ -546,11 +394,14 @@ struct tegra_edid *tegra_edid_create(int bus)
 		goto free_edid;
 	}
 
-	tegra_edid_debug_add(edid);
+#ifdef CONFIG_PROC_FS
+	tegra_edid_proc_add(edid);
+#endif
 
 	return edid;
 
 free_edid:
+	vfree(edid->data);
 	kfree(edid);
 
 	return ERR_PTR(err);
@@ -558,35 +409,15 @@ free_edid:
 
 void tegra_edid_destroy(struct tegra_edid *edid)
 {
+#ifdef CONFIG_PROC_FS
+	char name[] = "edidX";
+
+	snprintf(name, sizeof(name), "edid%1d", edid->bus);
+	remove_proc_entry(name, NULL);
+#endif
 	i2c_release_client(edid->client);
-	if (edid->data)
-		kref_put(&edid->data->refcnt, data_release);
+	vfree(edid->data);
 	kfree(edid);
-}
-
-struct tegra_dc_edid *tegra_edid_get_data(struct tegra_edid *edid)
-{
-	struct tegra_edid_pvt *data;
-
-	mutex_lock(&edid->lock);
-	data = edid->data;
-	if (data)
-		kref_get(&data->refcnt);
-	mutex_unlock(&edid->lock);
-
-	return data ? &data->dc_edid : NULL;
-}
-
-void tegra_edid_put_data(struct tegra_dc_edid *data)
-{
-	struct tegra_edid_pvt *pvt;
-
-	if (!data)
-		return;
-
-	pvt = container_of(data, struct tegra_edid_pvt, dc_edid);
-
-	kref_put(&pvt->refcnt, data_release);
 }
 
 static const struct i2c_device_id tegra_edid_id[] = {

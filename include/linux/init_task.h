@@ -12,13 +12,6 @@
 #include <linux/securebits.h>
 #include <net/net_namespace.h>
 
-#ifdef CONFIG_SMP
-# define INIT_PUSHABLE_TASKS(tsk)					\
-	.pushable_tasks = PLIST_NODE_INIT(tsk.pushable_tasks, MAX_PRIO),
-#else
-# define INIT_PUSHABLE_TASKS(tsk)
-#endif
-
 extern struct files_struct init_files;
 extern struct fs_struct init_fs;
 
@@ -36,8 +29,6 @@ extern struct fs_struct init_fs;
 		.running = 0,						\
 		.lock = __SPIN_LOCK_UNLOCKED(sig.cputimer.lock),	\
 	},								\
-	.cred_guard_mutex =						\
-		 __MUTEX_INITIALIZER(sig.cred_guard_mutex),		\
 }
 
 extern struct nsproxy init_nsproxy;
@@ -90,25 +81,12 @@ extern struct group_info init_groups;
  */
 # define CAP_INIT_BSET  CAP_FULL_SET
 
-#ifdef CONFIG_RCU_BOOST
-#define INIT_TASK_RCU_BOOST()						\
-	.rcu_boost_mutex = NULL,
-#else
-#define INIT_TASK_RCU_BOOST()
-#endif
 #ifdef CONFIG_TREE_PREEMPT_RCU
-#define INIT_TASK_RCU_TREE_PREEMPT()					\
-	.rcu_blocked_node = NULL,
-#else
-#define INIT_TASK_RCU_TREE_PREEMPT(tsk)
-#endif
-#ifdef CONFIG_PREEMPT_RCU
 #define INIT_TASK_RCU_PREEMPT(tsk)					\
 	.rcu_read_lock_nesting = 0,					\
 	.rcu_read_unlock_special = 0,					\
-	.rcu_node_entry = LIST_HEAD_INIT(tsk.rcu_node_entry),		\
-	INIT_TASK_RCU_TREE_PREEMPT()					\
-	INIT_TASK_RCU_BOOST()
+	.rcu_blocked_node = NULL,					\
+	.rcu_node_entry = LIST_HEAD_INIT(tsk.rcu_node_entry),
 #else
 #define INIT_TASK_RCU_PREEMPT(tsk)
 #endif
@@ -151,7 +129,7 @@ extern struct cred init_cred;
 		.nr_cpus_allowed = NR_CPUS,				\
 	},								\
 	.tasks		= LIST_HEAD_INIT(tsk.tasks),			\
-	INIT_PUSHABLE_TASKS(tsk)					\
+	.pushable_tasks = PLIST_NODE_INIT(tsk.pushable_tasks, MAX_PRIO), \
 	.ptraced	= LIST_HEAD_INIT(tsk.ptraced),			\
 	.ptrace_entry	= LIST_HEAD_INIT(tsk.ptrace_entry),		\
 	.real_parent	= &tsk,						\
@@ -159,8 +137,10 @@ extern struct cred init_cred;
 	.children	= LIST_HEAD_INIT(tsk.children),			\
 	.sibling	= LIST_HEAD_INIT(tsk.sibling),			\
 	.group_leader	= &tsk,						\
-	RCU_INIT_POINTER(.real_cred, &init_cred),			\
-	RCU_INIT_POINTER(.cred, &init_cred),				\
+	.real_cred	= &init_cred,					\
+	.cred		= &init_cred,					\
+	.cred_guard_mutex =						\
+		 __MUTEX_INITIALIZER(tsk.cred_guard_mutex),		\
 	.comm		= "swapper",					\
 	.thread		= INIT_THREAD,					\
 	.fs		= &init_fs,					\

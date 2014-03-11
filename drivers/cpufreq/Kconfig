@@ -71,7 +71,7 @@ config CPU_FREQ_DEFAULT_GOV_PERFORMANCE
 
 config CPU_FREQ_DEFAULT_GOV_POWERSAVE
 	bool "powersave"
-	depends on EXPERT
+	depends on EMBEDDED
 	select CPU_FREQ_GOV_POWERSAVE
 	help
 	  Use the CPUFreq governor 'powersave' as default. This sets
@@ -182,15 +182,6 @@ config CPU_FREQ_GOV_INTERACTIVE
 	help
 	  'interactive' - This driver adds a dynamic cpufreq policy governor
 	  designed for latency-sensitive workloads.
-
-config DYNAMIC_FREQ_MODE
-	bool "dyncmic frequency mode (EXPERIMENTAL)"
-	depends on CPU_FREQ_GOV_INTERACTIVE
-	default n
-	help
-	  In dynamic frequency mode, all parameters are managed for each
-	  frequency and the cpufreq governor can control system more fair
-	  for all frequencies.
 
 config CPU_FREQ_GOV_CONSERVATIVE
 	tristate "'conservative' cpufreq governor"

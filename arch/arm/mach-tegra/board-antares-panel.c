@@ -1,7 +1,7 @@
 /*
  * arch/arm/mach-tegra/board-antares-panel.c
  *
- * Copyright (c) 2010-2011, NVIDIA Corporation.
+ * Copyright (c) 2010, NVIDIA Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,14 +22,11 @@
 #include <linux/gpio.h>
 #include <linux/regulator/consumer.h>
 #include <linux/resource.h>
-
 #include <asm/mach-types.h>
-
 #include <linux/platform_device.h>
 #include <linux/earlysuspend.h>
 #include <linux/pwm_backlight.h>
-#include <linux/nvhost.h>
-
+#include <mach/nvhost.h>
 #include <mach/nvmap.h>
 #include <mach/irqs.h>
 #include <mach/iomap.h>
@@ -39,7 +36,6 @@
 #include "devices.h"
 #include "gpio-names.h"
 #include "board.h"
-#include "cpu-tegra.h"
 
 #define antares_pnl_pwr_enb	TEGRA_GPIO_PC6
 #define antares_bl_enb		TEGRA_GPIO_PD4
@@ -48,86 +44,62 @@
 #define antares_hdmi_enb	TEGRA_GPIO_PV5
 
 /*panel power on sequence timing*/
-#define antares_pnl_to_lvds_ms	0
-#define antares_lvds_to_bl_ms	200
+#define antares_pnl_to_lvds_ms	5
+#define antares_lvds_to_bl_ms	300
 
-#ifdef CONFIG_TEGRA_DC
 static struct regulator *antares_hdmi_reg = NULL;
 static struct regulator *antares_hdmi_pll = NULL;
-#endif
 
-static int antares_backlight_init(struct device *dev) {
-	int ret;
-
-	ret = gpio_request(antares_bl_enb, "backlight_enb");
-	if (ret < 0)
-		return ret;
-
-	ret = gpio_direction_output(antares_bl_enb, 1);
-	if (ret < 0)
-		gpio_free(antares_bl_enb);
-	else
-		tegra_gpio_enable(antares_bl_enb);
-
-	return ret;
+struct backlight {
+	int enable;
+	struct delayed_work bl_work;
 };
 
-static void antares_backlight_exit(struct device *dev) {
-	gpio_set_value(antares_bl_enb, 0);
-	gpio_free(antares_bl_enb);
-	tegra_gpio_disable(antares_bl_enb);
-}
+struct backlight bl;
 
-static int antares_backlight_notify(struct device *unused, int brightness)
+static void set_bl(struct work_struct *work)
 {
-	gpio_set_value(antares_bl_enb, !!brightness);
-	return brightness;
+	struct delayed_work *bl_work = container_of(work, struct delayed_work, work);
+	struct backlight *b = container_of(bl_work, struct backlight, bl_work);
+
+	
+	gpio_set_value(antares_bl_enb, !!b->enable);
 }
 
-static int antares_disp1_check_fb(struct device *dev, struct fb_info *info);
+static int panel_enable = 1;
+static int backlight_on = 1;
+static int already_enable = 0;
 
-static struct platform_pwm_backlight_data antares_backlight_data = {
-	.pwm_id		= 2,
-	.max_brightness	= 255,
-	.dft_brightness	= 224,
-	//.pwm_period_ns	= 5000000,
-	.pwm_period_ns  = 62500,
-	.init		= antares_backlight_init,
-	.exit		= antares_backlight_exit,
-	.notify		= antares_backlight_notify,
-	/* Only toggle backlight on fb blank notifications for disp1 */
-	.check_fb   = antares_disp1_check_fb,
-};
-
-static struct platform_device antares_backlight_device = {
-	.name	= "pwm-backlight",
-	.id	= -1,
-	.dev	= {
-		.platform_data = &antares_backlight_data,
-	},
-};
-
-#ifdef CONFIG_TEGRA_DC
 static int antares_panel_enable(void)
 {
 	struct regulator *reg = regulator_get(NULL, "vdd_ldo4");
 
-	if (!reg) {
+	if(!already_enable){
+		already_enable = 1;
 		regulator_enable(reg);
 		regulator_put(reg);
 	}
+	if (panel_enable)
+		return 0;
 
 	gpio_set_value(antares_pnl_pwr_enb, 1);
 	mdelay(antares_pnl_to_lvds_ms);
 	gpio_set_value(antares_lvds_shutdown, 1);
-	mdelay(antares_lvds_to_bl_ms);
+	panel_enable = 1;
 	return 0;
 }
 
 static int antares_panel_disable(void)
 {
-	gpio_set_value(antares_lvds_shutdown, 0);
-	gpio_set_value(antares_pnl_pwr_enb, 0);
+	/* wait for backlight off */
+	if (!backlight_on) {
+		mdelay(antares_lvds_to_bl_ms);
+		gpio_set_value(antares_lvds_shutdown, 0);
+		mdelay(5);
+		gpio_set_value(antares_pnl_pwr_enb, 0);
+	}
+
+	panel_enable = 0;
 	return 0;
 }
 
@@ -174,7 +146,7 @@ static struct resource antares_disp1_resources[] = {
 	{
 		.name	= "regs",
 		.start	= TEGRA_DISPLAY_BASE,
-		.end	= TEGRA_DISPLAY_BASE + TEGRA_DISPLAY_SIZE-1,
+		.end	= TEGRA_DISPLAY_BASE + TEGRA_DISPLAY_SIZE - 1,
 		.flags	= IORESOURCE_MEM,
 	},
 	{
@@ -229,7 +201,6 @@ static struct tegra_fb_data antares_fb_data = {
 	.xres		= 1366,
 	.yres		= 768,
 	.bits_per_pixel	= 32,
-	.flags		= TEGRA_FB_FLIP_ON_PROBE,
 };
 
 static struct tegra_fb_data antares_hdmi_fb_data = {
@@ -237,7 +208,6 @@ static struct tegra_fb_data antares_hdmi_fb_data = {
 	.xres		= 1366,
 	.yres		= 768,
 	.bits_per_pixel	= 32,
-	.flags		= TEGRA_FB_FLIP_ON_PROBE,
 };
 
 static struct tegra_dc_out antares_disp1_out = {
@@ -247,7 +217,7 @@ static struct tegra_dc_out antares_disp1_out = {
 	.align		= TEGRA_DC_ALIGN_MSB,
 	.order		= TEGRA_DC_ORDER_RED_BLUE,
 	.depth		= 18,
-	.dither		= TEGRA_DC_ORDERED_DITHER,
+	.dither		= TEGRA_DC_ERRDIFF_DITHER,
 
 	.modes	 	= antares_panel_modes,
 	.n_modes 	= ARRAY_SIZE(antares_panel_modes),
@@ -262,8 +232,6 @@ static struct tegra_dc_out antares_disp2_out = {
 
 	.dcc_bus	= 1,
 	.hotplug_gpio	= antares_hdmi_hpd,
-
-	.max_pixclock	= KHZ2PICOS(148500),
 
 	.align		= TEGRA_DC_ALIGN_MSB,
 	.order		= TEGRA_DC_ORDER_RED_BLUE,
@@ -308,15 +276,15 @@ static struct nvhost_device antares_disp2_device = {
 		.platform_data = &antares_disp2_pdata,
 	},
 };
-#else
-static int antares_disp1_check_fb(struct device *dev, struct fb_info *info)
-{
-	return 0;
-}
-#endif
 
 static struct nvmap_platform_carveout antares_carveouts[] = {
-	[0] = NVMAP_HEAP_CARVEOUT_IRAM_INIT,
+	[0] = {
+		.name		= "iram",
+		.usage_mask	= NVMAP_HEAP_CARVEOUT_IRAM,
+		.base		= TEGRA_IRAM_BASE,
+		.size		= TEGRA_IRAM_SIZE,
+		.buddy_size	= 0, /* no buddy allocation for IRAM */
+	},
 	[1] = {
 		.name		= "generic-0",
 		.usage_mask	= NVMAP_HEAP_CARVEOUT_GENERIC,
@@ -337,11 +305,66 @@ static struct platform_device antares_nvmap_device = {
 	},
 };
 
+static int antares_backlight_notify(struct device *unused, int brightness)
+{
+	unsigned int bl_delay;
+
+	if (!(backlight_on ^ !!brightness))
+		return brightness;
+
+	backlight_on = (!!brightness) & panel_enable;
+	
+	bl.enable = backlight_on;
+	bl_delay = brightness?antares_lvds_to_bl_ms:0;
+
+	cancel_delayed_work(&bl.bl_work);
+	schedule_delayed_work(&bl.bl_work, msecs_to_jiffies(bl_delay));
+
+	if (!brightness && !panel_enable)
+		antares_panel_disable();
+
+	return brightness;
+}
+
+static int antares_backlight_init(struct device *dev) {
+
+	INIT_DELAYED_WORK(&bl.bl_work, set_bl);
+
+	gpio_request(antares_bl_enb, "backlight_enb");
+	tegra_gpio_enable(antares_bl_enb);
+	return 0;
+};
+
+static void antares_backlight_exit(struct device *dev) {
+	antares_backlight_notify(dev, 0);
+	gpio_free(antares_bl_enb);
+	tegra_gpio_disable(antares_bl_enb);
+}
+
+static struct platform_pwm_backlight_data antares_backlight_data = {
+	.pwm_id		= 2,
+	.max_brightness	= 255,
+	.dft_brightness	= 224,
+/*	.pwm_period_ns	= 62500,*/
+	.pwm_period_ns	= 64100,
+	.init		= antares_backlight_init,
+	.exit		= antares_backlight_exit,
+	.notify		= antares_backlight_notify,
+	/* Only toggle backlight on fb blank notifications for disp1 */
+	.check_fb   = antares_disp1_check_fb,
+};
+
+static struct platform_device antares_backlight_device = {
+	.name	= "pwm-backlight",
+	.id	= -1,
+	.dev	= {
+		.platform_data = &antares_backlight_data,
+	},
+};
+
 static struct platform_device *antares_gfx_devices[] __initdata = {
 	&antares_nvmap_device,
-#ifdef CONFIG_TEGRA_GRHOST
 	&tegra_grhost_device,
-#endif
 	&tegra_pwfm2_device,
 	&antares_backlight_device,
 };
@@ -354,58 +377,24 @@ struct early_suspend antares_panel_early_suspender;
 
 static void antares_panel_early_suspend(struct early_suspend *h)
 {
-	/* power down LCD, add use a black screen for HDMI */
-	if (num_registered_fb > 0)
-		fb_blank(registered_fb[0], FB_BLANK_POWERDOWN);
-
-	if (num_registered_fb > 1)
-		fb_blank(registered_fb[1], FB_BLANK_NORMAL);
-
-#ifdef CONFIG_TEGRA_CONVSERVATIVE_GOV_ON_EARLYSUPSEND
-	cpufreq_save_default_governor();
-	cpufreq_set_conservative_governor();
-        cpufreq_set_conservative_governor_param("up_threshold",
-			SET_CONSERVATIVE_GOVERNOR_UP_THRESHOLD);
-
-	cpufreq_set_conservative_governor_param("down_threshold",
-			SET_CONSERVATIVE_GOVERNOR_DOWN_THRESHOLD);
-
-	cpufreq_set_conservative_governor_param("freq_step",
-		SET_CONSERVATIVE_GOVERNOR_FREQ_STEP);
-#endif
-
-#ifdef CONFIG_TEGRA_AUTO_HOTPLUG
-	tegra2_enable_autoplug();
-#endif
+	fb_blank(registered_fb[0], FB_BLANK_POWERDOWN);
 }
 
 static void antares_panel_late_resume(struct early_suspend *h)
 {
-	unsigned i;
-
-#ifdef CONFIG_TEGRA_AUTO_HOTPLUG
-	tegra2_disable_autoplug();
-#endif
-
-#ifdef CONFIG_TEGRA_CONVSERVATIVE_GOV_ON_EARLYSUPSEND
-	cpufreq_restore_default_governor();
-#endif
-	for (i = 0; i < num_registered_fb; i++)
-		fb_blank(registered_fb[i], FB_BLANK_UNBLANK);
+	fb_blank(registered_fb[0], FB_BLANK_UNBLANK);
 }
 #endif
 
 int __init antares_panel_init(void)
 {
 	int err;
-	struct resource __maybe_unused *res;
+	struct resource *res;
 
 	gpio_request(antares_pnl_pwr_enb, "pnl_pwr_enb");
-	gpio_direction_output(antares_pnl_pwr_enb, 1);
 	tegra_gpio_enable(antares_pnl_pwr_enb);
 
 	gpio_request(antares_lvds_shutdown, "lvds_shdn");
-	gpio_direction_output(antares_lvds_shutdown, 1);
 	tegra_gpio_enable(antares_lvds_shutdown);
 
 	tegra_gpio_enable(antares_hdmi_enb);
@@ -429,7 +418,6 @@ int __init antares_panel_init(void)
 	err = platform_add_devices(antares_gfx_devices,
 				   ARRAY_SIZE(antares_gfx_devices));
 
-#if defined(CONFIG_TEGRA_GRHOST) && defined(CONFIG_TEGRA_DC)
 	res = nvhost_get_resource_byname(&antares_disp1_device,
 		IORESOURCE_MEM, "fbmem");
 	res->start = tegra_fb_start;
@@ -439,19 +427,12 @@ int __init antares_panel_init(void)
 		IORESOURCE_MEM, "fbmem");
 	res->start = tegra_fb2_start;
 	res->end = tegra_fb2_start + tegra_fb2_size - 1;
-#endif
 
-	/* Copy the bootloader fb to the fb. */
-	tegra_move_framebuffer(tegra_fb_start, tegra_bootloader_fb_start,
-		min(tegra_fb_size, tegra_bootloader_fb_size));
-
-#if defined(CONFIG_TEGRA_GRHOST) && defined(CONFIG_TEGRA_DC)
 	if (!err)
 		err = nvhost_device_register(&antares_disp1_device);
 
 	if (!err)
 		err = nvhost_device_register(&antares_disp2_device);
-#endif
 
 	return err;
 }

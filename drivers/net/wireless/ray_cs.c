@@ -43,8 +43,10 @@
 #include <linux/if_arp.h>
 #include <linux/ioport.h>
 #include <linux/skbuff.h>
+#include <linux/ethtool.h>
 #include <linux/ieee80211.h>
 
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/cisreg.h>
 #include <pcmcia/ds.h>
@@ -77,6 +79,8 @@ static int ray_dev_close(struct net_device *dev);
 static int ray_dev_config(struct net_device *dev, struct ifmap *map);
 static struct net_device_stats *ray_get_stats(struct net_device *dev);
 static int ray_dev_init(struct net_device *dev);
+
+static const struct ethtool_ops netdev_ethtool_ops;
 
 static int ray_open(struct net_device *dev);
 static netdev_tx_t ray_dev_start_xmit(struct sk_buff *skb,
@@ -165,6 +169,13 @@ static int bc;
  */
 static char *phy_addr = NULL;
 
+
+/* A struct pcmcia_device structure has fields for most things that are needed
+   to keep track of a socket, but there will usually be some device
+   specific information that also needs to be kept track of.  The
+   'priv' pointer in a struct pcmcia_device structure can be used to point to
+   a device-specific private data structure, like this.
+*/
 static unsigned int ray_mem_speed = 500;
 
 /* WARNING: THIS DRIVER IS NOT CAPABLE OF HANDLING MULTIPLE DEVICES! */
@@ -186,7 +197,7 @@ module_param(bc, int, 0);
 module_param(phy_addr, charp, 0);
 module_param(ray_mem_speed, int, 0);
 
-static const UCHAR b5_default_startup_parms[] = {
+static UCHAR b5_default_startup_parms[] = {
 	0, 0,			/* Adhoc station */
 	'L', 'I', 'N', 'U', 'X', 0, 0, 0,	/* 32 char ESSID */
 	0, 0, 0, 0, 0, 0, 0, 0,
@@ -221,7 +232,7 @@ static const UCHAR b5_default_startup_parms[] = {
 	2, 0, 0, 0, 0, 0, 0, 0	/* basic rate set */
 };
 
-static const UCHAR b4_default_startup_parms[] = {
+static UCHAR b4_default_startup_parms[] = {
 	0, 0,			/* Adhoc station */
 	'L', 'I', 'N', 'U', 'X', 0, 0, 0,	/* 32 char ESSID */
 	0, 0, 0, 0, 0, 0, 0, 0,
@@ -253,9 +264,9 @@ static const UCHAR b4_default_startup_parms[] = {
 };
 
 /*===========================================================================*/
-static const u8 eth2_llc[] = { 0xaa, 0xaa, 3, 0, 0, 0 };
+static unsigned char eth2_llc[] = { 0xaa, 0xaa, 3, 0, 0, 0 };
 
-static const char hop_pattern_length[] = { 1,
+static char hop_pattern_length[] = { 1,
 	USA_HOP_MOD, EUROPE_HOP_MOD,
 	JAPAN_HOP_MOD, KOREA_HOP_MOD,
 	SPAIN_HOP_MOD, FRANCE_HOP_MOD,
@@ -263,7 +274,7 @@ static const char hop_pattern_length[] = { 1,
 	JAPAN_TEST_HOP_MOD
 };
 
-static const char rcsid[] =
+static char rcsid[] =
     "Raylink/WebGear wireless LAN - Corey <Thomas corey@world.std.com>";
 
 static const struct net_device_ops ray_netdev_ops = {
@@ -279,6 +290,14 @@ static const struct net_device_ops ray_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 };
 
+/*=============================================================================
+    ray_attach() creates an "instance" of the driver, allocating
+    local data structures for one device.  The device is registered
+    with Card Services.
+    The dev_link structure is initialized, but we don't actually
+    configure the card at this point -- we wait until we receive a
+    card insertion event.
+=============================================================================*/
 static int ray_probe(struct pcmcia_device *p_dev)
 {
 	ray_dev_t *local;
@@ -299,8 +318,9 @@ static int ray_probe(struct pcmcia_device *p_dev)
 	p_dev->resource[0]->flags |= IO_DATA_PATH_WIDTH_8;
 
 	/* General socket configuration */
-	p_dev->config_flags |= CONF_ENABLE_IRQ;
-	p_dev->config_index = 1;
+	p_dev->conf.Attributes = CONF_ENABLE_IRQ;
+	p_dev->conf.IntType = INT_MEMORY_AND_IO;
+	p_dev->conf.ConfigIndex = 1;
 
 	p_dev->priv = dev;
 
@@ -313,6 +333,7 @@ static int ray_probe(struct pcmcia_device *p_dev)
 
 	/* Raylink entries in the device structure */
 	dev->netdev_ops = &ray_netdev_ops;
+	SET_ETHTOOL_OPS(dev, &netdev_ethtool_ops);
 	dev->wireless_handlers = &ray_handler_def;
 #ifdef WIRELESS_SPY
 	local->wireless_data.spy_data = &local->spy_data;
@@ -332,6 +353,12 @@ fail_alloc_dev:
 	return -ENOMEM;
 } /* ray_attach */
 
+/*=============================================================================
+    This deletes a driver "instance".  The device is de-registered
+    with Card Services.  If it has been released, all local data
+    structures are freed.  Otherwise, the structures will be freed
+    when the device is released.
+=============================================================================*/
 static void ray_detach(struct pcmcia_device *link)
 {
 	struct net_device *dev;
@@ -354,11 +381,17 @@ static void ray_detach(struct pcmcia_device *link)
 	dev_dbg(&link->dev, "ray_cs ray_detach ending\n");
 } /* ray_detach */
 
+/*=============================================================================
+    ray_config() is run after a CARD_INSERTION event
+    is received, to configure the PCMCIA socket, and to make the
+    ethernet device available to the system.
+=============================================================================*/
 #define MAX_TUPLE_SIZE 128
 static int ray_config(struct pcmcia_device *link)
 {
 	int ret = 0;
 	int i;
+	win_req_t req;
 	struct net_device *dev = (struct net_device *)link->priv;
 	ray_dev_t *local = netdev_priv(dev);
 
@@ -379,50 +412,54 @@ static int ray_config(struct pcmcia_device *link)
 		goto failed;
 	dev->irq = link->irq;
 
-	ret = pcmcia_enable_device(link);
+	/* This actually configures the PCMCIA socket -- setting up
+	   the I/O windows and the interrupt mapping.
+	 */
+	ret = pcmcia_request_configuration(link, &link->conf);
 	if (ret)
 		goto failed;
 
 /*** Set up 32k window for shared memory (transmit and control) ************/
-	link->resource[2]->flags |= WIN_DATA_WIDTH_8 | WIN_MEMORY_TYPE_CM | WIN_ENABLE | WIN_USE_WAIT;
-	link->resource[2]->start = 0;
-	link->resource[2]->end = 0x8000;
-	ret = pcmcia_request_window(link, link->resource[2], ray_mem_speed);
+	req.Attributes =
+	    WIN_DATA_WIDTH_8 | WIN_MEMORY_TYPE_CM | WIN_ENABLE | WIN_USE_WAIT;
+	req.Base = 0;
+	req.Size = 0x8000;
+	req.AccessSpeed = ray_mem_speed;
+	ret = pcmcia_request_window(link, &req, &link->win);
 	if (ret)
 		goto failed;
-	ret = pcmcia_map_mem_page(link, link->resource[2], 0);
+	ret = pcmcia_map_mem_page(link, link->win, 0);
 	if (ret)
 		goto failed;
-	local->sram = ioremap(link->resource[2]->start,
-			resource_size(link->resource[2]));
+	local->sram = ioremap(req.Base, req.Size);
 
 /*** Set up 16k window for shared memory (receive buffer) ***************/
-	link->resource[3]->flags |=
+	req.Attributes =
 	    WIN_DATA_WIDTH_8 | WIN_MEMORY_TYPE_CM | WIN_ENABLE | WIN_USE_WAIT;
-	link->resource[3]->start = 0;
-	link->resource[3]->end = 0x4000;
-	ret = pcmcia_request_window(link, link->resource[3], ray_mem_speed);
+	req.Base = 0;
+	req.Size = 0x4000;
+	req.AccessSpeed = ray_mem_speed;
+	ret = pcmcia_request_window(link, &req, &local->rmem_handle);
 	if (ret)
 		goto failed;
-	ret = pcmcia_map_mem_page(link, link->resource[3], 0x8000);
+	ret = pcmcia_map_mem_page(link, local->rmem_handle, 0x8000);
 	if (ret)
 		goto failed;
-	local->rmem = ioremap(link->resource[3]->start,
-			resource_size(link->resource[3]));
+	local->rmem = ioremap(req.Base, req.Size);
 
 /*** Set up window for attribute memory ***********************************/
-	link->resource[4]->flags |=
+	req.Attributes =
 	    WIN_DATA_WIDTH_8 | WIN_MEMORY_TYPE_AM | WIN_ENABLE | WIN_USE_WAIT;
-	link->resource[4]->start = 0;
-	link->resource[4]->end = 0x1000;
-	ret = pcmcia_request_window(link, link->resource[4], ray_mem_speed);
+	req.Base = 0;
+	req.Size = 0x1000;
+	req.AccessSpeed = ray_mem_speed;
+	ret = pcmcia_request_window(link, &req, &local->amem_handle);
 	if (ret)
 		goto failed;
-	ret = pcmcia_map_mem_page(link, link->resource[4], 0);
+	ret = pcmcia_map_mem_page(link, local->amem_handle, 0);
 	if (ret)
 		goto failed;
-	local->amem = ioremap(link->resource[4]->start,
-			resource_size(link->resource[4]));
+	local->amem = ioremap(req.Base, req.Size);
 
 	dev_dbg(&link->dev, "ray_config sram=%p\n", local->sram);
 	dev_dbg(&link->dev, "ray_config rmem=%p\n", local->rmem);
@@ -571,7 +608,7 @@ static int dl_startup_params(struct net_device *dev)
 	/* Start kernel timer to wait for dl startup to complete. */
 	local->timer.expires = jiffies + HZ / 2;
 	local->timer.data = (long)local;
-	local->timer.function = verify_dl_startup;
+	local->timer.function = &verify_dl_startup;
 	add_timer(&local->timer);
 	dev_dbg(&link->dev,
 	      "ray_cs dl_startup_params started timer for verify_dl_startup\n");
@@ -738,7 +775,11 @@ static void join_net(u_long data)
 	local->card_status = CARD_DOING_ACQ;
 }
 
-
+/*============================================================================
+    After a card is removed, ray_release() will unregister the net
+    device, and release the PCMCIA configuration.  If the device is
+    still open, this will be postponed until it is closed.
+=============================================================================*/
 static void ray_release(struct pcmcia_device *link)
 {
 	struct net_device *dev = link->priv;
@@ -1020,6 +1061,18 @@ AP to AP	1	1	dest AP		src AP		dest	source
 		}
 	}
 } /* end encapsulate_frame */
+
+/*===========================================================================*/
+
+static void netdev_get_drvinfo(struct net_device *dev,
+			       struct ethtool_drvinfo *info)
+{
+	strcpy(info->driver, "ray_cs");
+}
+
+static const struct ethtool_ops netdev_ethtool_ops = {
+	.get_drvinfo = netdev_get_drvinfo,
+};
 
 /*====================================================================*/
 
@@ -1776,8 +1829,11 @@ static void ray_update_multi_list(struct net_device *dev, int all)
 		/* Copy the kernel's list of MC addresses to card */
 		netdev_for_each_mc_addr(ha, dev) {
 			memcpy_toio(p, ha->addr, ETH_ALEN);
-			dev_dbg(&link->dev, "ray_update_multi add addr %pm\n",
-				ha->addr);
+			dev_dbg(&link->dev,
+			      "ray_update_multi add addr %02x%02x%02x%02x%02x%02x\n",
+			      ha->addr[0], ha->addr[1],
+			      ha->addr[2], ha->addr[3],
+			      ha->addr[4], ha->addr[5]);
 			p += ETH_ALEN;
 			i++;
 		}
@@ -1941,12 +1997,12 @@ static irqreturn_t ray_interrupt(int irq, void *dev_id)
 					dev_dbg(&link->dev,
 					      "ray_cs interrupt network \"%s\" start failed\n",
 					      local->sparm.b4.a_current_ess_id);
-					local->timer.function = start_net;
+					local->timer.function = &start_net;
 				} else {
 					dev_dbg(&link->dev,
 					      "ray_cs interrupt network \"%s\" join failed\n",
 					      local->sparm.b4.a_current_ess_id);
-					local->timer.function = join_net;
+					local->timer.function = &join_net;
 				}
 				add_timer(&local->timer);
 			}
@@ -2012,8 +2068,11 @@ static irqreturn_t ray_interrupt(int irq, void *dev_id)
 				memcpy_fromio(&local->bss_id,
 					      prcs->var.rejoin_net_complete.
 					      bssid, ADDRLEN);
-				dev_dbg(&link->dev, "ray_cs new BSSID = %pm\n",
-					local->bss_id);
+				dev_dbg(&link->dev,
+				      "ray_cs new BSSID = %02x%02x%02x%02x%02x%02x\n",
+				      local->bss_id[0], local->bss_id[1],
+				      local->bss_id[2], local->bss_id[3],
+				      local->bss_id[4], local->bss_id[5]);
 				if (!sniffer)
 					authenticate(local);
 			}
@@ -2280,8 +2339,8 @@ static void untranslate(ray_dev_t *local, struct sk_buff *skb, int len)
 	struct ethhdr *peth;
 	UCHAR srcaddr[ADDRLEN];
 	UCHAR destaddr[ADDRLEN];
-	static const UCHAR org_bridge[3] = { 0, 0, 0xf8 };
-	static const UCHAR org_1042[3] = { 0, 0, 0 };
+	static UCHAR org_bridge[3] = { 0, 0, 0xf8 };
+	static UCHAR org_1042[3] = { 0, 0, 0 };
 
 	memcpy(destaddr, ieee80211_get_DA(pmac), ADDRLEN);
 	memcpy(srcaddr, ieee80211_get_SA(pmac), ADDRLEN);
@@ -2411,9 +2470,9 @@ static void authenticate(ray_dev_t *local)
 
 	del_timer(&local->timer);
 	if (build_auth_frame(local, local->bss_id, OPEN_AUTH_REQUEST)) {
-		local->timer.function = join_net;
+		local->timer.function = &join_net;
 	} else {
-		local->timer.function = authenticate_timeout;
+		local->timer.function = &authenticate_timeout;
 	}
 	local->timer.expires = jiffies + HZ * 2;
 	local->timer.data = (long)local;
@@ -2498,7 +2557,7 @@ static void associate(ray_dev_t *local)
 		del_timer(&local->timer);
 		local->timer.expires = jiffies + HZ * 2;
 		local->timer.data = (long)local;
-		local->timer.function = join_net;
+		local->timer.function = &join_net;
 		add_timer(&local->timer);
 		local->card_status = CARD_ASSOC_FAILED;
 		return;
@@ -2532,7 +2591,7 @@ static void clear_interrupt(ray_dev_t *local)
 #ifdef CONFIG_PROC_FS
 #define MAXDATA (PAGE_SIZE - 80)
 
-static const char *card_status[] = {
+static char *card_status[] = {
 	"Card inserted - uninitialized",	/* 0 */
 	"Card not downloaded",			/* 1 */
 	"Waiting for download parameters",	/* 2 */
@@ -2549,8 +2608,8 @@ static const char *card_status[] = {
 	"Association failed"			/* 16 */
 };
 
-static const char *nettype[] = { "Adhoc", "Infra " };
-static const char *framing[] = { "Encapsulation", "Translation" }
+static char *nettype[] = { "Adhoc", "Infra " };
+static char *framing[] = { "Encapsulation", "Translation" }
 
 ;
 /*===========================================================================*/
@@ -2743,7 +2802,6 @@ static ssize_t ray_cs_essid_proc_write(struct file *file,
 static const struct file_operations ray_cs_essid_proc_fops = {
 	.owner		= THIS_MODULE,
 	.write		= ray_cs_essid_proc_write,
-	.llseek		= noop_llseek,
 };
 
 static ssize_t int_proc_write(struct file *file, const char __user *buffer,
@@ -2777,7 +2835,6 @@ static ssize_t int_proc_write(struct file *file, const char __user *buffer,
 static const struct file_operations int_proc_fops = {
 	.owner		= THIS_MODULE,
 	.write		= int_proc_write,
-	.llseek		= noop_llseek,
 };
 #endif
 
@@ -2790,7 +2847,9 @@ MODULE_DEVICE_TABLE(pcmcia, ray_ids);
 
 static struct pcmcia_driver ray_driver = {
 	.owner = THIS_MODULE,
-	.name = "ray_cs",
+	.drv = {
+		.name = "ray_cs",
+		},
 	.probe = ray_probe,
 	.remove = ray_detach,
 	.id_table = ray_ids,

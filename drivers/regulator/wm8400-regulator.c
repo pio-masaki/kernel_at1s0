@@ -67,7 +67,7 @@ static int wm8400_ldo_get_voltage(struct regulator_dev *dev)
 }
 
 static int wm8400_ldo_set_voltage(struct regulator_dev *dev,
-				  int min_uV, int max_uV, unsigned *selector)
+				  int min_uV, int max_uV)
 {
 	struct wm8400 *wm8400 = rdev_get_drvdata(dev);
 	u16 val;
@@ -92,8 +92,6 @@ static int wm8400_ldo_set_voltage(struct regulator_dev *dev,
 
 		val += 0xf;
 	}
-
-	*selector = val;
 
 	return wm8400_set_bits(wm8400, WM8400_LDO1_CONTROL + rdev_get_id(dev),
 			       WM8400_LDO1_VSEL_MASK, val);
@@ -158,7 +156,7 @@ static int wm8400_dcdc_get_voltage(struct regulator_dev *dev)
 }
 
 static int wm8400_dcdc_set_voltage(struct regulator_dev *dev,
-				   int min_uV, int max_uV, unsigned *selector)
+				  int min_uV, int max_uV)
 {
 	struct wm8400 *wm8400 = rdev_get_drvdata(dev);
 	u16 val;
@@ -172,8 +170,6 @@ static int wm8400_dcdc_set_voltage(struct regulator_dev *dev,
 	if (850000 + (25000 * val) > max_uV)
 		return -EINVAL;
 	BUG_ON(850000 + (25000 * val) < min_uV);
-
-	*selector = val;
 
 	return wm8400_set_bits(wm8400, WM8400_DCDC1_CONTROL_1 + offset,
 			       WM8400_DC1_VSEL_MASK, val);

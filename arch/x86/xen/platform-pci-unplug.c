@@ -68,7 +68,7 @@ static int __init check_platform_magic(void)
 	return 0;
 }
 
-void xen_unplug_emulated_devices(void)
+void __init xen_unplug_emulated_devices(void)
 {
 	int r;
 

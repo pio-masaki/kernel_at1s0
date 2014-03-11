@@ -486,7 +486,6 @@ extern bool afs_cm_incoming_call(struct afs_call *);
  * dir.c
  */
 extern const struct inode_operations afs_dir_inode_operations;
-extern const struct dentry_operations afs_fs_dentry_operations;
 extern const struct file_operations afs_dir_file_operations;
 
 /*
@@ -577,7 +576,6 @@ extern int afs_drop_inode(struct inode *);
 /*
  * main.c
  */
-extern struct workqueue_struct *afs_wq;
 extern struct afs_uuid afs_uuid;
 
 /*
@@ -592,7 +590,6 @@ extern const struct inode_operations afs_mntpt_inode_operations;
 extern const struct inode_operations afs_autocell_inode_operations;
 extern const struct file_operations afs_mntpt_file_operations;
 
-extern struct vfsmount *afs_d_automount(struct path *);
 extern int afs_mntpt_check_symlink(struct afs_vnode *, struct key *);
 extern void afs_mntpt_kill_timer(void);
 
@@ -627,7 +624,7 @@ extern void afs_clear_permits(struct afs_vnode *);
 extern void afs_cache_permit(struct afs_vnode *, struct key *, long);
 extern void afs_zap_permits(struct rcu_head *);
 extern struct key *afs_request_key(struct afs_cell *);
-extern int afs_permission(struct inode *, int, unsigned int);
+extern int afs_permission(struct inode *, int);
 
 /*
  * server.c

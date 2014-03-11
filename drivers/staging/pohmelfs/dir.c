@@ -1082,6 +1082,7 @@ err_out_exit:
 
 	clear_bit(NETFS_INODE_REMOTE_SYNCED, &pi->state);
 
+	mutex_unlock(&inode->i_mutex);
 	return err;
 }
 

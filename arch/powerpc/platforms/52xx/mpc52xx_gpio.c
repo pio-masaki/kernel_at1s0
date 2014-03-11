@@ -147,7 +147,8 @@ mpc52xx_wkup_gpio_dir_out(struct gpio_chip *gc, unsigned int gpio, int val)
 	return 0;
 }
 
-static int __devinit mpc52xx_wkup_gpiochip_probe(struct platform_device *ofdev)
+static int __devinit mpc52xx_wkup_gpiochip_probe(struct platform_device *ofdev,
+					const struct of_device_id *match)
 {
 	struct mpc52xx_gpiochip *chip;
 	struct mpc52xx_gpio_wkup __iomem *regs;
@@ -190,7 +191,7 @@ static const struct of_device_id mpc52xx_wkup_gpiochip_match[] = {
 	{}
 };
 
-static struct platform_driver mpc52xx_wkup_gpiochip_driver = {
+static struct of_platform_driver mpc52xx_wkup_gpiochip_driver = {
 	.driver = {
 		.name = "gpio_wkup",
 		.owner = THIS_MODULE,
@@ -309,7 +310,8 @@ mpc52xx_simple_gpio_dir_out(struct gpio_chip *gc, unsigned int gpio, int val)
 	return 0;
 }
 
-static int __devinit mpc52xx_simple_gpiochip_probe(struct platform_device *ofdev)
+static int __devinit mpc52xx_simple_gpiochip_probe(struct platform_device *ofdev,
+					const struct of_device_id *match)
 {
 	struct mpc52xx_gpiochip *chip;
 	struct gpio_chip *gc;
@@ -347,7 +349,7 @@ static const struct of_device_id mpc52xx_simple_gpiochip_match[] = {
 	{}
 };
 
-static struct platform_driver mpc52xx_simple_gpiochip_driver = {
+static struct of_platform_driver mpc52xx_simple_gpiochip_driver = {
 	.driver = {
 		.name = "gpio",
 		.owner = THIS_MODULE,
@@ -359,10 +361,10 @@ static struct platform_driver mpc52xx_simple_gpiochip_driver = {
 
 static int __init mpc52xx_gpio_init(void)
 {
-	if (platform_driver_register(&mpc52xx_wkup_gpiochip_driver))
+	if (of_register_platform_driver(&mpc52xx_wkup_gpiochip_driver))
 		printk(KERN_ERR "Unable to register wakeup GPIO driver\n");
 
-	if (platform_driver_register(&mpc52xx_simple_gpiochip_driver))
+	if (of_register_platform_driver(&mpc52xx_simple_gpiochip_driver))
 		printk(KERN_ERR "Unable to register simple GPIO driver\n");
 
 	return 0;

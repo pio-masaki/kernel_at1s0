@@ -84,7 +84,10 @@ extern int audit_compare_dname_path(const char *dname, const char *path,
 				    int *dirlen);
 extern struct sk_buff *	    audit_make_reply(int pid, int seq, int type,
 					     int done, int multi,
-					     const void *payload, int size);
+					     void *payload, int size);
+extern void		    audit_send_reply(int pid, int seq, int type,
+					     int done, int multi,
+					     void *payload, int size);
 extern void		    audit_panic(const char *message);
 
 struct audit_netlink_list {

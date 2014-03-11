@@ -28,7 +28,7 @@
 #include <linux/timer.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <scsi/scsi.h>
 
 #define DRV_NAME "ub"
@@ -248,7 +248,6 @@ struct ub_completion {
 	spinlock_t lock;
 };
 
-static DEFINE_MUTEX(ub_mutex);
 static inline void ub_init_completion(struct ub_completion *x)
 {
 	x->done = 0;
@@ -397,7 +396,7 @@ static int ub_probe_lun(struct ub_dev *sc, int lnum);
 #else
 
 static const struct usb_device_id ub_usb_ids[] = {
-	{ USB_INTERFACE_INFO(USB_CLASS_MASS_STORAGE, USB_SC_SCSI, USB_PR_BULK) },
+	{ USB_INTERFACE_INFO(USB_CLASS_MASS_STORAGE, US_SC_SCSI, US_PR_BULK) },
 	{ }
 };
 
@@ -1716,9 +1715,9 @@ static int ub_bd_unlocked_open(struct block_device *bdev, fmode_t mode)
 {
 	int ret;
 
-	mutex_lock(&ub_mutex);
+	lock_kernel();
 	ret = ub_bd_open(bdev, mode);
-	mutex_unlock(&ub_mutex);
+	unlock_kernel();
 
 	return ret;
 }
@@ -1731,9 +1730,9 @@ static int ub_bd_release(struct gendisk *disk, fmode_t mode)
 	struct ub_lun *lun = disk->private_data;
 	struct ub_dev *sc = lun->udev;
 
-	mutex_lock(&ub_mutex);
+	lock_kernel();
 	ub_put(sc);
-	mutex_unlock(&ub_mutex);
+	unlock_kernel();
 
 	return 0;
 }
@@ -1748,9 +1747,9 @@ static int ub_bd_ioctl(struct block_device *bdev, fmode_t mode,
 	void __user *usermem = (void __user *) arg;
 	int ret;
 
-	mutex_lock(&ub_mutex);
+	lock_kernel();
 	ret = scsi_cmd_ioctl(disk->queue, disk, mode, cmd, usermem);
-	mutex_unlock(&ub_mutex);
+	unlock_kernel();
 
 	return ret;
 }
@@ -1788,8 +1787,7 @@ static int ub_bd_revalidate(struct gendisk *disk)
  *
  * The return code is bool!
  */
-static unsigned int ub_bd_check_events(struct gendisk *disk,
-				       unsigned int clearing)
+static int ub_bd_media_changed(struct gendisk *disk)
 {
 	struct ub_lun *lun = disk->private_data;
 
@@ -1807,10 +1805,10 @@ static unsigned int ub_bd_check_events(struct gendisk *disk,
 	 */
 	if (ub_sync_tur(lun->udev, lun) != 0) {
 		lun->changed = 1;
-		return DISK_EVENT_MEDIA_CHANGE;
+		return 1;
 	}
 
-	return lun->changed ? DISK_EVENT_MEDIA_CHANGE : 0;
+	return lun->changed;
 }
 
 static const struct block_device_operations ub_bd_fops = {
@@ -1818,7 +1816,7 @@ static const struct block_device_operations ub_bd_fops = {
 	.open		= ub_bd_unlocked_open,
 	.release	= ub_bd_release,
 	.ioctl		= ub_bd_ioctl,
-	.check_events	= ub_bd_check_events,
+	.media_changed	= ub_bd_media_changed,
 	.revalidate_disk = ub_bd_revalidate,
 };
 

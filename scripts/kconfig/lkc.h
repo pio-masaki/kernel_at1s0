@@ -14,7 +14,6 @@
 static inline const char *gettext(const char *txt) { return txt; }
 static inline void textdomain(const char *domainname) {}
 static inline void bindtextdomain(const char *name, const char *dir) {}
-static inline char *bind_textdomain_codeset(const char *dn, char *c) { return c; }
 #endif
 
 #ifdef __cplusplus
@@ -32,18 +31,12 @@ extern "C" {
 
 #define SRCTREE "srctree"
 
-#ifndef PACKAGE
 #define PACKAGE "linux"
-#endif
-
 #define LOCALEDIR "/usr/share/locale"
 
 #define _(text) gettext(text)
 #define N_(text) (text)
 
-#ifndef CONFIG_
-#define CONFIG_ "CONFIG_"
-#endif
 
 #define TF_COMMAND	0x0001
 #define TF_PARAM	0x0002
@@ -68,18 +61,16 @@ struct kconf_id {
 	enum symbol_type stype;
 };
 
-#ifdef YYDEBUG
-extern int zconfdebug;
-#endif
-
 int zconfparse(void);
 void zconfdump(FILE *out);
+
+extern int zconfdebug;
 void zconf_starthelp(void);
 FILE *zconf_fopen(const char *name);
 void zconf_initscan(const char *name);
 void zconf_nextfile(const char *name);
 int zconf_lineno(void);
-const char *zconf_curname(void);
+char *zconf_curname(void);
 
 /* conf.c */
 void xfgets(char *str, int size, FILE *in);
@@ -110,7 +101,6 @@ void menu_end_menu(void);
 void menu_add_entry(struct symbol *sym);
 void menu_end_entry(void);
 void menu_add_dep(struct expr *dep);
-void menu_add_visibility(struct expr *dep);
 struct property *menu_add_prop(enum prop_type type, char *prompt, struct expr *expr, struct expr *dep);
 struct property *menu_add_prompt(enum prop_type type, char *prompt, struct expr *dep);
 void menu_add_expr(enum prop_type type, struct expr *expr, struct expr *dep);

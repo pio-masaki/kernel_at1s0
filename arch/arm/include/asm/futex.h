@@ -13,13 +13,12 @@
 #include <linux/preempt.h>
 #include <linux/uaccess.h>
 #include <asm/errno.h>
-#include <asm/domain.h>
 
 #define __futex_atomic_op(insn, ret, oldval, uaddr, oparg)	\
 	__asm__ __volatile__(					\
-	"1:	" T(ldr) "	%1, [%2]\n"			\
+	"1:	ldrt	%1, [%2]\n"				\
 	"	" insn "\n"					\
-	"2:	" T(str) "	%0, [%2]\n"			\
+	"2:	strt	%0, [%2]\n"				\
 	"	mov	%0, #0\n"				\
 	"3:\n"							\
 	"	.pushsection __ex_table,\"a\"\n"		\
@@ -35,7 +34,7 @@
 	: "cc", "memory")
 
 static inline int
-futex_atomic_op_inuser (int encoded_op, u32 __user *uaddr)
+futex_atomic_op_inuser (int encoded_op, int __user *uaddr)
 {
 	int op = (encoded_op >> 28) & 7;
 	int cmp = (encoded_op >> 24) & 15;
@@ -46,7 +45,7 @@ futex_atomic_op_inuser (int encoded_op, u32 __user *uaddr)
 	if (encoded_op & (FUTEX_OP_OPARG_SHIFT << 28))
 		oparg = 1 << oparg;
 
-	if (!access_ok(VERIFY_WRITE, uaddr, sizeof(u32)))
+	if (!access_ok(VERIFY_WRITE, uaddr, sizeof(int)))
 		return -EFAULT;
 
 	pagefault_disable();	/* implies preempt_disable() */
@@ -88,35 +87,36 @@ futex_atomic_op_inuser (int encoded_op, u32 __user *uaddr)
 }
 
 static inline int
-futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
-			      u32 oldval, u32 newval)
+futex_atomic_cmpxchg_inatomic(int __user *uaddr, int oldval, int newval)
 {
-	int ret = 0;
-	u32 val;
+	int val;
 
-	if (!access_ok(VERIFY_WRITE, uaddr, sizeof(u32)))
+	if (!access_ok(VERIFY_WRITE, uaddr, sizeof(int)))
 		return -EFAULT;
 
+	pagefault_disable();	/* implies preempt_disable() */
+
 	__asm__ __volatile__("@futex_atomic_cmpxchg_inatomic\n"
-	"1:	" T(ldr) "	%1, [%4]\n"
-	"	teq	%1, %2\n"
+	"1:	ldrt	%0, [%3]\n"
+	"	teq	%0, %1\n"
 	"	it	eq	@ explicit IT needed for the 2b label\n"
-	"2:	" T(streq) "	%3, [%4]\n"
+	"2:	streqt	%2, [%3]\n"
 	"3:\n"
 	"	.pushsection __ex_table,\"a\"\n"
 	"	.align	3\n"
 	"	.long	1b, 4f, 2b, 4f\n"
 	"	.popsection\n"
 	"	.pushsection .fixup,\"ax\"\n"
-	"4:	mov	%0, %5\n"
+	"4:	mov	%0, %4\n"
 	"	b	3b\n"
 	"	.popsection"
-	: "+r" (ret), "=&r" (val)
+	: "=&r" (val)
 	: "r" (oldval), "r" (newval), "r" (uaddr), "Ir" (-EFAULT)
 	: "cc", "memory");
 
-	*uval = val;
-	return ret;
+	pagefault_enable();	/* subsumes preempt_enable() */
+
+	return val;
 }
 
 #endif /* !SMP */

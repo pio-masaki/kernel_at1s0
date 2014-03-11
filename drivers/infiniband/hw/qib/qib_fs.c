@@ -58,7 +58,6 @@ static int qibfs_mknod(struct inode *dir, struct dentry *dentry,
 		goto bail;
 	}
 
-	inode->i_ino = get_next_ino();
 	inode->i_mode = mode;
 	inode->i_uid = 0;
 	inode->i_gid = 0;
@@ -368,7 +367,6 @@ bail:
 static const struct file_operations flash_ops = {
 	.read = flash_read,
 	.write = flash_write,
-	.llseek = default_llseek,
 };
 
 static int add_cntr_files(struct super_block *sb, struct qib_devdata *dd)
@@ -453,14 +451,17 @@ static int remove_file(struct dentry *parent, char *name)
 		goto bail;
 	}
 
+	spin_lock(&dcache_lock);
 	spin_lock(&tmp->d_lock);
 	if (!(d_unhashed(tmp) && tmp->d_inode)) {
-		dget_dlock(tmp);
+		dget_locked(tmp);
 		__d_drop(tmp);
 		spin_unlock(&tmp->d_lock);
+		spin_unlock(&dcache_lock);
 		simple_unlink(parent->d_inode, tmp);
 	} else {
 		spin_unlock(&tmp->d_lock);
+		spin_unlock(&dcache_lock);
 	}
 
 	ret = 0;
@@ -552,13 +553,13 @@ bail:
 	return ret;
 }
 
-static struct dentry *qibfs_mount(struct file_system_type *fs_type, int flags,
-			const char *dev_name, void *data)
+static int qibfs_get_sb(struct file_system_type *fs_type, int flags,
+			const char *dev_name, void *data, struct vfsmount *mnt)
 {
-	struct dentry *ret;
-	ret = mount_single(fs_type, flags, data, qibfs_fill_super);
-	if (!IS_ERR(ret))
-		qib_super = ret->d_sb;
+	int ret = get_sb_single(fs_type, flags, data,
+				qibfs_fill_super, mnt);
+	if (ret >= 0)
+		qib_super = mnt->mnt_sb;
 	return ret;
 }
 
@@ -600,7 +601,7 @@ int qibfs_remove(struct qib_devdata *dd)
 static struct file_system_type qibfs_fs_type = {
 	.owner =        THIS_MODULE,
 	.name =         "ipathfs",
-	.mount =        qibfs_mount,
+	.get_sb =       qibfs_get_sb,
 	.kill_sb =      qibfs_kill_super,
 };
 

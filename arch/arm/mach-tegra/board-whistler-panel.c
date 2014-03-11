@@ -1,7 +1,7 @@
 /*
  * arch/arm/mach-tegra/board-whistler-panel.c
  *
- * Copyright (c) 2010-2011, NVIDIA Corporation.
+ * Copyright (c) 2010, NVIDIA Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,47 +22,34 @@
 #include <linux/gpio.h>
 #include <linux/regulator/consumer.h>
 #include <linux/resource.h>
-
 #include <asm/mach-types.h>
-
 #include <linux/platform_device.h>
 #include <linux/earlysuspend.h>
 #include <linux/kernel.h>
 #include <linux/pwm_backlight.h>
 #include <linux/tegra_pwm_bl.h>
-#include <linux/nvhost.h>
-
+#include <mach/nvhost.h>
 #include <mach/nvmap.h>
 #include <mach/irqs.h>
 #include <mach/iomap.h>
 #include <mach/dc.h>
 #include <mach/fb.h>
+#include <mach/tegra_cpufreq.h>
 
 #include "devices.h"
 #include "gpio-names.h"
 #include "board.h"
-#include "cpu-tegra.h"
 
 #define whistler_hdmi_hpd	TEGRA_GPIO_PN7
 
-#ifdef CONFIG_TEGRA_DC
 static struct regulator *whistler_hdmi_reg = NULL;
 static struct regulator *whistler_hdmi_pll = NULL;
-#endif
 
-/*
- * In case which_pwm is TEGRA_PWM_PM0,
- * gpio_conf_to_sfio should be TEGRA_GPIO_PW0: set LCD_CS1_N pin to SFIO
- * In case which_pwm is TEGRA_PWM_PM1,
- * gpio_conf_to_sfio should be TEGRA_GPIO_PW1: set LCD_M1 pin to SFIO
- */
 static struct platform_tegra_pwm_backlight_data whistler_disp1_backlight_data = {
 	.which_dc = 0,
 	.which_pwm = TEGRA_PWM_PM1,
 	.max_brightness	= 256,
 	.dft_brightness	= 77,
-	.gpio_conf_to_sfio	= TEGRA_GPIO_PW1,
-	.switch_to_sfio		= &tegra_gpio_disable,
 	.period	= 0x1F,
 	.clk_div = 3,
 	.clk_select = 2,
@@ -76,7 +63,6 @@ static struct platform_device whistler_disp1_backlight_device = {
 	},
 };
 
-#ifdef CONFIG_TEGRA_DC
 static int whistler_hdmi_enable(void)
 {
 	if (!whistler_hdmi_reg) {
@@ -195,9 +181,6 @@ static struct tegra_dc_out whistler_disp1_out = {
 	.align		= TEGRA_DC_ALIGN_MSB,
 	.order		= TEGRA_DC_ORDER_RED_BLUE,
 
-	.height		= 54, /* mm */
-	.width		= 90, /* mm */
-
 	.modes	 	= whistler_panel_modes,
 	.n_modes 	= ARRAY_SIZE(whistler_panel_modes),
 
@@ -229,7 +212,6 @@ static struct tegra_fb_data whistler_fb_data = {
 	.xres		= 800,
 	.yres		= 480,
 	.bits_per_pixel	= 32,
-	.flags		= TEGRA_FB_FLIP_ON_PROBE,
 };
 
 static struct tegra_fb_data whistler_hdmi_fb_data = {
@@ -237,7 +219,6 @@ static struct tegra_fb_data whistler_hdmi_fb_data = {
 	.xres		= 800,
 	.yres		= 480,
 	.bits_per_pixel	= 32,
-	.flags		= TEGRA_FB_FLIP_ON_PROBE,
 };
 
 
@@ -272,10 +253,15 @@ static struct nvhost_device whistler_disp2_device = {
 		.platform_data = &whistler_disp2_pdata,
 	},
 };
-#endif
 
 static struct nvmap_platform_carveout whistler_carveouts[] = {
-	[0] = NVMAP_HEAP_CARVEOUT_IRAM_INIT,
+	[0] = {
+		.name		= "iram",
+		.usage_mask	= NVMAP_HEAP_CARVEOUT_IRAM,
+		.base		= TEGRA_IRAM_BASE,
+		.size		= TEGRA_IRAM_SIZE,
+		.buddy_size	= 0, /* no buddy allocation for IRAM */
+	},
 	[1] = {
 		.name		= "generic-0",
 		.usage_mask	= NVMAP_HEAP_CARVEOUT_GENERIC,
@@ -300,9 +286,7 @@ static struct platform_device whistler_nvmap_device = {
 
 static struct platform_device *whistler_gfx_devices[] __initdata = {
 	&whistler_nvmap_device,
-#ifdef CONFIG_TEGRA_GRHOST
 	&tegra_grhost_device,
-#endif
 	&whistler_disp1_backlight_device,
 };
 
@@ -314,50 +298,29 @@ struct early_suspend whistler_panel_early_suspender;
 
 static void whistler_panel_early_suspend(struct early_suspend *h)
 {
-	/* power down LCD, add use a black screen for HDMI */
 	if (num_registered_fb > 0)
 		fb_blank(registered_fb[0], FB_BLANK_POWERDOWN);
-
-	if (num_registered_fb > 1)
-		fb_blank(registered_fb[1], FB_BLANK_NORMAL);
-
-#ifdef CONFIG_TEGRA_CONVSERVATIVE_GOV_ON_EARLYSUPSEND
+#ifdef CONFIG_CPU_FREQ
 	cpufreq_save_default_governor();
 	cpufreq_set_conservative_governor();
-        cpufreq_set_conservative_governor_param("up_threshold",
-			SET_CONSERVATIVE_GOVERNOR_UP_THRESHOLD);
-
-	cpufreq_set_conservative_governor_param("down_threshold",
-			SET_CONSERVATIVE_GOVERNOR_DOWN_THRESHOLD);
-
-	cpufreq_set_conservative_governor_param("freq_step",
-		SET_CONSERVATIVE_GOVERNOR_FREQ_STEP);
-#endif
-#ifdef CONFIG_TEGRA_AUTO_HOTPLUG
-	tegra2_enable_autoplug();
 #endif
 }
 
 static void whistler_panel_late_resume(struct early_suspend *h)
 {
-	unsigned i;
+	if (num_registered_fb > 0)
+		fb_blank(registered_fb[0], FB_BLANK_UNBLANK);
 
-#ifdef CONFIG_TEGRA_AUTO_HOTPLUG
-	tegra2_disable_autoplug();
-#endif
-
-#ifdef CONFIG_TEGRA_CONVSERVATIVE_GOV_ON_EARLYSUPSEND
+#ifdef CONFIG_CPU_FREQ
 	cpufreq_restore_default_governor();
 #endif
-	for (i = 0; i < num_registered_fb; i++)
-		fb_blank(registered_fb[i], FB_BLANK_UNBLANK);
 }
 #endif
 
 int __init whistler_panel_init(void)
 {
 	int err;
-	struct resource __maybe_unused *res;
+	struct resource *res;
 
 	tegra_gpio_enable(whistler_hdmi_hpd);
 	gpio_request(whistler_hdmi_hpd, "hdmi_hpd");
@@ -375,18 +338,11 @@ int __init whistler_panel_init(void)
 	err = platform_add_devices(whistler_gfx_devices,
 				   ARRAY_SIZE(whistler_gfx_devices));
 
-#if defined(CONFIG_TEGRA_GRHOST) && defined(CONFIG_TEGRA_DC)
 	res = nvhost_get_resource_byname(&whistler_disp1_device,
 					 IORESOURCE_MEM, "fbmem");
 	res->start = tegra_fb_start;
 	res->end = tegra_fb_start + tegra_fb_size - 1;
-#endif
 
-	/* Copy the bootloader fb to the fb. */
-	tegra_move_framebuffer(tegra_fb_start, tegra_bootloader_fb_start,
-		min(tegra_fb_size, tegra_bootloader_fb_size));
-
-#if defined(CONFIG_TEGRA_GRHOST) && defined(CONFIG_TEGRA_DC)
 	res = nvhost_get_resource_byname(&whistler_disp2_device,
 					 IORESOURCE_MEM, "fbmem");
 	res->start = tegra_fb2_start;
@@ -397,7 +353,6 @@ int __init whistler_panel_init(void)
 
 	if (!err)
 		err = nvhost_device_register(&whistler_disp2_device);
-#endif
 
 	return err;
 }

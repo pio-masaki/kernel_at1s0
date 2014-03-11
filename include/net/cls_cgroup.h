@@ -51,8 +51,7 @@ static inline u32 task_cls_classid(struct task_struct *p)
 		return 0;
 
 	rcu_read_lock();
-	id = rcu_dereference_index_check(net_cls_subsys_id,
-					 rcu_read_lock_held());
+	id = rcu_dereference(net_cls_subsys_id);
 	if (id >= 0)
 		classid = container_of(task_subsys_state(p, id),
 				       struct cgroup_cls_state, css)->classid;

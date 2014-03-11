@@ -974,7 +974,7 @@ void ar9170_rx(struct ar9170 *ar, struct sk_buff *skb)
 			if (ar->rx_failover_missing <= 0) {
 				/*
 				 * nested ar9170_rx call!
-				 * termination is guaranteed, even when the
+				 * termination is guranteed, even when the
 				 * combined frame also have a element with
 				 * a bad tag.
 				 */
@@ -1190,13 +1190,14 @@ static int ar9170_tx_prepare(struct ar9170 *ar, struct sk_buff *skb)
 	if (info->control.hw_key) {
 		icv = info->control.hw_key->icv_len;
 
-		switch (info->control.hw_key->cipher) {
-		case WLAN_CIPHER_SUITE_WEP40:
-		case WLAN_CIPHER_SUITE_WEP104:
-		case WLAN_CIPHER_SUITE_TKIP:
+		switch (info->control.hw_key->alg) {
+		case ALG_WEP:
 			keytype = AR9170_TX_MAC_ENCR_RC4;
 			break;
-		case WLAN_CIPHER_SUITE_CCMP:
+		case ALG_TKIP:
+			keytype = AR9170_TX_MAC_ENCR_RC4;
+			break;
+		case ALG_CCMP:
 			keytype = AR9170_TX_MAC_ENCR_AES;
 			break;
 		default:
@@ -1475,7 +1476,7 @@ static void ar9170_tx(struct ar9170 *ar)
 				     msecs_to_jiffies(AR9170_JANITOR_DELAY));
 }
 
-void ar9170_op_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
+int ar9170_op_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 {
 	struct ar9170 *ar = hw->priv;
 	struct ieee80211_tx_info *info;
@@ -1493,10 +1494,11 @@ void ar9170_op_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 	skb_queue_tail(&ar->tx_pending[queue], skb);
 
 	ar9170_tx(ar);
-	return;
+	return NETDEV_TX_OK;
 
 err_free:
 	dev_kfree_skb_any(skb);
+	return NETDEV_TX_OK;
 }
 
 static int ar9170_op_add_interface(struct ieee80211_hw *hw,
@@ -1776,17 +1778,17 @@ static int ar9170_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 	if ((!ar->vif) || (ar->disable_offload))
 		return -EOPNOTSUPP;
 
-	switch (key->cipher) {
-	case WLAN_CIPHER_SUITE_WEP40:
-		ktype = AR9170_ENC_ALG_WEP64;
+	switch (key->alg) {
+	case ALG_WEP:
+		if (key->keylen == WLAN_KEY_LEN_WEP40)
+			ktype = AR9170_ENC_ALG_WEP64;
+		else
+			ktype = AR9170_ENC_ALG_WEP128;
 		break;
-	case WLAN_CIPHER_SUITE_WEP104:
-		ktype = AR9170_ENC_ALG_WEP128;
-		break;
-	case WLAN_CIPHER_SUITE_TKIP:
+	case ALG_TKIP:
 		ktype = AR9170_ENC_ALG_TKIP;
 		break;
-	case WLAN_CIPHER_SUITE_CCMP:
+	case ALG_CCMP:
 		ktype = AR9170_ENC_ALG_AESCCMP;
 		break;
 	default:
@@ -1825,7 +1827,7 @@ static int ar9170_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 		if (err)
 			goto out;
 
-		if (key->cipher == WLAN_CIPHER_SUITE_TKIP) {
+		if (key->alg == ALG_TKIP) {
 			err = ar9170_upload_key(ar, i, sta ? sta->addr : NULL,
 						ktype, 1, key->key + 16, 16);
 			if (err)
@@ -1862,7 +1864,7 @@ static int ar9170_set_key(struct ieee80211_hw *hw, enum set_key_cmd cmd,
 			if (err)
 				goto out;
 
-			if (key->cipher == WLAN_CIPHER_SUITE_TKIP) {
+			if (key->alg == ALG_TKIP) {
 				err = ar9170_upload_key(ar, key->hw_key_idx,
 							NULL,
 							AR9170_ENC_ALG_NONE, 1,
@@ -1944,8 +1946,7 @@ static int ar9170_conf_tx(struct ieee80211_hw *hw, u16 queue,
 static int ar9170_ampdu_action(struct ieee80211_hw *hw,
 			       struct ieee80211_vif *vif,
 			       enum ieee80211_ampdu_mlme_action action,
-			       struct ieee80211_sta *sta, u16 tid, u16 *ssn,
-			       u8 buf_size)
+			       struct ieee80211_sta *sta, u16 tid, u16 *ssn)
 {
 	switch (action) {
 	case IEEE80211_AMPDU_RX_START:

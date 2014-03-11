@@ -28,9 +28,11 @@
 	dev_warn (ehci_to_hcd(ehci)->self.controller , fmt , ## args )
 
 #ifdef VERBOSE_DEBUG
+#	define vdbg dbg
 #	define ehci_vdbg ehci_dbg
 #else
-	static inline void ehci_vdbg(struct ehci_hcd *ehci, ...) {}
+#	define vdbg(fmt,args...) do { } while (0)
+#	define ehci_vdbg(ehci, fmt, args...) do { } while (0)
 #endif
 
 #ifdef	DEBUG
@@ -367,21 +369,18 @@ static const struct file_operations debug_async_fops = {
 	.open		= debug_async_open,
 	.read		= debug_output,
 	.release	= debug_close,
-	.llseek		= default_llseek,
 };
 static const struct file_operations debug_periodic_fops = {
 	.owner		= THIS_MODULE,
 	.open		= debug_periodic_open,
 	.read		= debug_output,
 	.release	= debug_close,
-	.llseek		= default_llseek,
 };
 static const struct file_operations debug_registers_fops = {
 	.owner		= THIS_MODULE,
 	.open		= debug_registers_open,
 	.read		= debug_output,
 	.release	= debug_close,
-	.llseek		= default_llseek,
 };
 static const struct file_operations debug_lpm_fops = {
 	.owner		= THIS_MODULE,
@@ -389,7 +388,6 @@ static const struct file_operations debug_lpm_fops = {
 	.read		= debug_lpm_read,
 	.write		= debug_lpm_write,
 	.release	= debug_lpm_close,
-	.llseek		= noop_llseek,
 };
 
 static struct dentry *ehci_debug_root;
@@ -877,7 +875,7 @@ static int fill_buffer(struct debug_buffer *buf)
 	int ret = 0;
 
 	if (!buf->output_buf)
-		buf->output_buf = vmalloc(buf->alloc_size);
+		buf->output_buf = (char *)vmalloc(buf->alloc_size);
 
 	if (!buf->output_buf) {
 		ret = -ENOMEM;

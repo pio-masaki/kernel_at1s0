@@ -16,6 +16,7 @@
 #include <asm/io.h>
 #include <asm/system.h>
 
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/ds.h>
 
@@ -100,7 +101,7 @@ MODULE_PARM_DESC(mem_type, "Set Memory type (0=Flash, 1=RAM, 2=ROM, default=0)")
 static caddr_t remap_window(struct map_info *map, unsigned long to)
 {
 	struct pcmciamtd_dev *dev = (struct pcmciamtd_dev *)map->map_priv_1;
-	struct resource *win = (struct resource *) map->map_priv_2;
+	window_handle_t win = (window_handle_t)map->map_priv_2;
 	unsigned int offset;
 	int ret;
 
@@ -315,11 +316,22 @@ static void pcmciamtd_set_vpp(struct map_info *map, int on)
 {
 	struct pcmciamtd_dev *dev = (struct pcmciamtd_dev *)map->map_priv_1;
 	struct pcmcia_device *link = dev->p_dev;
+	modconf_t mod;
+	int ret;
+
+	mod.Attributes = CONF_VPP1_CHANGE_VALID | CONF_VPP2_CHANGE_VALID;
+	mod.Vcc = 0;
+	mod.Vpp1 = mod.Vpp2 = on ? dev->vpp : 0;
 
 	DEBUG(2, "dev = %p on = %d vpp = %d\n", dev, on, dev->vpp);
-	pcmcia_fixup_vpp(link, on ? dev->vpp : 0);
+	ret = pcmcia_modify_configuration(link, &mod);
 }
 
+
+/* After a card is removed, pcmciamtd_release() will unregister the
+ * device, and release the PCMCIA configuration.  If the device is
+ * still open, this will be postponed until it is closed.
+ */
 
 static void pcmciamtd_release(struct pcmcia_device *link)
 {
@@ -327,7 +339,7 @@ static void pcmciamtd_release(struct pcmcia_device *link)
 
 	DEBUG(3, "link = 0x%p", link);
 
-	if (link->resource[2]->end) {
+	if (link->win) {
 		if(dev->win_base) {
 			iounmap(dev->win_base);
 			dev->win_base = NULL;
@@ -470,12 +482,18 @@ static void card_settings(struct pcmciamtd_dev *dev, struct pcmcia_device *p_dev
 }
 
 
+/* pcmciamtd_config() is scheduled to run after a CARD_INSERTION event
+ * is received, to configure the PCMCIA socket, and to make the
+ * MTD device available to the system.
+ */
+
 static int pcmciamtd_config(struct pcmcia_device *link)
 {
 	struct pcmciamtd_dev *dev = link->priv;
 	struct mtd_info *mtd = NULL;
+	win_req_t req;
 	int ret;
-	int i, j = 0;
+	int i;
 	static char *probes[] = { "jedec_probe", "cfi_probe" };
 	int new_name = 0;
 
@@ -497,39 +515,33 @@ static int pcmciamtd_config(struct pcmcia_device *link)
 		dev->pcmcia_map.set_vpp = pcmciamtd_set_vpp;
 
 	/* Request a memory window for PCMCIA. Some architeures can map windows
-	 * up to the maximum that PCMCIA can support (64MiB) - this is ideal and
+	 * upto the maximum that PCMCIA can support (64MiB) - this is ideal and
 	 * we aim for a window the size of the whole card - otherwise we try
 	 * smaller windows until we succeed
 	 */
 
-	link->resource[2]->flags |=  WIN_MEMORY_TYPE_CM | WIN_ENABLE;
-	link->resource[2]->flags |= (dev->pcmcia_map.bankwidth == 1) ?
-					WIN_DATA_WIDTH_8 : WIN_DATA_WIDTH_16;
-	link->resource[2]->start = 0;
-	link->resource[2]->end = (force_size) ? force_size << 20 :
-					MAX_PCMCIA_ADDR;
+	req.Attributes =  WIN_MEMORY_TYPE_CM | WIN_ENABLE;
+	req.Attributes |= (dev->pcmcia_map.bankwidth == 1) ? WIN_DATA_WIDTH_8 : WIN_DATA_WIDTH_16;
+	req.Base = 0;
+	req.AccessSpeed = mem_speed;
+	link->win = (window_handle_t)link;
+	req.Size = (force_size) ? force_size << 20 : MAX_PCMCIA_ADDR;
 	dev->win_size = 0;
 
 	do {
 		int ret;
-		DEBUG(2, "requesting window with size = %luKiB memspeed = %d",
-			(unsigned long) resource_size(link->resource[2]) >> 10,
-			mem_speed);
-		ret = pcmcia_request_window(link, link->resource[2], mem_speed);
+		DEBUG(2, "requesting window with size = %dKiB memspeed = %d",
+		      req.Size >> 10, req.AccessSpeed);
+		ret = pcmcia_request_window(link, &req, &link->win);
 		DEBUG(2, "ret = %d dev->win_size = %d", ret, dev->win_size);
 		if(ret) {
-			j++;
-			link->resource[2]->start = 0;
-			link->resource[2]->end = (force_size) ?
-					force_size << 20 : MAX_PCMCIA_ADDR;
-			link->resource[2]->end >>= j;
+			req.Size >>= 1;
 		} else {
-			DEBUG(2, "Got window of size %luKiB", (unsigned long)
-				resource_size(link->resource[2]) >> 10);
-			dev->win_size = resource_size(link->resource[2]);
+			DEBUG(2, "Got window of size %dKiB", req.Size >> 10);
+			dev->win_size = req.Size;
 			break;
 		}
-	} while (link->resource[2]->end >= 0x1000);
+	} while(req.Size >= 0x1000);
 
 	DEBUG(2, "dev->win_size = %d", dev->win_size);
 
@@ -541,31 +553,33 @@ static int pcmciamtd_config(struct pcmcia_device *link)
 	DEBUG(1, "Allocated a window of %dKiB", dev->win_size >> 10);
 
 	/* Get write protect status */
-	dev->win_base = ioremap(link->resource[2]->start,
-				resource_size(link->resource[2]));
+	DEBUG(2, "window handle = 0x%8.8lx", (unsigned long)link->win);
+	dev->win_base = ioremap(req.Base, req.Size);
 	if(!dev->win_base) {
-		dev_err(&dev->p_dev->dev, "ioremap(%pR) failed\n",
-			link->resource[2]);
+		dev_err(&dev->p_dev->dev, "ioremap(%lu, %u) failed\n",
+			req.Base, req.Size);
 		pcmciamtd_release(link);
 		return -ENODEV;
 	}
-	DEBUG(1, "mapped window dev = %p @ %pR, base = %p",
-	      dev, link->resource[2], dev->win_base);
+	DEBUG(1, "mapped window dev = %p req.base = 0x%lx base = %p size = 0x%x",
+	      dev, req.Base, dev->win_base, req.Size);
 
 	dev->offset = 0;
 	dev->pcmcia_map.map_priv_1 = (unsigned long)dev;
-	dev->pcmcia_map.map_priv_2 = (unsigned long)link->resource[2];
+	dev->pcmcia_map.map_priv_2 = (unsigned long)link->win;
 
 	dev->vpp = (vpp) ? vpp : link->socket->socket.Vpp;
+	link->conf.Attributes = 0;
 	if(setvpp == 2) {
-		link->vpp = dev->vpp;
+		link->conf.Vpp = dev->vpp;
 	} else {
-		link->vpp = 0;
+		link->conf.Vpp = 0;
 	}
 
-	link->config_index = 0;
+	link->conf.IntType = INT_MEMORY;
+	link->conf.ConfigIndex = 0;
 	DEBUG(2, "Setting Configuration");
-	ret = pcmcia_enable_device(link);
+	ret = pcmcia_request_configuration(link, &link->conf);
 	if (ret != 0) {
 		if (dev->win_base) {
 			iounmap(dev->win_base);
@@ -640,6 +654,10 @@ static int pcmciamtd_config(struct pcmcia_device *link)
 	}
 	dev_info(&dev->p_dev->dev, "mtd%d: %s\n", mtd->index, mtd->name);
 	return 0;
+
+	dev_err(&dev->p_dev->dev, "CS Error, exiting\n");
+	pcmciamtd_release(link);
+	return -ENODEV;
 }
 
 
@@ -662,6 +680,12 @@ static int pcmciamtd_resume(struct pcmcia_device *dev)
 }
 
 
+/* This deletes a driver "instance".  The device is de-registered
+ * with Card Services.  If it has been released, all local data
+ * structures are freed.  Otherwise, the structures will be freed
+ * when the device is released.
+ */
+
 static void pcmciamtd_detach(struct pcmcia_device *link)
 {
 	struct pcmciamtd_dev *dev = link->priv;
@@ -679,6 +703,11 @@ static void pcmciamtd_detach(struct pcmcia_device *link)
 }
 
 
+/* pcmciamtd_attach() creates an "instance" of the driver, allocating
+ * local data structures for one device.  The device is registered
+ * with Card Services.
+ */
+
 static int pcmciamtd_probe(struct pcmcia_device *link)
 {
 	struct pcmciamtd_dev *dev;
@@ -690,6 +719,9 @@ static int pcmciamtd_probe(struct pcmcia_device *link)
 
 	dev->p_dev = link;
 	link->priv = dev;
+
+	link->conf.Attributes = 0;
+	link->conf.IntType = INT_MEMORY;
 
 	return pcmciamtd_config(link);
 }
@@ -725,7 +757,9 @@ static struct pcmcia_device_id pcmciamtd_ids[] = {
 MODULE_DEVICE_TABLE(pcmcia, pcmciamtd_ids);
 
 static struct pcmcia_driver pcmciamtd_driver = {
-	.name		= "pcmciamtd",
+	.drv		= {
+		.name	= "pcmciamtd"
+	},
 	.probe		= pcmciamtd_probe,
 	.remove		= pcmciamtd_detach,
 	.owner		= THIS_MODULE,
@@ -737,6 +771,8 @@ static struct pcmcia_driver pcmciamtd_driver = {
 
 static int __init init_pcmciamtd(void)
 {
+	info(DRIVER_DESC);
+
 	if(bankwidth && bankwidth != 1 && bankwidth != 2) {
 		info("bad bankwidth (%d), using default", bankwidth);
 		bankwidth = 2;

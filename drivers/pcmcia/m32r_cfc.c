@@ -27,6 +27,7 @@
 #include <asm/system.h>
 
 #include <pcmcia/ss.h>
+#include <pcmcia/cs.h>
 
 #undef MAX_IO_WIN	/* FIXME */
 #define MAX_IO_WIN 1

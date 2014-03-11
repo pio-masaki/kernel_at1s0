@@ -35,9 +35,14 @@ static int is_rndis(struct usb_interface_descriptor *desc)
 
 static int is_activesync(struct usb_interface_descriptor *desc)
 {
-	return desc->bInterfaceClass == USB_CLASS_MISC
+	return (desc->bInterfaceClass == USB_CLASS_MISC
 		&& desc->bInterfaceSubClass == 1
-		&& desc->bInterfaceProtocol == 1;
+		&& desc->bInterfaceProtocol == 1) || 
+		/* use class=MISC,subClass=4,proto=1 to make consistent with windows driver
+		   without this, no usb interface will be created for RNDIS */
+	        (desc->bInterfaceClass == USB_CLASS_MISC
+		&& desc->bInterfaceSubClass == 4
+		&& desc->bInterfaceProtocol == 1);
 }
 
 int usb_choose_configuration(struct usb_device *udev)

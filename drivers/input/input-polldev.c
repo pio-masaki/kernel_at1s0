@@ -8,8 +8,6 @@
  * the Free Software Foundation.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/jiffies.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
@@ -35,7 +33,8 @@ static int input_polldev_start_workqueue(void)
 	if (!polldev_users) {
 		polldev_wq = create_singlethread_workqueue("ipolldevd");
 		if (!polldev_wq) {
-			pr_err("failed to create ipolldevd workqueue\n");
+			printk(KERN_ERR "input-polldev: failed to create "
+				"ipolldevd workqueue\n");
 			retval = -ENOMEM;
 			goto out;
 		}
@@ -192,7 +191,7 @@ static struct attribute_group input_polldev_attribute_group = {
 };
 
 /**
- * input_allocate_polled_device - allocate memory for polled device
+ * input_allocate_polled_device - allocated memory polled device
  *
  * The function allocates memory for a polled device and also
  * for an input device associated with this polled device.
@@ -239,7 +238,7 @@ EXPORT_SYMBOL(input_free_polled_device);
  * with input layer. The device should be allocated with call to
  * input_allocate_polled_device(). Callers should also set up poll()
  * method and set up capabilities (id, name, phys, bits) of the
- * corresponding input_dev structure.
+ * corresponing input_dev structure.
  */
 int input_register_polled_device(struct input_polled_dev *dev)
 {

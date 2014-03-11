@@ -149,7 +149,7 @@ struct ixgb_desc_ring {
 
 struct ixgb_adapter {
 	struct timer_list watchdog_timer;
-	unsigned long active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
+	struct vlan_group *vlgrp;
 	u32 bd_number;
 	u32 rx_buffer_len;
 	u32 part_num;

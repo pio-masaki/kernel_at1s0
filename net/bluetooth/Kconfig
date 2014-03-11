@@ -27,27 +27,31 @@ menuconfig BT
 	  compile it as module (bluetooth).
 
 	  To use Linux Bluetooth subsystem, you will need several user-space
-	  utilities like hciconfig and bluetoothd.  These utilities and updates
-	  to Bluetooth kernel modules are provided in the BlueZ packages.  For
-	  more information, see <http://www.bluez.org/>.
-
-if BT != n
+	  utilities like hciconfig and hcid.  These utilities and updates to
+	  Bluetooth kernel modules are provided in the BlueZ packages.
+	  For more information, see <http://www.bluez.org/>.
 
 config BT_L2CAP
-	bool "L2CAP protocol support"
+	tristate "L2CAP protocol support"
+	depends on BT
 	select CRC16
 	help
 	  L2CAP (Logical Link Control and Adaptation Protocol) provides
 	  connection oriented and connection-less data transport.  L2CAP
 	  support is required for most Bluetooth applications.
 
+	  Say Y here to compile L2CAP support into the kernel or say M to
+	  compile it as module (l2cap).
+
 config BT_SCO
-	bool "SCO links support"
+	tristate "SCO links support"
+	depends on BT
 	help
 	  SCO link provides voice transport over Bluetooth.  SCO support is
 	  required for voice applications like Headset and Audio.
 
-endif
+	  Say Y here to compile SCO support into the kernel or say M to
+	  compile it as module (sco).
 
 source "net/bluetooth/rfcomm/Kconfig"
 

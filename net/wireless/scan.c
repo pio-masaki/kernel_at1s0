@@ -17,7 +17,7 @@
 #include "nl80211.h"
 #include "wext-compat.h"
 
-#define IEEE80211_SCAN_RESULT_EXPIRE	(3 * HZ)
+#define IEEE80211_SCAN_RESULT_EXPIRE	(15 * HZ)
 
 void ___cfg80211_scan_done(struct cfg80211_registered_device *rdev, bool leak)
 {
@@ -124,15 +124,6 @@ void cfg80211_bss_age(struct cfg80211_registered_device *dev,
 }
 
 /* must hold dev->bss_lock! */
-static void __cfg80211_unlink_bss(struct cfg80211_registered_device *dev,
-				  struct cfg80211_internal_bss *bss)
-{
-	list_del_init(&bss->list);
-	rb_erase(&bss->rbn, &dev->bss_tree);
-	kref_put(&bss->ref, bss_release);
-}
-
-/* must hold dev->bss_lock! */
 void cfg80211_bss_expire(struct cfg80211_registered_device *dev)
 {
 	struct cfg80211_internal_bss *bss, *tmp;
@@ -143,7 +134,9 @@ void cfg80211_bss_expire(struct cfg80211_registered_device *dev)
 			continue;
 		if (!time_after(jiffies, bss->ts + IEEE80211_SCAN_RESULT_EXPIRE))
 			continue;
-		__cfg80211_unlink_bss(dev, bss);
+		list_del(&bss->list);
+		rb_erase(&bss->rbn, &dev->bss_tree);
+		kref_put(&bss->ref, bss_release);
 		expired = true;
 	}
 
@@ -471,9 +464,6 @@ cfg80211_bss_update(struct cfg80211_registered_device *dev,
 		if (res->pub.beacon_ies) {
 			size_t used = dev->wiphy.bss_priv_size + sizeof(*res);
 			size_t ielen = res->pub.len_beacon_ies;
-			bool information_elements_is_beacon_ies =
-				(found->pub.information_elements ==
-				 found->pub.beacon_ies);
 
 			if (found->pub.beacon_ies &&
 			    !found->beacon_ies_allocated &&
@@ -496,14 +486,6 @@ cfg80211_bss_update(struct cfg80211_registered_device *dev,
 					found->pub.beacon_ies = ies;
 					found->pub.len_beacon_ies = ielen;
 				}
-			}
-
-			/* Override IEs if they were from a beacon before */
-			if (information_elements_is_beacon_ies) {
-				found->pub.information_elements =
-					found->pub.beacon_ies;
-				found->pub.len_information_elements =
-					found->pub.len_beacon_ies;
 			}
 		}
 
@@ -592,22 +574,15 @@ cfg80211_inform_bss_frame(struct wiphy *wiphy,
 	struct cfg80211_internal_bss *res;
 	size_t ielen = len - offsetof(struct ieee80211_mgmt,
 				      u.probe_resp.variable);
-	size_t privsz;
-
-	if (WARN_ON(!mgmt))
-		return NULL;
-
-	if (WARN_ON(!wiphy))
-		return NULL;
+	size_t privsz = wiphy->bss_priv_size;
 
 	if (WARN_ON(wiphy->signal_type == CFG80211_SIGNAL_TYPE_UNSPEC &&
 	            (signal < 0 || signal > 100)))
 		return NULL;
 
-	if (WARN_ON(len < offsetof(struct ieee80211_mgmt, u.probe_resp.variable)))
+	if (WARN_ON(!mgmt || !wiphy ||
+		    len < offsetof(struct ieee80211_mgmt, u.probe_resp.variable)))
 		return NULL;
-
-	privsz = wiphy->bss_priv_size;
 
 	res = kzalloc(sizeof(*res) + privsz + ielen, gfp);
 	if (!res)
@@ -676,8 +651,11 @@ void cfg80211_unlink_bss(struct wiphy *wiphy, struct cfg80211_bss *pub)
 
 	spin_lock_bh(&dev->bss_lock);
 	if (!list_empty(&bss->list)) {
-		__cfg80211_unlink_bss(dev, bss);
+		list_del_init(&bss->list);
 		dev->bss_generation++;
+		rb_erase(&bss->rbn, &dev->bss_tree);
+
+		kref_put(&bss->ref, bss_release);
 	}
 	spin_unlock_bh(&dev->bss_lock);
 }

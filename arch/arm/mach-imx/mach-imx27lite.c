@@ -25,8 +25,9 @@
 #include <mach/iomux-mx27.h>
 
 #include "devices-imx27.h"
+#include "devices.h"
 
-static const int mx27lite_pins[] __initconst = {
+static unsigned int mx27lite_pins[] = {
 	/* UART1 */
 	PE12_PF_UART1_TXD,
 	PE13_PF_UART1_RXD,
@@ -57,12 +58,16 @@ static const struct imxuart_platform_data uart_pdata __initconst = {
 	.flags = IMXUART_HAVE_RTSCTS,
 };
 
+static struct platform_device *platform_devices[] __initdata = {
+	&mxc_fec_device,
+};
+
 static void __init mx27lite_init(void)
 {
 	mxc_gpio_setup_multiple_pins(mx27lite_pins, ARRAY_SIZE(mx27lite_pins),
 		"imx27lite");
 	imx27_add_imx_uart0(&uart_pdata);
-	imx27_add_fec(NULL);
+	platform_add_devices(platform_devices, ARRAY_SIZE(platform_devices));
 }
 
 static void __init mx27lite_timer_init(void)
@@ -75,10 +80,11 @@ static struct sys_timer mx27lite_timer = {
 };
 
 MACHINE_START(IMX27LITE, "LogicPD i.MX27LITE")
-	.boot_params = MX27_PHYS_OFFSET + 0x100,
-	.map_io = mx27_map_io,
-	.init_early = imx27_init_early,
-	.init_irq = mx27_init_irq,
-	.timer = &mx27lite_timer,
-	.init_machine = mx27lite_init,
+	.phys_io        = MX27_AIPI_BASE_ADDR,
+	.io_pg_offst    = ((MX27_AIPI_BASE_ADDR_VIRT) >> 18) & 0xfffc,
+	.boot_params    = MX27_PHYS_OFFSET + 0x100,
+	.map_io         = mx27_map_io,
+	.init_irq       = mx27_init_irq,
+	.init_machine   = mx27lite_init,
+	.timer          = &mx27lite_timer,
 MACHINE_END

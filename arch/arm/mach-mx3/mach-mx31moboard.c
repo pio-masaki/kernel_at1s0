@@ -40,6 +40,8 @@
 #include <mach/hardware.h>
 #include <mach/iomux-mx3.h>
 #include <mach/ipu.h>
+#include <mach/mmc.h>
+#include <mach/mxc_ehci.h>
 #include <mach/mx3_camera.h>
 #include <mach/spi.h>
 #include <mach/ulpi.h>
@@ -168,11 +170,11 @@ static const struct spi_imx_master moboard_spi1_pdata __initconst = {
 
 static struct regulator_consumer_supply sdhc_consumers[] = {
 	{
-		.dev_name = "mxc-mmc.0",
+		.dev	= &mxcsdhc_device0.dev,
 		.supply	= "sdhc0_vcc",
 	},
 	{
-		.dev_name = "mxc-mmc.1",
+		.dev	= &mxcsdhc_device1.dev,
 		.supply	= "sdhc1_vcc",
 	},
 };
@@ -214,13 +216,13 @@ static struct regulator_init_data cam_vreg_data = {
 	.consumer_supplies = cam_consumers,
 };
 
-static struct mc13xxx_regulator_init_data moboard_regulators[] = {
+static struct mc13783_regulator_init_data moboard_regulators[] = {
 	{
-		.id = MC13783_REG_VMMC1,
+		.id = MC13783_REGU_VMMC1,
 		.init_data = &sdhc_vreg_data,
 	},
 	{
-		.id = MC13783_REG_VCAM,
+		.id = MC13783_REGU_VCAM,
 		.init_data = &cam_vreg_data,
 	},
 };
@@ -267,14 +269,12 @@ static struct mc13783_leds_platform_data moboard_leds = {
 	.tc2_period = MC13783_LED_PERIOD_10MS,
 };
 
-static struct mc13xxx_platform_data moboard_pmic = {
-	.regulators = {
-		.regulators = moboard_regulators,
-		.num_regulators = ARRAY_SIZE(moboard_regulators),
-	},
+static struct mc13783_platform_data moboard_pmic = {
+	.regulators = moboard_regulators,
+	.num_regulators = ARRAY_SIZE(moboard_regulators),
 	.leds = &moboard_leds,
-	.flags = MC13XXX_USE_REGULATOR | MC13XXX_USE_RTC |
-		MC13XXX_USE_ADC | MC13XXX_USE_LED,
+	.flags = MC13783_USE_REGULATOR | MC13783_USE_RTC |
+		MC13783_USE_ADC | MC13783_USE_LED,
 };
 
 static struct spi_board_info moboard_spi_board_info[] __initdata = {
@@ -345,7 +345,7 @@ static void moboard_sdhc1_exit(struct device *dev, void *data)
 	gpio_free(SDHC1_CD);
 }
 
-static const struct imxmmc_platform_data sdhc1_pdata __initconst = {
+static struct imxmmc_platform_data sdhc1_pdata = {
 	.get_ro	= moboard_sdhc1_get_ro,
 	.init	= moboard_sdhc1_init,
 	.exit	= moboard_sdhc1_exit,
@@ -402,31 +402,24 @@ static void usb_xcvr_reset(void)
 	mdelay(1);
 }
 
-static int moboard_usbh2_init_hw(struct platform_device *pdev)
-{
-	return mx31_initialize_usb_hw(pdev->id, MXC_EHCI_POWER_PINS_ENABLED);
-}
+#if defined(CONFIG_USB_ULPI)
 
-static struct mxc_usbh_platform_data usbh2_pdata __initdata = {
-	.init	= moboard_usbh2_init_hw,
+static struct mxc_usbh_platform_data usbh2_pdata = {
 	.portsc	= MXC_EHCI_MODE_ULPI | MXC_EHCI_UTMI_8BIT,
+	.flags	= MXC_EHCI_POWER_PINS_ENABLED,
 };
 
 static int __init moboard_usbh2_init(void)
 {
-	struct platform_device *pdev;
+	usbh2_pdata.otg = otg_ulpi_create(&mxc_ulpi_access_ops,
+			ULPI_OTG_DRVVBUS | ULPI_OTG_DRVVBUS_EXT);
 
-	usbh2_pdata.otg = imx_otg_ulpi_create(ULPI_OTG_DRVVBUS |
-			ULPI_OTG_DRVVBUS_EXT);
-	if (!usbh2_pdata.otg)
-		return -ENODEV;
-
-	pdev = imx31_add_mxc_ehci_hs(2, &usbh2_pdata);
-	if (IS_ERR(pdev))
-		return PTR_ERR(pdev);
-
-	return 0;
+	return mxc_register_device(&mxc_usbh2, &usbh2_pdata);
 }
+#else
+static inline int moboard_usbh2_init(void) { return 0; }
+#endif
+
 
 static struct gpio_led mx31moboard_leds[] = {
 	{
@@ -506,7 +499,7 @@ core_param(mx31moboard_baseboard, mx31moboard_baseboard, int, 0444);
 /*
  * Board specific initialization.
  */
-static void __init mx31moboard_init(void)
+static void __init mxc_board_init(void)
 {
 	mxc_iomux_setup_multiple_pins(moboard_pins, ARRAY_SIZE(moboard_pins),
 		"moboard");
@@ -527,7 +520,7 @@ static void __init mx31moboard_init(void)
 	spi_register_board_info(moboard_spi_board_info,
 		ARRAY_SIZE(moboard_spi_board_info));
 
-	imx31_add_mxc_mmc(0, &sdhc1_pdata);
+	mxc_register_device(&mxcsdhc_device0, &sdhc1_pdata);
 
 	mxc_register_device(&mx3_ipu, &mx3_ipu_data);
 	if (!mx31moboard_cam_alloc_dma(CAMERA_BUF_SIZE))
@@ -567,10 +560,12 @@ struct sys_timer mx31moboard_timer = {
 
 MACHINE_START(MX31MOBOARD, "EPFL Mobots mx31moboard")
 	/* Maintainer: Valentin Longchamp, EPFL Mobots group */
-	.boot_params = MX3x_PHYS_OFFSET + 0x100,
-	.map_io = mx31_map_io,
-	.init_early = imx31_init_early,
-	.init_irq = mx31_init_irq,
-	.timer = &mx31moboard_timer,
-	.init_machine = mx31moboard_init,
+	.phys_io	= MX31_AIPS1_BASE_ADDR,
+	.io_pg_offst	= (MX31_AIPS1_BASE_ADDR_VIRT >> 18) & 0xfffc,
+	.boot_params    = MX3x_PHYS_OFFSET + 0x100,
+	.map_io         = mx31_map_io,
+	.init_irq       = mx31_init_irq,
+	.init_machine   = mxc_board_init,
+	.timer          = &mx31moboard_timer,
 MACHINE_END
+

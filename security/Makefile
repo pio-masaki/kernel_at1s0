@@ -7,14 +7,14 @@ subdir-$(CONFIG_SECURITY_SELINUX)	+= selinux
 subdir-$(CONFIG_SECURITY_SMACK)		+= smack
 subdir-$(CONFIG_SECURITY_TOMOYO)        += tomoyo
 subdir-$(CONFIG_SECURITY_APPARMOR)	+= apparmor
-subdir-$(CONFIG_TRUSTED_FOUNDATIONS)	+= tf_driver
+subdir-$(CONFIG_TRUSTED_FOUNDATIONS) += tf_driver
 
 # always enable default capabilities
 obj-y					+= commoncap.o
 obj-$(CONFIG_MMU)			+= min_addr.o
 
 # for Android Security
-obj-$(CONFIG_SECURITY_SEALIMEMODULE)   += seandroid_lime.o
+obj-$(CONFIG_SECURITY_SEALIMEMODULE)	+= seandroid_lime.o
 
 # Object file lists
 obj-$(CONFIG_SECURITY)			+= security.o capability.o
@@ -26,7 +26,7 @@ obj-$(CONFIG_AUDIT)			+= lsm_audit.o
 obj-$(CONFIG_SECURITY_TOMOYO)		+= tomoyo/built-in.o
 obj-$(CONFIG_SECURITY_APPARMOR)		+= apparmor/built-in.o
 obj-$(CONFIG_CGROUP_DEVICE)		+= device_cgroup.o
-obj-$(CONFIG_TRUSTED_FOUNDATIONS)	+= tf_driver/built-in.o
+obj-$(CONFIG_TRUSTED_FOUNDATIONS) += tf_driver/built-in.o
 
 # Object integrity file lists
 subdir-$(CONFIG_IMA)			+= integrity/ima

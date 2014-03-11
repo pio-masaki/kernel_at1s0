@@ -81,11 +81,7 @@
 /* PLL Status Register Is Inaccurate */
 #define ANOMALY_05000351 (__SILICON_REVISION__ < 1)
 /* bfrom_SysControl() Firmware Function Performs Improper System Reset */
-/*
- * Note: anomaly sheet says this is fixed with bf54x-0.2+, but testing
- *       shows that the fix itself does not cover all cases.
- */
-#define ANOMALY_05000353 (1)
+#define ANOMALY_05000353 (__SILICON_REVISION__ < 2)
 /* Regulator Programming Blocked when Hibernate Wakeup Source Remains Active */
 #define ANOMALY_05000355 (__SILICON_REVISION__ < 1)
 /* System Stalled During A Core Access To AMC While A Core Access To NFC FIFO Is Required */

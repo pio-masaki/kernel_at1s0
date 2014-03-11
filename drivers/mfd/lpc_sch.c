@@ -61,7 +61,6 @@ static struct mfd_cell lpc_sch_cells[] = {
 
 static struct pci_device_id lpc_sch_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_SCH_LPC) },
-	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_ITC_LPC) },
 	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, lpc_sch_ids);
@@ -71,7 +70,6 @@ static int __devinit lpc_sch_probe(struct pci_dev *dev,
 {
 	unsigned int base_addr_cfg;
 	unsigned short base_addr;
-	int i;
 
 	pci_read_config_dword(dev, SMBASE, &base_addr_cfg);
 	if (!(base_addr_cfg & (1 << 31))) {
@@ -101,10 +99,7 @@ static int __devinit lpc_sch_probe(struct pci_dev *dev,
 	gpio_sch_resource.start = base_addr;
 	gpio_sch_resource.end = base_addr + GPIO_IO_SIZE - 1;
 
-	for (i=0; i < ARRAY_SIZE(lpc_sch_cells); i++)
-		lpc_sch_cells[i].id = id->device;
-
-	return mfd_add_devices(&dev->dev, 0,
+	return mfd_add_devices(&dev->dev, -1,
 			lpc_sch_cells, ARRAY_SIZE(lpc_sch_cells), NULL, 0);
 }
 

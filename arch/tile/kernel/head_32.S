@@ -23,7 +23,6 @@
 #include <asm/asm-offsets.h>
 #include <hv/hypervisor.h>
 #include <arch/chip.h>
-#include <arch/spr_def.h>
 
 /*
  * This module contains the entry code for kernel images. It performs the
@@ -77,7 +76,7 @@ ENTRY(_start)
 	}
 1:
 
-	/* Get our processor number and save it away in SAVE_K_0. */
+	/* Get our processor number and save it away in SAVE_1_0. */
 	jal hv_inquire_topology
 	mulll_uu r4, r1, r2        /* r1 == y, r2 == width */
 	add r4, r4, r0             /* r0 == x, so r4 == cpu == y*width + x */
@@ -125,7 +124,7 @@ ENTRY(_start)
 	lw r0, r0
 	lw sp, r1
 	or r4, sp, r4
-	mtspr SPR_SYSTEM_SAVE_K_0, r4  /* save ksp0 + cpu */
+	mtspr SYSTEM_SAVE_1_0, r4  /* save ksp0 + cpu */
 	addi sp, sp, -STACK_TOP_DELTA
 	{
 	  move lr, zero   /* stop backtraces in the called function */
@@ -133,7 +132,7 @@ ENTRY(_start)
 	}
 	ENDPROC(_start)
 
-__PAGE_ALIGNED_BSS
+.section ".bss.page_aligned","w"
 	.align PAGE_SIZE
 ENTRY(empty_zero_page)
 	.fill PAGE_SIZE,1,0
@@ -145,10 +144,10 @@ ENTRY(empty_zero_page)
 	.endif
 	.word HV_PTE_PAGE | HV_PTE_DIRTY | HV_PTE_PRESENT | HV_PTE_ACCESSED | \
 	      (HV_PTE_MODE_CACHE_NO_L3 << HV_PTE_INDEX_MODE)
-	.word (\bits1) | (HV_CPA_TO_PFN(\cpa) << (HV_PTE_INDEX_PFN - 32))
+	.word (\bits1) | (HV_CPA_TO_PFN(\cpa) << HV_PTE_INDEX_PFN)
 	.endm
 
-__PAGE_ALIGNED_DATA
+.section ".data.page_aligned","wa"
 	.align PAGE_SIZE
 ENTRY(swapper_pg_dir)
 	/*
@@ -158,14 +157,12 @@ ENTRY(swapper_pg_dir)
 	 */
 	.set addr, 0
 	.rept (MEM_USER_INTRPT - PAGE_OFFSET) >> PGDIR_SHIFT
-	PTE addr + PAGE_OFFSET, addr, (1 << (HV_PTE_INDEX_READABLE - 32)) | \
-				      (1 << (HV_PTE_INDEX_WRITABLE - 32))
+	PTE addr + PAGE_OFFSET, addr, HV_PTE_READABLE | HV_PTE_WRITABLE
 	.set addr, addr + PGDIR_SIZE
 	.endr
 
 	/* The true text VAs are mapped as VA = PA + MEM_SV_INTRPT */
-	PTE MEM_SV_INTRPT, 0, (1 << (HV_PTE_INDEX_READABLE - 32)) | \
-			      (1 << (HV_PTE_INDEX_EXECUTABLE - 32))
+	PTE MEM_SV_INTRPT, 0, HV_PTE_READABLE | HV_PTE_EXECUTABLE
 	.org swapper_pg_dir + HV_L1_SIZE
 	END(swapper_pg_dir)
 
@@ -178,7 +175,6 @@ ENTRY(swapper_pg_dir)
 	__INITDATA
 	.align CHIP_L2_LINE_SIZE()
 ENTRY(swapper_pgprot)
-	PTE	0, 0, (1 << (HV_PTE_INDEX_READABLE - 32)) | \
-		      (1 << (HV_PTE_INDEX_WRITABLE - 32)), 1
+	PTE	0, 0, HV_PTE_READABLE | HV_PTE_WRITABLE, 1
 	.align CHIP_L2_LINE_SIZE()
 	END(swapper_pgprot)

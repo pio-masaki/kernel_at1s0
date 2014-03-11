@@ -1,7 +1,7 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
  * Copyright 2005-2006 Fen Systems Ltd.
- * Copyright 2006-2010 Solarflare Communications Inc.
+ * Copyright 2006-2009 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -129,7 +129,7 @@ static int siena_probe_port(struct efx_nic *efx)
 	return 0;
 }
 
-static void siena_remove_port(struct efx_nic *efx)
+void siena_remove_port(struct efx_nic *efx)
 {
 	efx->phy_op->remove(efx);
 	efx_nic_free_buffer(efx, &efx->stats_buffer);
@@ -194,7 +194,13 @@ static int siena_reset_hw(struct efx_nic *efx, enum reset_type method)
 
 static int siena_probe_nvconfig(struct efx_nic *efx)
 {
-	return efx_mcdi_get_board_cfg(efx, efx->net_dev->perm_addr, NULL);
+	int rc;
+
+	rc = efx_mcdi_get_board_cfg(efx, efx->mac_address, NULL);
+	if (rc)
+		return rc;
+
+	return 0;
 }
 
 static int siena_probe_nic(struct efx_nic *efx)
@@ -220,26 +226,19 @@ static int siena_probe_nic(struct efx_nic *efx)
 	efx_reado(efx, &reg, FR_AZ_CS_DEBUG);
 	efx->net_dev->dev_id = EFX_OWORD_FIELD(reg, FRF_CZ_CS_PORT_NUM) - 1;
 
-	/* Initialise MCDI */
-	nic_data->mcdi_smem = ioremap_nocache(efx->membase_phys +
-					      FR_CZ_MC_TREG_SMEM,
-					      FR_CZ_MC_TREG_SMEM_STEP *
-					      FR_CZ_MC_TREG_SMEM_ROWS);
-	if (!nic_data->mcdi_smem) {
-		netif_err(efx, probe, efx->net_dev,
-			  "could not map MCDI at %llx+%x\n",
-			  (unsigned long long)efx->membase_phys +
-			  FR_CZ_MC_TREG_SMEM,
-			  FR_CZ_MC_TREG_SMEM_STEP * FR_CZ_MC_TREG_SMEM_ROWS);
-		rc = -ENOMEM;
-		goto fail1;
-	}
 	efx_mcdi_init(efx);
 
 	/* Recover from a failed assertion before probing */
 	rc = efx_mcdi_handle_assertion(efx);
 	if (rc)
-		goto fail2;
+		goto fail1;
+
+	rc = efx_mcdi_fwver(efx, &nic_data->fw_version, &nic_data->fw_build);
+	if (rc) {
+		netif_err(efx, probe, efx->net_dev,
+			  "Failed to read MCPU firmware version - rc %d\n", rc);
+		goto fail1; /* MCPU absent? */
+	}
 
 	/* Let the BMC know that the driver is now in charge of link and
 	 * filter settings. We must do this before we reset the NIC */
@@ -294,7 +293,6 @@ fail4:
 fail3:
 	efx_mcdi_drv_attach(efx, false, NULL);
 fail2:
-	iounmap(nic_data->mcdi_smem);
 fail1:
 	kfree(efx->nic_data);
 	return rc;
@@ -356,6 +354,11 @@ static int siena_init_nic(struct efx_nic *efx)
 	       FRF_CZ_RX_RSS_IPV6_TKEY_HI_WIDTH / 8);
 	efx_writeo(efx, &temp, FR_CZ_RX_RSS_IPV6_REG3);
 
+	if (efx_nic_rx_xoff_thresh >= 0 || efx_nic_rx_xon_thresh >= 0)
+		/* No MCDI operation has been defined to set thresholds */
+		netif_err(efx, hw, efx->net_dev,
+			  "ignoring RX flow control thresholds\n");
+
 	/* Enable event logging */
 	rc = efx_mcdi_log_ctrl(efx, true, false, 0);
 	if (rc)
@@ -374,8 +377,6 @@ static int siena_init_nic(struct efx_nic *efx)
 
 static void siena_remove_nic(struct efx_nic *efx)
 {
-	struct siena_nic_data *nic_data = efx->nic_data;
-
 	efx_nic_free_buffer(efx, &efx->irq_status);
 
 	siena_reset_hw(efx, RESET_TYPE_ALL);
@@ -385,8 +386,7 @@ static void siena_remove_nic(struct efx_nic *efx)
 		efx_mcdi_drv_attach(efx, false, NULL);
 
 	/* Tear down the private nic state */
-	iounmap(nic_data->mcdi_smem);
-	kfree(nic_data);
+	kfree(efx->nic_data);
 	efx->nic_data = NULL;
 }
 
@@ -450,7 +450,7 @@ static int siena_try_update_nic_stats(struct efx_nic *efx)
 				    mac_stats->rx_bad_bytes);
 	MAC_STAT(rx_packets, RX_PKTS);
 	MAC_STAT(rx_good, RX_GOOD_PKTS);
-	MAC_STAT(rx_bad, RX_BAD_FCS_PKTS);
+	mac_stats->rx_bad = mac_stats->rx_packets - mac_stats->rx_good;
 	MAC_STAT(rx_pause, RX_PAUSE_PKTS);
 	MAC_STAT(rx_control, RX_CONTROL_PKTS);
 	MAC_STAT(rx_unicast, RX_UNICAST_PKTS);
@@ -520,6 +520,16 @@ static void siena_stop_nic_stats(struct efx_nic *efx)
 	efx_mcdi_mac_stats(efx, efx->stats_buffer.dma_addr, 0, 0, 0);
 }
 
+void siena_print_fwver(struct efx_nic *efx, char *buf, size_t len)
+{
+	struct siena_nic_data *nic_data = efx->nic_data;
+	snprintf(buf, len, "%u.%u.%u.%u",
+		 (unsigned int)(nic_data->fw_version >> 48),
+		 (unsigned int)(nic_data->fw_version >> 32 & 0xffff),
+		 (unsigned int)(nic_data->fw_version >> 16 & 0xffff),
+		 (unsigned int)(nic_data->fw_version & 0xffff));
+}
+
 /**************************************************************************
  *
  * Wake on LAN
@@ -552,7 +562,7 @@ static int siena_set_wol(struct efx_nic *efx, u32 type)
 		if (nic_data->wol_filter_id != -1)
 			efx_mcdi_wol_filter_remove(efx,
 						   nic_data->wol_filter_id);
-		rc = efx_mcdi_wol_filter_set_magic(efx, efx->net_dev->dev_addr,
+		rc = efx_mcdi_wol_filter_set_magic(efx, efx->mac_address,
 						   &nic_data->wol_filter_id);
 		if (rc)
 			goto fail;
@@ -624,7 +634,8 @@ struct efx_nic_type siena_a0_nic_type = {
 	.default_mac_ops = &efx_mcdi_mac_operations,
 
 	.revision = EFX_REV_SIENA_A0,
-	.mem_map_size = FR_CZ_MC_TREG_SMEM, /* MC_TREG_SMEM mapped separately */
+	.mem_map_size = (FR_CZ_MC_TREG_SMEM +
+			 FR_CZ_MC_TREG_SMEM_STEP * FR_CZ_MC_TREG_SMEM_ROWS),
 	.txd_ptr_tbl_base = FR_BZ_TX_DESC_PTR_TBL,
 	.rxd_ptr_tbl_base = FR_BZ_RX_DESC_PTR_TBL,
 	.buf_tbl_base = FR_BZ_BUF_FULL_TBL,
@@ -640,6 +651,6 @@ struct efx_nic_type siena_a0_nic_type = {
 	.tx_dc_base = 0x88000,
 	.rx_dc_base = 0x68000,
 	.offload_features = (NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
-			     NETIF_F_RXHASH | NETIF_F_NTUPLE),
+			     NETIF_F_RXHASH),
 	.reset_world_flags = ETH_RESET_MGMT << ETH_RESET_SHARED_SHIFT,
 };

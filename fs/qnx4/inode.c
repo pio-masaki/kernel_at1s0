@@ -16,6 +16,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/highuid.h>
+#include <linux/smp_lock.h>
 #include <linux/pagemap.h>
 #include <linux/buffer_head.h>
 #include <linux/writeback.h>
@@ -156,6 +157,8 @@ static int qnx4_statfs(struct dentry *dentry, struct kstatfs *buf)
 	struct super_block *sb = dentry->d_sb;
 	u64 id = huge_encode_dev(sb->s_bdev->bd_dev);
 
+	lock_kernel();
+
 	buf->f_type    = sb->s_magic;
 	buf->f_bsize   = sb->s_blocksize;
 	buf->f_blocks  = le32_to_cpu(qnx4_sb(sb)->BitMap->di_size) * 8;
@@ -164,6 +167,8 @@ static int qnx4_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_namelen = QNX4_NAME_MAX;
 	buf->f_fsid.val[0] = (u32)id;
 	buf->f_fsid.val[1] = (u32)(id >> 32);
+
+	unlock_kernel();
 
 	return 0;
 }
@@ -278,6 +283,7 @@ static int qnx4_fill_super(struct super_block *s, void *data, int silent)
  		goto outi;
 
 	brelse(bh);
+
 	return 0;
 
       outi:
@@ -335,6 +341,7 @@ static sector_t qnx4_bmap(struct address_space *mapping, sector_t block)
 static const struct address_space_operations qnx4_aops = {
 	.readpage	= qnx4_readpage,
 	.writepage	= qnx4_writepage,
+	.sync_page	= block_sync_page,
 	.write_begin	= qnx4_write_begin,
 	.write_end	= generic_write_end,
 	.bmap		= qnx4_bmap
@@ -424,16 +431,9 @@ static struct inode *qnx4_alloc_inode(struct super_block *sb)
 	return &ei->vfs_inode;
 }
 
-static void qnx4_i_callback(struct rcu_head *head)
-{
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
-	kmem_cache_free(qnx4_inode_cachep, qnx4_i(inode));
-}
-
 static void qnx4_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, qnx4_i_callback);
+	kmem_cache_free(qnx4_inode_cachep, qnx4_i(inode));
 }
 
 static void init_once(void *foo)
@@ -460,16 +460,17 @@ static void destroy_inodecache(void)
 	kmem_cache_destroy(qnx4_inode_cachep);
 }
 
-static struct dentry *qnx4_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data)
+static int qnx4_get_sb(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, qnx4_fill_super);
+	return get_sb_bdev(fs_type, flags, dev_name, data, qnx4_fill_super,
+			   mnt);
 }
 
 static struct file_system_type qnx4_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "qnx4",
-	.mount		= qnx4_mount,
+	.get_sb		= qnx4_get_sb,
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };

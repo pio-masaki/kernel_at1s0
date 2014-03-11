@@ -1,7 +1,7 @@
 /* ------------------------------------------------------------------------ *
  * i2c-parport.c I2C bus over parallel port                                 *
  * ------------------------------------------------------------------------ *
-   Copyright (C) 2003-2011 Jean Delvare <khali@linux-fr.org>
+   Copyright (C) 2003-2010 Jean Delvare <khali@linux-fr.org>
    
    Based on older i2c-philips-par.c driver
    Copyright (C) 1995-2000 Simon G. Vogl
@@ -33,8 +33,6 @@
 #include <linux/i2c-algo-bit.h>
 #include <linux/i2c-smbus.h>
 #include <linux/slab.h>
-#include <linux/list.h>
-#include <linux/mutex.h>
 #include "i2c-parport.h"
 
 /* ----- Device list ------------------------------------------------------ */
@@ -45,11 +43,10 @@ struct i2c_par {
 	struct i2c_algo_bit_data algo_data;
 	struct i2c_smbus_alert_setup alert_data;
 	struct i2c_client *ara;
-	struct list_head node;
+	struct i2c_par *next;
 };
 
-static LIST_HEAD(adapter_list);
-static DEFINE_MUTEX(adapter_list_lock);
+static struct i2c_par *adapter_list;
 
 /* ----- Low-level parallel port access ----------------------------------- */
 
@@ -231,9 +228,8 @@ static void i2c_parport_attach (struct parport *port)
 	}
 
 	/* Add the new adapter to the list */
-	mutex_lock(&adapter_list_lock);
-	list_add_tail(&adapter->node, &adapter_list);
-	mutex_unlock(&adapter_list_lock);
+	adapter->next = adapter_list;
+	adapter_list = adapter;
         return;
 
 ERROR1:
@@ -245,11 +241,11 @@ ERROR0:
 
 static void i2c_parport_detach (struct parport *port)
 {
-	struct i2c_par *adapter, *_n;
+	struct i2c_par *adapter, *prev;
 
 	/* Walk the list */
-	mutex_lock(&adapter_list_lock);
-	list_for_each_entry_safe(adapter, _n, &adapter_list, node) {
+	for (prev = NULL, adapter = adapter_list; adapter;
+	     prev = adapter, adapter = adapter->next) {
 		if (adapter->pdev->port == port) {
 			if (adapter->ara) {
 				parport_disable_irq(port);
@@ -263,11 +259,14 @@ static void i2c_parport_detach (struct parport *port)
 				
 			parport_release(adapter->pdev);
 			parport_unregister_device(adapter->pdev);
-			list_del(&adapter->node);
+			if (prev)
+				prev->next = adapter->next;
+			else
+				adapter_list = adapter->next;
 			kfree(adapter);
+			return;
 		}
 	}
-	mutex_unlock(&adapter_list_lock);
 }
 
 static struct parport_driver i2c_parport_driver = {

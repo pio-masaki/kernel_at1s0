@@ -41,6 +41,8 @@
 #include "../pci.h"
 #include "pciehp.h"
 
+static atomic_t pciehp_num_controllers = ATOMIC_INIT(0);
+
 static inline int pciehp_readw(struct controller *ctrl, int reg, u16 *value)
 {
 	struct pci_dev *dev = ctrl->pcie->port;
@@ -803,8 +805,8 @@ static void pcie_cleanup_slot(struct controller *ctrl)
 {
 	struct slot *slot = ctrl->slot;
 	cancel_delayed_work(&slot->work);
+	flush_scheduled_work();
 	flush_workqueue(pciehp_wq);
-	flush_workqueue(pciehp_ordered_wq);
 	kfree(slot);
 }
 
@@ -910,6 +912,16 @@ struct controller *pcie_init(struct pcie_device *dev)
 	/* Disable sotfware notification */
 	pcie_disable_notification(ctrl);
 
+	/*
+	 * If this is the first controller to be initialized,
+	 * initialize the pciehp work queue
+	 */
+	if (atomic_add_return(1, &pciehp_num_controllers) == 1) {
+		pciehp_wq = create_singlethread_workqueue("pciehpd");
+		if (!pciehp_wq)
+			goto abort_ctrl;
+	}
+
 	ctrl_info(ctrl, "HPC vendor_id %x device_id %x ss_vid %x ss_did %x\n",
 		  pdev->vendor, pdev->device, pdev->subsystem_vendor,
 		  pdev->subsystem_device);
@@ -929,5 +941,11 @@ void pciehp_release_ctrl(struct controller *ctrl)
 {
 	pcie_shutdown_notification(ctrl);
 	pcie_cleanup_slot(ctrl);
+	/*
+	 * If this is the last controller to be released, destroy the
+	 * pciehp work queue
+	 */
+	if (atomic_dec_and_test(&pciehp_num_controllers))
+		destroy_workqueue(pciehp_wq);
 	kfree(ctrl);
 }

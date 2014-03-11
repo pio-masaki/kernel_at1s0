@@ -30,8 +30,9 @@ struct device_private;
 struct device_driver;
 struct driver_private;
 struct class;
-struct subsys_private;
+struct class_private;
 struct bus_type;
+struct bus_type_private;
 struct device_node;
 
 struct bus_attribute {
@@ -64,7 +65,7 @@ struct bus_type {
 
 	const struct dev_pm_ops *pm;
 
-	struct subsys_private *p;
+	struct bus_type_private *p;
 };
 
 extern int __must_check bus_register(struct bus_type *bus);
@@ -128,7 +129,9 @@ struct device_driver {
 
 	bool suppress_bind_attrs;	/* disables bind/unbind via sysfs */
 
+#if defined(CONFIG_OF)
 	const struct of_device_id	*of_match_table;
+#endif
 
 	int (*probe) (struct device *dev);
 	int (*remove) (struct device *dev);
@@ -194,7 +197,6 @@ struct class {
 
 	struct class_attribute		*class_attrs;
 	struct device_attribute		*dev_attrs;
-	struct bin_attribute		*dev_bin_attrs;
 	struct kobject			*dev_kobj;
 
 	int (*dev_uevent)(struct device *dev, struct kobj_uevent_env *env);
@@ -211,7 +213,7 @@ struct class {
 
 	const struct dev_pm_ops *pm;
 
-	struct subsys_private *p;
+	struct class_private *p;
 };
 
 struct class_dev_iter {
@@ -420,7 +422,6 @@ struct device {
 	void		*platform_data;	/* Platform specific data, device
 					   core doesn't touch it */
 	struct dev_pm_info	power;
-	struct dev_power_domain	*pwr_domain;
 
 #ifdef CONFIG_NUMA
 	int		numa_node;	/* NUMA node this device is close to */
@@ -440,8 +441,9 @@ struct device {
 					     override */
 	/* arch specific additions */
 	struct dev_archdata	archdata;
-
-	struct device_node	*of_node; /* associated device tree node */
+#ifdef CONFIG_OF
+	struct device_node	*of_node;
+#endif
 
 	dev_t			devt;	/* dev_t, creates the sysfs "dev" */
 
@@ -506,13 +508,13 @@ static inline int device_is_registered(struct device *dev)
 
 static inline void device_enable_async_suspend(struct device *dev)
 {
-	if (!dev->power.is_prepared)
+	if (dev->power.status == DPM_ON)
 		dev->power.async_suspend = true;
 }
 
 static inline void device_disable_async_suspend(struct device *dev)
 {
-	if (!dev->power.is_prepared)
+	if (dev->power.status == DPM_ON)
 		dev->power.async_suspend = false;
 }
 
@@ -632,12 +634,8 @@ static inline int devtmpfs_mount(const char *mountpoint) { return 0; }
 /* drivers/base/power/shutdown.c */
 extern void device_shutdown(void);
 
-#ifndef CONFIG_ARCH_NO_SYSDEV_OPS
 /* drivers/base/sys.c */
 extern void sysdev_shutdown(void);
-#else
-static inline void sysdev_shutdown(void) { }
-#endif
 
 /* debugging and troubleshooting/diagnostic helpers. */
 extern const char *dev_driver_string(const struct device *dev);
@@ -753,11 +751,4 @@ do {						     \
 	MODULE_ALIAS("char-major-" __stringify(major) "-" __stringify(minor))
 #define MODULE_ALIAS_CHARDEV_MAJOR(major) \
 	MODULE_ALIAS("char-major-" __stringify(major) "-*")
-
-#ifdef CONFIG_SYSFS_DEPRECATED
-extern long sysfs_deprecated;
-#else
-#define sysfs_deprecated 0
-#endif
-
 #endif /* _DEVICE_H_ */

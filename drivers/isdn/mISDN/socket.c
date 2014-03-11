@@ -392,7 +392,6 @@ data_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		if (dev) {
 			struct mISDN_devinfo di;
 
-			memset(&di, 0, sizeof(di));
 			di.id = dev->id;
 			di.Dprotocols = dev->Dprotocols;
 			di.Bprotocols = dev->Bprotocols | get_all_Bprotocols();
@@ -673,7 +672,6 @@ base_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		if (dev) {
 			struct mISDN_devinfo di;
 
-			memset(&di, 0, sizeof(di));
 			di.id = dev->id;
 			di.Dprotocols = dev->Dprotocols;
 			di.Bprotocols = dev->Bprotocols | get_all_Bprotocols();

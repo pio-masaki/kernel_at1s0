@@ -30,6 +30,7 @@
 #include <linux/ioport.h>
 #include <linux/scatterlist.h>
 
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/ds.h>
 #include <linux/io.h>
@@ -446,7 +447,7 @@ static int sdricoh_init_mmc(struct pci_dev *pci_dev,
 	mmc->max_seg_size = 1024 * 512;
 	mmc->max_blk_size = 512;
 
-	/* reset the controller */
+	/* reset the controler */
 	if (sdricoh_reset(host)) {
 		dev_dbg(dev, "could not reset\n");
 		result = -EIO;
@@ -478,7 +479,7 @@ static int sdricoh_pcmcia_probe(struct pcmcia_device *pcmcia_dev)
 	dev_info(&pcmcia_dev->dev, "Searching MMC controller for pcmcia device"
 		" %s %s ...\n", pcmcia_dev->prod_id[0], pcmcia_dev->prod_id[1]);
 
-	/* search pci cardbus bridge that contains the mmc controller */
+	/* search pci cardbus bridge that contains the mmc controler */
 	/* the io region is already claimed by yenta_socket... */
 	while ((pci_dev =
 		pci_get_device(PCI_VENDOR_ID_RICOH, PCI_DEVICE_ID_RICOH_RL5C476,
@@ -535,7 +536,9 @@ static int sdricoh_pcmcia_resume(struct pcmcia_device *link)
 #endif
 
 static struct pcmcia_driver sdricoh_driver = {
-	.name = DRIVER_NAME,
+	.drv = {
+		.name = DRIVER_NAME,
+		},
 	.probe = sdricoh_pcmcia_probe,
 	.remove = sdricoh_pcmcia_detach,
 	.id_table = pcmcia_ids,

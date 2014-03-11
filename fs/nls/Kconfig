@@ -460,10 +460,10 @@ config NLS_UTF8
 	  correctly on the screen, you need to include the appropriate
 	  input/output character sets. Say Y here for the UTF-8 encoding of
 	  the Unicode/ISO9646 universal character set.
-config NLS_MODIFIED_UTF8
-        bool "NLS Modified UTF-8"
-        help
-          for Android
 
+config NLS_MODIFIED_UTF8
+	bool "NLS Modified UTF-8"
+	help
+	  for Android
 
 endif # NLS

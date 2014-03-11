@@ -10,7 +10,6 @@
 
 #define KMSG_COMPONENT "dasd"
 
-#include <linux/kernel_stat.h>
 #include <linux/stddef.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
@@ -229,27 +228,29 @@ dasd_diag_term_IO(struct dasd_ccw_req * cqr)
 }
 
 /* Handle external interruption. */
-static void dasd_ext_handler(unsigned int ext_int_code,
-			     unsigned int param32, unsigned long param64)
+static void
+dasd_ext_handler(__u16 code)
 {
 	struct dasd_ccw_req *cqr, *next;
 	struct dasd_device *device;
 	unsigned long long expires;
 	unsigned long flags;
+	u8 int_code, status;
 	addr_t ip;
 	int rc;
 
-	switch (ext_int_code >> 24) {
+	int_code = *((u8 *) DASD_DIAG_LC_INT_CODE);
+	status = *((u8 *) DASD_DIAG_LC_INT_STATUS);
+	switch (int_code) {
 	case DASD_DIAG_CODE_31BIT:
-		ip = (addr_t) param32;
+		ip = (addr_t) *((u32 *) DASD_DIAG_LC_INT_PARM_31BIT);
 		break;
 	case DASD_DIAG_CODE_64BIT:
-		ip = (addr_t) param64;
+		ip = (addr_t) *((u64 *) DASD_DIAG_LC_INT_PARM_64BIT);
 		break;
 	default:
 		return;
 	}
-	kstat_cpu(smp_processor_id()).irqs[EXTINT_DSD]++;
 	if (!ip) {		/* no intparm: unsolicited interrupt */
 		DBF_EVENT(DBF_NOTICE, "%s", "caught unsolicited "
 			      "interrupt");
@@ -280,7 +281,7 @@ static void dasd_ext_handler(unsigned int ext_int_code,
 	cqr->stopclk = get_clock();
 
 	expires = 0;
-	if ((ext_int_code & 0xff0000) == 0) {
+	if (status == 0) {
 		cqr->status = DASD_CQR_SUCCESS;
 		/* Start first request on queue if possible -> fast_io. */
 		if (!list_empty(&device->ccw_queue)) {
@@ -295,8 +296,8 @@ static void dasd_ext_handler(unsigned int ext_int_code,
 	} else {
 		cqr->status = DASD_CQR_QUEUED;
 		DBF_DEV_EVENT(DBF_DEBUG, device, "interrupt status for "
-			      "request %p was %d (%d retries left)", cqr,
-			      (ext_int_code >> 16) & 0xff, cqr->retries);
+			    "request %p was %d (%d retries left)", cqr, status,
+			    cqr->retries);
 		dasd_diag_erp(device);
 	}
 
@@ -619,7 +620,6 @@ static struct dasd_discipline dasd_diag_discipline = {
 	.ebcname = "DIAG",
 	.max_blocks = DIAG_MAX_BLOCKS,
 	.check_device = dasd_diag_check_device,
-	.verify_path = dasd_generic_verify_path,
 	.fill_geometry = dasd_diag_fill_geometry,
 	.start_IO = dasd_start_diag,
 	.term_IO = dasd_diag_term_IO,

@@ -211,10 +211,28 @@ void mxc_gpio_release_multiple_pins(const int *pin_list, int count)
 }
 EXPORT_SYMBOL(mxc_gpio_release_multiple_pins);
 
-int __init imx_iomuxv1_init(void __iomem *base, int numports)
+static int imx_iomuxv1_init(void)
 {
-	imx_iomuxv1_baseaddr = base;
-	imx_iomuxv1_numports = numports;
+#ifdef CONFIG_ARCH_MX1
+	if (cpu_is_mx1()) {
+		imx_iomuxv1_baseaddr = MX1_IO_ADDRESS(MX1_GPIO_BASE_ADDR);
+		imx_iomuxv1_numports = MX1_NUM_GPIO_PORT;
+	} else
+#endif
+#ifdef CONFIG_MACH_MX21
+	if (cpu_is_mx21()) {
+		imx_iomuxv1_baseaddr = MX21_IO_ADDRESS(MX21_GPIO_BASE_ADDR);
+		imx_iomuxv1_numports = MX21_NUM_GPIO_PORT;
+	} else
+#endif
+#ifdef CONFIG_MACH_MX27
+	if (cpu_is_mx27()) {
+		imx_iomuxv1_baseaddr = MX27_IO_ADDRESS(MX27_GPIO_BASE_ADDR);
+		imx_iomuxv1_numports = MX27_NUM_GPIO_PORT;
+	} else
+#endif
+		return -ENODEV;
 
 	return 0;
 }
+pure_initcall(imx_iomuxv1_init);

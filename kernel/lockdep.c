@@ -639,16 +639,6 @@ look_up_lock_class(struct lockdep_map *lock, unsigned int subclass)
 	}
 #endif
 
-	if (unlikely(subclass >= MAX_LOCKDEP_SUBCLASSES)) {
-		debug_locks_off();
-		printk(KERN_ERR
-			"BUG: looking up invalid subclass: %u\n", subclass);
-		printk(KERN_ERR
-			"turning off the locking correctness validator.\n");
-		dump_stack();
-		return NULL;
-	}
-
 	/*
 	 * Static locks do not have their class-keys yet - for them the key
 	 * is the lock object itself:
@@ -784,9 +774,7 @@ out_unlock_set:
 	raw_local_irq_restore(flags);
 
 	if (!subclass || force)
-		lock->class_cache[0] = class;
-	else if (subclass < NR_LOCKDEP_CACHING_CLASSES)
-		lock->class_cache[subclass] = class;
+		lock->class_cache = class;
 
 	if (DEBUG_LOCKS_WARN_ON(class->subclass != subclass))
 		return NULL;
@@ -2292,6 +2280,22 @@ mark_held_locks(struct task_struct *curr, enum mark_type mark)
 }
 
 /*
+ * Debugging helper: via this flag we know that we are in
+ * 'early bootup code', and will warn about any invalid irqs-on event:
+ */
+static int early_boot_irqs_enabled;
+
+void early_boot_irqs_off(void)
+{
+	early_boot_irqs_enabled = 0;
+}
+
+void early_boot_irqs_on(void)
+{
+	early_boot_irqs_enabled = 1;
+}
+
+/*
  * Hardirqs will be enabled:
  */
 void trace_hardirqs_on_caller(unsigned long ip)
@@ -2303,13 +2307,13 @@ void trace_hardirqs_on_caller(unsigned long ip)
 	if (unlikely(!debug_locks || current->lockdep_recursion))
 		return;
 
-	if (DEBUG_LOCKS_WARN_ON(unlikely(early_boot_irqs_disabled)))
+	if (DEBUG_LOCKS_WARN_ON(unlikely(!early_boot_irqs_enabled)))
 		return;
 
 	if (unlikely(curr->hardirqs_enabled)) {
 		/*
 		 * Neither irq nor preemption are disabled here
-		 * so this is racy by nature but losing one hit
+		 * so this is racy by nature but loosing one hit
 		 * in a stat is not a big deal.
 		 */
 		__debug_atomic_inc(redundant_hardirqs_on);
@@ -2620,7 +2624,7 @@ static int mark_lock(struct task_struct *curr, struct held_lock *this,
 	if (!graph_lock())
 		return 0;
 	/*
-	 * Make sure we didn't race:
+	 * Make sure we didnt race:
 	 */
 	if (unlikely(hlock_class(this)->usage_mask & new_mask)) {
 		graph_unlock();
@@ -2675,11 +2679,7 @@ static int mark_lock(struct task_struct *curr, struct held_lock *this,
 void lockdep_init_map(struct lockdep_map *lock, const char *name,
 		      struct lock_class_key *key, int subclass)
 {
-	int i;
-
-	for (i = 0; i < NR_LOCKDEP_CACHING_CLASSES; i++)
-		lock->class_cache[i] = NULL;
-
+	lock->class_cache = NULL;
 #ifdef CONFIG_LOCK_STAT
 	lock->cpu = raw_smp_processor_id();
 #endif
@@ -2739,13 +2739,21 @@ static int __lock_acquire(struct lockdep_map *lock, unsigned int subclass,
 	if (DEBUG_LOCKS_WARN_ON(!irqs_disabled()))
 		return 0;
 
+	if (unlikely(subclass >= MAX_LOCKDEP_SUBCLASSES)) {
+		debug_locks_off();
+		printk("BUG: MAX_LOCKDEP_SUBCLASSES too low!\n");
+		printk("turning off the locking correctness validator.\n");
+		dump_stack();
+		return 0;
+	}
+
 	if (lock->key == &__lockdep_no_validate__)
 		check = 1;
 
-	if (subclass < NR_LOCKDEP_CACHING_CLASSES)
-		class = lock->class_cache[subclass];
+	if (!subclass)
+		class = lock->class_cache;
 	/*
-	 * Not cached?
+	 * Not cached yet or subclass?
 	 */
 	if (unlikely(!class)) {
 		class = register_lock_class(lock, subclass, 0);
@@ -2910,7 +2918,7 @@ static int match_held_lock(struct held_lock *hlock, struct lockdep_map *lock)
 		return 1;
 
 	if (hlock->references) {
-		struct lock_class *class = lock->class_cache[0];
+		struct lock_class *class = lock->class_cache;
 
 		if (!class)
 			class = look_up_lock_class(lock, 0);
@@ -3242,7 +3250,7 @@ int lock_is_held(struct lockdep_map *lock)
 	int ret = 0;
 
 	if (unlikely(current->lockdep_recursion))
-		return 1; /* avoid false negative lockdep_assert_held() */
+		return ret;
 
 	raw_local_irq_save(flags);
 	check_flags(flags);
@@ -3551,12 +3559,7 @@ void lockdep_reset_lock(struct lockdep_map *lock)
 		if (list_empty(head))
 			continue;
 		list_for_each_entry_safe(class, next, head, hash_entry) {
-			int match = 0;
-
-			for (j = 0; j < NR_LOCKDEP_CACHING_CLASSES; j++)
-				match |= class == lock->class_cache[j];
-
-			if (unlikely(match)) {
+			if (unlikely(class == lock->class_cache)) {
 				if (debug_locks_off_graph_unlock())
 					WARN_ON(1);
 				goto out_restore;
@@ -3772,13 +3775,19 @@ EXPORT_SYMBOL_GPL(debug_show_all_locks);
  * Careful: only use this function if you are sure that
  * the task cannot run in parallel!
  */
-void debug_show_held_locks(struct task_struct *task)
+void __debug_show_held_locks(struct task_struct *task)
 {
 	if (unlikely(!debug_locks)) {
 		printk("INFO: lockdep is turned off.\n");
 		return;
 	}
 	lockdep_print_held_locks(task);
+}
+EXPORT_SYMBOL_GPL(__debug_show_held_locks);
+
+void debug_show_held_locks(struct task_struct *task)
+{
+		__debug_show_held_locks(task);
 }
 EXPORT_SYMBOL_GPL(debug_show_held_locks);
 

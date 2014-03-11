@@ -14,6 +14,7 @@
 #include <linux/init.h>
 #include <linux/time.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/seq_file.h>
 #include <linux/pagemap.h>
 #include <linux/mpage.h>
@@ -236,6 +237,7 @@ static const struct address_space_operations fat_aops = {
 	.readpages	= fat_readpages,
 	.writepage	= fat_writepage,
 	.writepages	= fat_writepages,
+	.sync_page	= block_sync_page,
 	.write_begin	= fat_write_begin,
 	.write_end	= fat_write_end,
 	.direct_IO	= fat_direct_IO,
@@ -487,6 +489,8 @@ static void fat_put_super(struct super_block *sb)
 {
 	struct msdos_sb_info *sbi = MSDOS_SB(sb);
 
+	lock_kernel();
+
 	if (sb->s_dirt)
 		fat_write_super(sb);
 
@@ -500,6 +504,8 @@ static void fat_put_super(struct super_block *sb)
 
 	sb->s_fs_info = NULL;
 	kfree(sbi);
+
+	unlock_kernel();
 }
 
 static struct kmem_cache *fat_inode_cachep;
@@ -513,16 +519,9 @@ static struct inode *fat_alloc_inode(struct super_block *sb)
 	return &ei->vfs_inode;
 }
 
-static void fat_i_callback(struct rcu_head *head)
-{
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
-	kmem_cache_free(fat_inode_cachep, MSDOS_I(inode));
-}
-
 static void fat_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, fat_i_callback);
+	kmem_cache_free(fat_inode_cachep, MSDOS_I(inode));
 }
 
 static void init_once(void *foo)
@@ -702,6 +701,7 @@ static struct dentry *fat_fh_to_dentry(struct super_block *sb,
 		struct fid *fid, int fh_len, int fh_type)
 {
 	struct inode *inode = NULL;
+	struct dentry *result;
 	u32 *fh = fid->raw;
 
 	if (fh_len < 5 || fh_type != 3)
@@ -746,7 +746,10 @@ static struct dentry *fat_fh_to_dentry(struct super_block *sb,
 	 * the fat_iget lookup again.  If that fails, then we are totally out
 	 * of luck.  But all that is for another day
 	 */
-	return d_obtain_alias(inode);
+	result = d_obtain_alias(inode);
+	if (!IS_ERR(result))
+		result->d_op = sb->s_root->d_op;
+	return result;
 }
 
 static int
@@ -756,10 +759,8 @@ fat_encode_fh(struct dentry *de, __u32 *fh, int *lenp, int connectable)
 	struct inode *inode =  de->d_inode;
 	u32 ipos_h, ipos_m, ipos_l;
 
-	if (len < 5) {
-		*lenp = 5;
+	if (len < 5)
 		return 255; /* no room */
-	}
 
 	ipos_h = MSDOS_I(inode)->i_pos >> 8;
 	ipos_m = (MSDOS_I(inode)->i_pos & 0xf0) << 24;
@@ -796,6 +797,8 @@ static struct dentry *fat_get_parent(struct dentry *child)
 	brelse(bh);
 
 	parent = d_obtain_alias(inode);
+	if (!IS_ERR(parent))
+		parent->d_op = sb->s_root->d_op;
 out:
 	unlock_super(sb);
 
@@ -1239,8 +1242,7 @@ static int fat_read_root(struct inode *inode)
  * Read the super block of an MS-DOS FS.
  */
 int fat_fill_super(struct super_block *sb, void *data, int silent,
-		   const struct inode_operations *fs_dir_inode_ops, int isvfat,
-		   void (*setup)(struct super_block *))
+		   const struct inode_operations *fs_dir_inode_ops, int isvfat)
 {
 	struct inode *root_inode = NULL, *fat_inode = NULL;
 	struct buffer_head *bh;
@@ -1276,8 +1278,6 @@ int fat_fill_super(struct super_block *sb, void *data, int silent,
 	error = parse_options(data, isvfat, silent, &debug, &sbi->options);
 	if (error)
 		goto out_fail;
-
-	setup(sb); /* flavour-specific stuff that needs options */
 
 	error = -EIO;
 	sb_min_blocksize(sb, 512);

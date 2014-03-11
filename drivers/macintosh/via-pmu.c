@@ -18,7 +18,7 @@
  *
  */
 #include <stdarg.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -73,7 +73,6 @@
 /* How many iterations between battery polls */
 #define BATTERY_POLLING_COUNT	2
 
-static DEFINE_MUTEX(pmu_info_proc_mutex);
 static volatile unsigned char __iomem *via;
 
 /* VIA registers - spaced 0x200 bytes apart */
@@ -2079,7 +2078,7 @@ pmu_open(struct inode *inode, struct file *file)
 	pp->rb_get = pp->rb_put = 0;
 	spin_lock_init(&pp->lock);
 	init_waitqueue_head(&pp->wait);
-	mutex_lock(&pmu_info_proc_mutex);
+	lock_kernel();
 	spin_lock_irqsave(&all_pvt_lock, flags);
 #if defined(CONFIG_INPUT_ADBHID) && defined(CONFIG_PMAC_BACKLIGHT)
 	pp->backlight_locker = 0;
@@ -2087,7 +2086,7 @@ pmu_open(struct inode *inode, struct file *file)
 	list_add(&pp->list, &all_pmu_pvt);
 	spin_unlock_irqrestore(&all_pvt_lock, flags);
 	file->private_data = pp;
-	mutex_unlock(&pmu_info_proc_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -2257,7 +2256,7 @@ static int pmu_sleep_valid(suspend_state_t state)
 		&& (pmac_call_feature(PMAC_FTR_SLEEP_STATE, NULL, 0, -1) >= 0);
 }
 
-static const struct platform_suspend_ops pmu_pm_ops = {
+static struct platform_suspend_ops pmu_pm_ops = {
 	.enter = powerbook_sleep,
 	.valid = pmu_sleep_valid,
 };
@@ -2344,9 +2343,9 @@ static long pmu_unlocked_ioctl(struct file *filp,
 {
 	int ret;
 
-	mutex_lock(&pmu_info_proc_mutex);
+	lock_kernel();
 	ret = pmu_ioctl(filp, cmd, arg);
-	mutex_unlock(&pmu_info_proc_mutex);
+	unlock_kernel();
 
 	return ret;
 }
@@ -2399,7 +2398,6 @@ static const struct file_operations pmu_device_fops = {
 #endif
 	.open		= pmu_open,
 	.release	= pmu_release,
-	.llseek		= noop_llseek,
 };
 
 static struct miscdevice pmu_device = {

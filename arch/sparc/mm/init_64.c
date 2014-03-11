@@ -88,7 +88,7 @@ static void __init read_obp_memory(const char *property,
 				   struct linux_prom64_registers *regs,
 				   int *num_ents)
 {
-	phandle node = prom_finddevice("/memory");
+	int node = prom_finddevice("/memory");
 	int prop_size = prom_getproplen(node, property);
 	int ents, ret, i;
 
@@ -785,7 +785,8 @@ static int find_node(unsigned long addr)
 	return -1;
 }
 
-u64 memblock_nid_range(u64 start, u64 end, int *nid)
+static unsigned long long nid_range(unsigned long long start,
+				    unsigned long long end, int *nid)
 {
 	*nid = find_node(start);
 	start += PAGE_SIZE;
@@ -803,7 +804,8 @@ u64 memblock_nid_range(u64 start, u64 end, int *nid)
 	return start;
 }
 #else
-u64 memblock_nid_range(u64 start, u64 end, int *nid)
+static unsigned long long nid_range(unsigned long long start,
+				    unsigned long long end, int *nid)
 {
 	*nid = 0;
 	return end;
@@ -820,7 +822,8 @@ static void __init allocate_node_data(int nid)
 	struct pglist_data *p;
 
 #ifdef CONFIG_NEED_MULTIPLE_NODES
-	paddr = memblock_alloc_try_nid(sizeof(struct pglist_data), SMP_CACHE_BYTES, nid);
+	paddr = memblock_alloc_nid(sizeof(struct pglist_data),
+			      SMP_CACHE_BYTES, nid, nid_range);
 	if (!paddr) {
 		prom_printf("Cannot allocate pglist_data for nid[%d]\n", nid);
 		prom_halt();
@@ -840,7 +843,8 @@ static void __init allocate_node_data(int nid)
 	if (p->node_spanned_pages) {
 		num_pages = bootmem_bootmap_pages(p->node_spanned_pages);
 
-		paddr = memblock_alloc_try_nid(num_pages << PAGE_SHIFT, PAGE_SIZE, nid);
+		paddr = memblock_alloc_nid(num_pages << PAGE_SHIFT, PAGE_SIZE, nid,
+				      nid_range);
 		if (!paddr) {
 			prom_printf("Cannot allocate bootmap for nid[%d]\n",
 				  nid);
@@ -968,19 +972,19 @@ int of_node_to_nid(struct device_node *dp)
 
 static void __init add_node_ranges(void)
 {
-	struct memblock_region *reg;
+	int i;
 
-	for_each_memblock(memory, reg) {
-		unsigned long size = reg->size;
+	for (i = 0; i < memblock.memory.cnt; i++) {
+		unsigned long size = memblock_size_bytes(&memblock.memory, i);
 		unsigned long start, end;
 
-		start = reg->base;
+		start = memblock.memory.region[i].base;
 		end = start + size;
 		while (start < end) {
 			unsigned long this_end;
 			int nid;
 
-			this_end = memblock_nid_range(start, end, &nid);
+			this_end = nid_range(start, end, &nid);
 
 			numadbg("Adding active range nid[%d] "
 				"start[%lx] end[%lx]\n",
@@ -1277,7 +1281,7 @@ static void __init bootmem_init_nonnuma(void)
 {
 	unsigned long top_of_ram = memblock_end_of_DRAM();
 	unsigned long total_ram = memblock_phys_mem_size();
-	struct memblock_region *reg;
+	unsigned int i;
 
 	numadbg("bootmem_init_nonnuma()\n");
 
@@ -1288,14 +1292,15 @@ static void __init bootmem_init_nonnuma(void)
 
 	init_node_masks_nonnuma();
 
-	for_each_memblock(memory, reg) {
+	for (i = 0; i < memblock.memory.cnt; i++) {
+		unsigned long size = memblock_size_bytes(&memblock.memory, i);
 		unsigned long start_pfn, end_pfn;
 
-		if (!reg->size)
+		if (!size)
 			continue;
 
-		start_pfn = memblock_region_memory_base_pfn(reg);
-		end_pfn = memblock_region_memory_end_pfn(reg);
+		start_pfn = memblock.memory.region[i].base >> PAGE_SHIFT;
+		end_pfn = start_pfn + memblock_size_pages(&memblock.memory, i);
 		add_active_range(0, start_pfn, end_pfn);
 	}
 
@@ -1313,7 +1318,7 @@ static void __init reserve_range_in_node(int nid, unsigned long start,
 		unsigned long this_end;
 		int n;
 
-		this_end = memblock_nid_range(start, end, &n);
+		this_end = nid_range(start, end, &n);
 		if (n == nid) {
 			numadbg("      MATCH reserving range [%lx:%lx]\n",
 				start, this_end);
@@ -1329,12 +1334,17 @@ static void __init reserve_range_in_node(int nid, unsigned long start,
 
 static void __init trim_reserved_in_node(int nid)
 {
-	struct memblock_region *reg;
+	int i;
 
 	numadbg("  trim_reserved_in_node(%d)\n", nid);
 
-	for_each_memblock(reserved, reg)
-		reserve_range_in_node(nid, reg->base, reg->base + reg->size);
+	for (i = 0; i < memblock.reserved.cnt; i++) {
+		unsigned long start = memblock.reserved.region[i].base;
+		unsigned long size = memblock_size_bytes(&memblock.reserved, i);
+		unsigned long end = start + size;
+
+		reserve_range_in_node(nid, start, end);
+	}
 }
 
 static void __init bootmem_init_one_node(int nid)

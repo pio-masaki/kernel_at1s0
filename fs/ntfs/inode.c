@@ -54,7 +54,7 @@
  *
  * Return 1 if the attributes match and 0 if not.
  *
- * NOTE: This function runs with the inode->i_lock spin lock held so it is not
+ * NOTE: This function runs with the inode_lock spin lock held so it is not
  * allowed to sleep.
  */
 int ntfs_test_inode(struct inode *vi, ntfs_attr *na)
@@ -98,7 +98,7 @@ int ntfs_test_inode(struct inode *vi, ntfs_attr *na)
  *
  * Return 0 on success and -errno on error.
  *
- * NOTE: This function runs with the inode->i_lock spin lock held so it is not
+ * NOTE: This function runs with the inode_lock spin lock held so it is not
  * allowed to sleep. (Hence the GFP_ATOMIC allocation.)
  */
 static int ntfs_init_locked_inode(struct inode *vi, ntfs_attr *na)
@@ -332,13 +332,6 @@ struct inode *ntfs_alloc_big_inode(struct super_block *sb)
 	return NULL;
 }
 
-static void ntfs_i_callback(struct rcu_head *head)
-{
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	INIT_LIST_HEAD(&inode->i_dentry);
-	kmem_cache_free(ntfs_big_inode_cache, NTFS_I(inode));
-}
-
 void ntfs_destroy_big_inode(struct inode *inode)
 {
 	ntfs_inode *ni = NTFS_I(inode);
@@ -347,7 +340,7 @@ void ntfs_destroy_big_inode(struct inode *inode)
 	BUG_ON(ni->page);
 	if (!atomic_dec_and_test(&ni->count))
 		BUG();
-	call_rcu(&inode->i_rcu, ntfs_i_callback);
+	kmem_cache_free(ntfs_big_inode_cache, NTFS_I(inode));
 }
 
 static inline ntfs_inode *ntfs_alloc_extent_inode(void)
@@ -622,7 +615,7 @@ static int ntfs_read_locked_inode(struct inode *vi)
 	 */
 	/* Everyone gets all permissions. */
 	vi->i_mode |= S_IRWXUGO;
-	/* If read-only, no one gets write permissions. */
+	/* If read-only, noone gets write permissions. */
 	if (IS_RDONLY(vi))
 		vi->i_mode &= ~S_IWUGO;
 	if (m->flags & MFT_RECORD_IS_DIRECTORY) {
@@ -2529,7 +2522,7 @@ retry_truncate:
 		 * specifies that the behaviour is unspecified thus we do not
 		 * have to do anything.  This means that in our implementation
 		 * in the rare case that the file is mmap()ped and a write
-		 * occurred into the mmap()ped region just beyond the file size
+		 * occured into the mmap()ped region just beyond the file size
 		 * and writepage has not yet been called to write out the page
 		 * (which would clear the area beyond the file size) and we now
 		 * extend the file size to incorporate this dirty region

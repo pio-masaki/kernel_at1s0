@@ -1,8 +1,8 @@
 /*
- * Copyright (C) 2011 Google, Inc.
+ * Copyright (C) 2010 Google, Inc.
  *
  * Author:
- *	Colin Cross <ccross@android.com>
+ *	Colin Cross <ccross@google.com>
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -28,8 +28,6 @@
 #define TEGRA_MRR_DIVLD        (1<<20)
 #define TEGRA_EMC_STATUS       0x02b4
 #define TEGRA_EMC_MRR          0x00ec
-
-#define TEGRA_EMC_MRW          0x00e8
 static DEFINE_MUTEX(tegra_emc_mrr_lock);
 
 #ifdef CONFIG_TEGRA_EMC_SCALING_ENABLE
@@ -42,9 +40,6 @@ module_param(emc_enable, bool, 0644);
 static void __iomem *emc = IO_ADDRESS(TEGRA_EMC_BASE);
 static const struct tegra_emc_table *tegra_emc_table;
 static int tegra_emc_table_size;
-
-static unsigned long tegra_emc_max_bus_rate;  /* 2 * 1000 * maximum emc_clock rate */
-static unsigned long tegra_emc_min_bus_rate;  /* 2 * 1000 * minimum emc_clock rate */
 
 static inline void emc_writel(u32 val, unsigned long addr)
 {
@@ -83,21 +78,6 @@ static int tegra_emc_read_mrr(unsigned long addr)
 	mutex_unlock(&tegra_emc_mrr_lock);
 
 	return value;
-}
-
-void tegra_emc_write_mrw(unsigned long addr)
-{
-    /* Exit memory test mode First */
-    emc_writel(0x90000, TEGRA_EMC_MRW);
-
-    /* Enter memory test mode */
-        emc_writel(0x900B0, TEGRA_EMC_MRW);
-        emc_writel(0x900E0, TEGRA_EMC_MRW);
-        emc_writel(0x90090, TEGRA_EMC_MRW);
-/* Sending the test op code per Hynix FAE requested. 
-   0xBD - reducing self-refresh rate from 30 us to 10 us.
- */
-        emc_writel(0x900BD, TEGRA_EMC_MRW);
 }
 
 static const unsigned long emc_reg_addr[TEGRA_EMC_NUM_REGS] = {
@@ -162,20 +142,10 @@ long tegra_emc_round_rate(unsigned long rate)
 	if (!emc_enable)
 		return -EINVAL;
 
-	if (rate >= tegra_emc_max_bus_rate) {
-		best = tegra_emc_table_size - 1;
-		goto round_out;
-	} else if (rate <= tegra_emc_min_bus_rate) {
-		best = 0;
-		goto round_out;
-	}
-
 	pr_debug("%s: %lu\n", __func__, rate);
 
-	/*
-	 * The EMC clock rate is twice the bus rate, and the bus rate is
-	 * measured in kHz
-	 */
+	/* The EMC clock rate is twice the bus rate, and the bus rate is
+	 * measured in kHz */
 	rate = rate / 2 / 1000;
 
 	for (i = 0; i < tegra_emc_table_size; i++) {
@@ -188,20 +158,18 @@ long tegra_emc_round_rate(unsigned long rate)
 
 	if (best < 0)
 		return -EINVAL;
-round_out:
+
 	pr_debug("%s: using %lu\n", __func__, tegra_emc_table[best].rate);
 
 	return tegra_emc_table[best].rate * 2 * 1000;
 }
 
-/*
- * The EMC registers have shadow registers.  When the EMC clock is updated
+/* The EMC registers have shadow registers.  When the EMC clock is updated
  * in the clock controller, the shadow registers are copied to the active
  * registers, allowing glitchless memory bus frequency changes.
  * This function updates the shadow registers for a new clock frequency,
  * and relies on the clock lock on the emc clock to avoid races between
- * multiple frequency changes
- */
+ * multiple frequency changes */
 int tegra_emc_set_rate(unsigned long rate)
 {
 	int i;
@@ -210,17 +178,15 @@ int tegra_emc_set_rate(unsigned long rate)
 	if (!tegra_emc_table)
 		return -EINVAL;
 
-	/*
-	 * The EMC clock rate is twice the bus rate, and the bus rate is
-	 * measured in kHz
-	 */
+	/* The EMC clock rate is twice the bus rate, and the bus rate is
+	 * measured in kHz */
 	rate = rate / 2 / 1000;
 
-	for (i = tegra_emc_table_size - 1; i >= 0; i--)
+	for (i = 0; i < tegra_emc_table_size; i++)
 		if (tegra_emc_table[i].rate == rate)
 			break;
 
-	if (i < 0)
+	if (i >= tegra_emc_table_size)
 		return -EINVAL;
 
 	pr_debug("%s: setting to %lu\n", __func__, rate);
@@ -233,6 +199,13 @@ int tegra_emc_set_rate(unsigned long rate)
 	return 0;
 }
 
+#if 1	//**JHC**
+void tegra_init_emc(const struct tegra_emc_table *table, int table_size)
+{
+	tegra_emc_table = table;
+	tegra_emc_table_size = table_size;
+}
+#else
 void tegra_init_emc(const struct tegra_emc_chip *chips, int chips_size)
 {
 	int i;
@@ -274,10 +247,6 @@ void tegra_init_emc(const struct tegra_emc_chip *chips, int chips_size)
 			chips[chip_matched].description);
 		tegra_emc_table = chips[chip_matched].table;
 		tegra_emc_table_size = chips[chip_matched].table_size;
-
-		tegra_emc_min_bus_rate = tegra_emc_table[0].rate * 2 * 1000;
-		tegra_emc_max_bus_rate = tegra_emc_table[tegra_emc_table_size - 1].rate * 2 * 1000;
-
 	} else {
 		pr_err("%s: Memory not recognized, memory scaling disabled\n",
 			__func__);
@@ -287,3 +256,4 @@ void tegra_init_emc(const struct tegra_emc_chip *chips, int chips_size)
 		pr_info("%s: Memory pid     = 0x%04x", __func__, pid);
 	}
 }
+#endif

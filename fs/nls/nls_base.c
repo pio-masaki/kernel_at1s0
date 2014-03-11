@@ -66,22 +66,22 @@ int utf8_to_utf32(const u8 *s, int len, unicode_t *pu)
 		if ((c0 & t->cmask) == t->cval) {
 			l &= t->lmask;
 #ifdef CONFIG_NLS_MODIFIED_UTF8
-                        if (nc == 3 &&
-                            ((l & SURROGATE_MASK) == SURROGATE_PAIR)) {
-                                if (l & SURROGATE_LOW){
-                                        *pu = (unicode_t) l;
-                                        return nc;
-                                }else{
-                                        unicode_t m;
-                                        if ((utf8_to_utf32(s+1, len-3, &m) != 3) || ((m & SURROGATE_MASK) != SURROGATE_PAIR) || !(m & SURROGATE_LOW)) {
-                                                return -1;
-                                        }
-                                        l = (l << 10) + PLANE_SIZE;
-                                        l |= (m & SURROGATE_BITS);
-                                        *pu = (unicode_t) l;
-                                        return 6;
-                                }
-                        }
+			if (nc == 3 &&
+			    ((l & SURROGATE_MASK) == SURROGATE_PAIR)) {
+				if (l & SURROGATE_LOW){
+					*pu = (unicode_t) l;
+					return nc;
+				}else{
+					unicode_t m;
+					if ((utf8_to_utf32(s+1, len-3, &m) != 3) || ((m & SURROGATE_MASK) != SURROGATE_PAIR) || !(m & SURROGATE_LOW)) {
+						return -1;
+					}
+					l = (l << 10) + PLANE_SIZE;
+					l |= (m & SURROGATE_BITS);
+					*pu = (unicode_t) l;
+					return 6;
+				}
+			}
 #endif
 			if (l < t->lval || l > UNICODE_MAX ||
 					(l & SURROGATE_MASK) == SURROGATE_PAIR)
@@ -119,19 +119,19 @@ int utf32_to_utf8(unicode_t u, u8 *s, int maxlen)
 		nc++;
 		if (l <= t->lmask) {
 #ifdef CONFIG_NLS_MODIFIED_UTF8
-                        if (nc == 4){ /* surrogate pair */
-                                unsigned short su,sl;
-                                l -= PLANE_SIZE;
-                                su = 0xd800 | ((l >> 10) & 0x3ff);
-                                sl = 0xdc00 | (l & 0x3ff);
-                                *s++ = 0xe0 | ((su >> 12) & 0xf);
-                                *s++ = 0x80 | ((su >> 6) & 0x3f);
-                                *s++ = 0x80 | (su & 0x3f);
-                                *s++ = 0xe0 | ((sl >> 12) & 0xf);
-                                *s++ = 0x80 | ((sl >> 6) & 0x3f);
-                                *s++ = 0x80 | (sl & 0x3f);
-                                return nc + 2;
-                        }
+			if (nc == 4){ /* surrogate pair */
+				unsigned short su,sl;
+				l -= PLANE_SIZE;
+				su = 0xd800 | ((l >> 10) & 0x3ff);
+				sl = 0xdc00 | (l & 0x3ff);
+				*s++ = 0xe0 | ((su >> 12) & 0xf);
+				*s++ = 0x80 | ((su >> 6) & 0x3f);
+				*s++ = 0x80 | (su & 0x3f);
+				*s++ = 0xe0 | ((sl >> 12) & 0xf);
+				*s++ = 0x80 | ((sl >> 6) & 0x3f);
+				*s++ = 0x80 | (sl & 0x3f);
+				return nc + 2;
+			}
 #endif
 			c = t->shift;
 			*s = (u8) (t->cval | (l >> c));

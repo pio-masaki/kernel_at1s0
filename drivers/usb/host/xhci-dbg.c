@@ -169,10 +169,9 @@ static void xhci_print_ports(struct xhci_hcd *xhci)
 	}
 }
 
-void xhci_print_ir_set(struct xhci_hcd *xhci, int set_num)
+void xhci_print_ir_set(struct xhci_hcd *xhci, struct xhci_intr_reg *ir_set, int set_num)
 {
-	struct xhci_intr_reg __iomem *ir_set = &xhci->run_regs->ir_set[set_num];
-	void __iomem *addr;
+	void *addr;
 	u32 temp;
 	u64 temp_64;
 
@@ -437,20 +436,20 @@ char *xhci_get_slot_state(struct xhci_hcd *xhci,
 	struct xhci_slot_ctx *slot_ctx = xhci_get_slot_ctx(xhci, ctx);
 
 	switch (GET_SLOT_STATE(slot_ctx->dev_state)) {
-	case SLOT_STATE_ENABLED:
+	case 0:
 		return "enabled/disabled";
-	case SLOT_STATE_DEFAULT:
+	case 1:
 		return "default";
-	case SLOT_STATE_ADDRESSED:
+	case 2:
 		return "addressed";
-	case SLOT_STATE_CONFIGURED:
+	case 3:
 		return "configured";
 	default:
 		return "reserved";
 	}
 }
 
-static void xhci_dbg_slot_ctx(struct xhci_hcd *xhci, struct xhci_container_ctx *ctx)
+void xhci_dbg_slot_ctx(struct xhci_hcd *xhci, struct xhci_container_ctx *ctx)
 {
 	/* Fields are 32 bits wide, DMA addresses are in bytes */
 	int field_size = 32 / 8;
@@ -489,7 +488,7 @@ static void xhci_dbg_slot_ctx(struct xhci_hcd *xhci, struct xhci_container_ctx *
 		dbg_rsvd64(xhci, (u64 *)slot_ctx, dma);
 }
 
-static void xhci_dbg_ep_ctx(struct xhci_hcd *xhci,
+void xhci_dbg_ep_ctx(struct xhci_hcd *xhci,
 		     struct xhci_container_ctx *ctx,
 		     unsigned int last_ep)
 {

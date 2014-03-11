@@ -2,8 +2,6 @@
  * Copyright (C) 2010 Google, Inc.
  * Author: Dima Zavin <dima@android.com>
  *
- * Copyright (C) 2010-2011 NVIDIA Corporation
- *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
  * may be copied, distributed, and modified under those terms.
@@ -25,7 +23,6 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/tegra_rpc.h>
-#include <linux/tegra_avp.h>
 #include <linux/types.h>
 
 #include <mach/clk.h>
@@ -100,11 +97,6 @@ struct avp_svc_info {
 	/* client for remote allocations, for easy tear down */
 	struct nvmap_client		*nvmap_remote;
 	struct trpc_node		*rpc_node;
-	unsigned long			max_avp_rate;
-	unsigned long			emc_rate;
-
-	/* variable to check if video is present */
-	bool				is_vde_on;
 };
 
 static void do_svc_nvmap_create(struct avp_svc_info *avp_svc,
@@ -213,7 +205,7 @@ static void do_svc_nvmap_pin(struct avp_svc_info *avp_svc,
 	struct svc_nvmap_pin *msg = (struct svc_nvmap_pin *)_msg;
 	struct svc_nvmap_pin_resp resp;
 	struct nvmap_handle_ref *handle;
-	phys_addr_t addr = ~0UL;
+	unsigned long addr = ~0UL;
 	unsigned long id = msg->handle_id;
 	int err;
 
@@ -353,7 +345,6 @@ static void do_svc_module_clock(struct avp_svc_info *avp_svc,
 	struct svc_common_resp resp;
 	struct avp_module *mod;
 	struct avp_clk *aclk;
-	unsigned long emc_rate = 0;
 
 	mod = find_avp_module(avp_svc, msg->module_id);
 	if (!mod) {
@@ -363,17 +354,10 @@ static void do_svc_module_clock(struct avp_svc_info *avp_svc,
 		goto send_response;
 	}
 
-	if (msg->module_id == AVP_MODULE_ID_VDE)
-		avp_svc->is_vde_on = msg->enable;
-
-	if (avp_svc->is_vde_on == true)
-		emc_rate = ULONG_MAX;
-
 	mutex_lock(&avp_svc->clk_lock);
 	aclk = &avp_svc->clks[mod->clk_req];
 	if (msg->enable) {
 		if (aclk->refcnt++ == 0) {
-			clk_set_rate(avp_svc->emcclk, emc_rate);
 			clk_enable(avp_svc->emcclk);
 			clk_enable(avp_svc->sclk);
 			clk_enable(aclk->clk);
@@ -384,9 +368,7 @@ static void do_svc_module_clock(struct avp_svc_info *avp_svc,
 			       aclk->mod->name);
 		} else if (--aclk->refcnt == 0) {
 			clk_disable(aclk->clk);
-			clk_set_rate(avp_svc->sclk, 0);
 			clk_disable(avp_svc->sclk);
-			clk_set_rate(avp_svc->emcclk, 0);
 			clk_disable(avp_svc->emcclk);
 		}
 	}
@@ -477,18 +459,6 @@ static void do_svc_module_clock_set(struct avp_svc_info *avp_svc,
 
 	mutex_lock(&avp_svc->clk_lock);
 	if (msg->module_id == AVP_MODULE_ID_AVP) {
-		/* check if max avp clock is asked and set max emc frequency */
-		if (msg->clk_freq >= avp_svc->max_avp_rate) {
-			clk_set_rate(avp_svc->emcclk, ULONG_MAX);
-		}
-		else {
-			/* if no, set emc frequency as per platform data.
-			 * if no platform data is send, set it to maximum */
-			if (avp_svc->emc_rate)
-				clk_set_rate(avp_svc->emcclk, avp_svc->emc_rate);
-			else
-				clk_set_rate(avp_svc->emcclk, ULONG_MAX);
-		}
 		ret = clk_set_rate(avp_svc->sclk, msg->clk_freq);
 	} else {
 		aclk = &avp_svc->clks[mod->clk_req];
@@ -536,6 +506,7 @@ static void do_svc_module_clock_get(struct avp_svc_info *avp_svc,
 	struct svc_clock_ctrl_response resp;
 	struct avp_module *mod;
 	struct avp_clk *aclk;
+	int ret = 0;
 
 	mod = find_avp_module(avp_svc, msg->module_id);
 	if (!mod) {
@@ -663,12 +634,12 @@ static int avp_svc_thread(void *data)
 	u8 buf[TEGRA_RPC_MAX_MSG_LEN];
 	struct svc_msg *msg = (struct svc_msg *)buf;
 	int ret;
-	long timeout;
 
 	BUG_ON(!avp_svc->cpu_ep);
 
 	ret = trpc_wait_peer(avp_svc->cpu_ep, -1);
 	if (ret) {
+		/* XXX: teardown?! */
 		pr_err("%s: no connection from AVP (%d)\n", __func__, ret);
 		goto err;
 	}
@@ -680,23 +651,12 @@ static int avp_svc_thread(void *data)
 		ret = trpc_recv_msg(avp_svc->rpc_node, avp_svc->cpu_ep, buf,
 				    TEGRA_RPC_MAX_MSG_LEN, -1);
 		DBG(AVP_DBG_TRACE_SVC, "%s: got message\n", __func__);
-
-		if (ret == -ECONNRESET || ret == -ENOTCONN) {
-			wait_queue_head_t wq;
-			init_waitqueue_head(&wq);
-
-			pr_info("%s: AVP seems to be down; "
-				"wait for kthread_stop\n", __func__);
-			timeout = msecs_to_jiffies(100);
-			timeout = wait_event_interruptible_timeout(wq,
-					kthread_should_stop(), timeout);
-			if (timeout == 0)
-				pr_err("%s: timed out while waiting for "
-					"kthread_stop\n", __func__);
-			continue;
-		} else if (ret <= 0) {
-			pr_err("%s: couldn't receive msg (ret=%d)\n",
-				__func__, ret);
+		if (ret < 0) {
+			pr_err("%s: couldn't receive msg\n", __func__);
+			/* XXX: port got closed? we should exit? */
+			goto err;
+		} else if (!ret) {
+			pr_err("%s: received msg of len 0?!\n", __func__);
 			continue;
 		}
 		dispatch_svc_message(avp_svc, msg, ret);
@@ -704,7 +664,7 @@ static int avp_svc_thread(void *data)
 
 err:
 	trpc_put(avp_svc->cpu_ep);
-	pr_info("%s: exiting\n", __func__);
+	pr_info("%s: done\n", __func__);
 	return ret;
 }
 
@@ -778,9 +738,7 @@ void avp_svc_stop(struct avp_svc_info *avp_svc)
 				aclk->mod->name);
 			clk_disable(aclk->clk);
 			/* sclk/emcclk was enabled once for every clock */
-			clk_set_rate(avp_svc->sclk, 0);
 			clk_disable(avp_svc->sclk);
-			clk_set_rate(avp_svc->emcclk, 0);
 			clk_disable(avp_svc->emcclk);
 		}
 		aclk->refcnt = 0;
@@ -791,7 +749,6 @@ void avp_svc_stop(struct avp_svc_info *avp_svc)
 struct avp_svc_info *avp_svc_init(struct platform_device *pdev,
 				  struct trpc_node *rpc_node)
 {
-	struct tegra_avp_platform_data *pdata;
 	struct avp_svc_info *avp_svc;
 	int ret;
 	int i;
@@ -806,8 +763,6 @@ struct avp_svc_info *avp_svc_init(struct platform_device *pdev,
 	}
 
 	BUILD_BUG_ON(NUM_CLK_REQUESTS > BITS_PER_LONG);
-
-	pdata = pdev->dev.platform_data;
 
 	for (i = 0; i < NUM_AVP_MODULES; i++) {
 		struct avp_module *mod = &avp_modules[i];
@@ -834,8 +789,7 @@ struct avp_svc_info *avp_svc_init(struct platform_device *pdev,
 		ret = -ENOENT;
 		goto err_get_clks;
 	}
-	avp_svc->max_avp_rate = clk_round_rate(avp_svc->sclk, ULONG_MAX);
-	clk_set_rate(avp_svc->sclk, 0);
+	clk_set_rate(avp_svc->sclk, ULONG_MAX);
 
 	avp_svc->emcclk = clk_get(&pdev->dev, "emc");
 	if (IS_ERR(avp_svc->emcclk)) {
@@ -845,18 +799,11 @@ struct avp_svc_info *avp_svc_init(struct platform_device *pdev,
 	}
 
 	/*
-	 * The emc is a shared clock, it will be set to the rate
-	 * requested in platform data.  Set the rate to ULONG_MAX
-	 * if platform data is NULL.
+	 * The emc is a shared clock, it will be set to the highest
+	 * requested rate from any user.  Set the rate to ULONG_MAX to
+	 * always request the max rate whenever this request is enabled
 	 */
-	avp_svc->emc_rate = 0;
-	if (pdata) {
-		clk_set_rate(avp_svc->emcclk, pdata->emc_clk_rate);
-		avp_svc->emc_rate = pdata->emc_clk_rate;
-	}
-	else {
-		clk_set_rate(avp_svc->emcclk, ULONG_MAX);
-	}
+	clk_set_rate(avp_svc->emcclk, ULONG_MAX);
 
 	avp_svc->rpc_node = rpc_node;
 

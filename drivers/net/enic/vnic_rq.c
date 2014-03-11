@@ -77,10 +77,8 @@ void vnic_rq_free(struct vnic_rq *rq)
 	vnic_dev_free_desc_ring(vdev, &rq->ring);
 
 	for (i = 0; i < VNIC_RQ_BUF_BLKS_MAX; i++) {
-		if (rq->bufs[i]) {
-			kfree(rq->bufs[i]);
-			rq->bufs[i] = NULL;
-		}
+		kfree(rq->bufs[i]);
+		rq->bufs[i] = NULL;
 	}
 
 	rq->ctrl = NULL;
@@ -115,7 +113,7 @@ int vnic_rq_alloc(struct vnic_dev *vdev, struct vnic_rq *rq, unsigned int index,
 	return 0;
 }
 
-static void vnic_rq_init_start(struct vnic_rq *rq, unsigned int cq_index,
+void vnic_rq_init_start(struct vnic_rq *rq, unsigned int cq_index,
 	unsigned int fetch_index, unsigned int posted_index,
 	unsigned int error_interrupt_enable,
 	unsigned int error_interrupt_offset)

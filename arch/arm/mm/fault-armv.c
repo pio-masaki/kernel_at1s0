@@ -26,9 +26,9 @@
 
 #include "mm.h"
 
-static pteval_t shared_pte_mask = L_PTE_MT_BUFFERABLE;
+static unsigned long shared_pte_mask = L_PTE_MT_BUFFERABLE;
 
-#if __LINUX_ARM_ARCH__ < 6
+#ifndef CONFIG_SMP
 /*
  * We take the easy way out of this problem - we make the
  * PTE uncacheable.  However, we leave the write buffer on.
@@ -95,7 +95,6 @@ static int adjust_pte(struct vm_area_struct *vma, unsigned long address,
 {
 	spinlock_t *ptl;
 	pgd_t *pgd;
-	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte;
 	int ret;
@@ -104,11 +103,7 @@ static int adjust_pte(struct vm_area_struct *vma, unsigned long address,
 	if (pgd_none_or_clear_bad(pgd))
 		return 0;
 
-	pud = pud_offset(pgd, address);
-	if (pud_none_or_clear_bad(pud))
-		return 0;
-
-	pmd = pmd_offset(pud, address);
+	pmd = pmd_offset(pgd, address);
 	if (pmd_none_or_clear_bad(pmd))
 		return 0;
 
@@ -118,13 +113,13 @@ static int adjust_pte(struct vm_area_struct *vma, unsigned long address,
 	 * open-code the spin-locking.
 	 */
 	ptl = pte_lockptr(vma->vm_mm, pmd);
-	pte = pte_offset_map(pmd, address);
+	pte = pte_offset_map_nested(pmd, address);
 	do_pte_lock(ptl);
 
 	ret = do_adjust_pte(vma, address, pfn, pte);
 
 	do_pte_unlock(ptl);
-	pte_unmap(pte);
+	pte_unmap_nested(pte);
 
 	return ret;
 }
@@ -207,7 +202,7 @@ void update_mmu_cache(struct vm_area_struct *vma, unsigned long addr,
 			__flush_icache_all();
 	}
 }
-#endif	/* __LINUX_ARM_ARCH__ < 6 */
+#endif	/* !CONFIG_SMP */
 
 /*
  * Check whether the write buffer has physical address aliasing

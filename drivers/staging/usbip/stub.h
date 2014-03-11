@@ -32,7 +32,6 @@
 
 struct stub_device {
 	struct usb_interface *interface;
-	struct usb_device *udev;
 	struct list_head list;
 
 	struct usbip_device ud;
@@ -95,13 +94,13 @@ extern struct kmem_cache *stub_priv_cache;
 
 /* stub_tx.c */
 void stub_complete(struct urb *);
-int stub_tx_loop(void *data);
+void stub_tx_loop(struct usbip_task *);
 
 /* stub_dev.c */
 extern struct usb_driver stub_driver;
 
 /* stub_rx.c */
-int stub_rx_loop(void *data);
+void stub_rx_loop(struct usbip_task *);
 void stub_enqueue_ret_unlink(struct stub_device *, __u32, __u32);
 
 /* stub_main.c */

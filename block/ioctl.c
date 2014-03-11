@@ -5,6 +5,7 @@
 #include <linux/hdreg.h>
 #include <linux/backing-dev.h>
 #include <linux/buffer_head.h>
+#include <linux/smp_lock.h>
 #include <linux/blktrace_api.h>
 #include <asm/uaccess.h>
 
@@ -61,7 +62,7 @@ static int blkpg_ioctl(struct block_device *bdev, struct blkpg_ioctl_arg __user 
 
 			/* all seems OK */
 			part = add_partition(disk, partno, start, length,
-					     ADDPART_FLAG_NONE, NULL);
+					     ADDPART_FLAG_NONE);
 			mutex_unlock(&bdev->bd_mutex);
 			return IS_ERR(part) ? PTR_ERR(part) : 0;
 		case BLKPG_DEL_PARTITION:
@@ -115,7 +116,7 @@ static int blkdev_reread_part(struct block_device *bdev)
 static int blk_ioctl_discard(struct block_device *bdev, uint64_t start,
 			     uint64_t len, int secure)
 {
-	unsigned long flags = 0;
+	unsigned long flags = BLKDEV_IFL_WAIT;
 
 	if (start & 511)
 		return -EINVAL;
@@ -124,10 +125,10 @@ static int blk_ioctl_discard(struct block_device *bdev, uint64_t start,
 	start >>= 9;
 	len >>= 9;
 
-	if (start + len > (i_size_read(bdev->bd_inode) >> 9))
+	if (start + len > (bdev->bd_inode->i_size >> 9))
 		return -EINVAL;
 	if (secure)
-		flags |= BLKDEV_DISCARD_SECURE;
+		flags |= BLKDEV_IFL_SECURE;
 	return blkdev_issue_discard(bdev, start, len, GFP_KERNEL, flags);
 }
 
@@ -241,7 +242,6 @@ int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 		 * We need to set the startsect first, the driver may
 		 * want to override it.
 		 */
-		memset(&geo, 0, sizeof(geo));
 		geo.start = get_start_sect(bdev);
 		ret = disk->fops->getgeo(bdev, &geo);
 		if (ret)
@@ -294,14 +294,11 @@ int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 			return -EINVAL;
 		if (get_user(n, (int __user *) arg))
 			return -EFAULT;
-		if (!(mode & FMODE_EXCL)) {
-			bdgrab(bdev);
-			if (blkdev_get(bdev, mode | FMODE_EXCL, &bdev) < 0)
-				return -EBUSY;
-		}
+		if (!(mode & FMODE_EXCL) && bd_claim(bdev, &bdev) < 0)
+			return -EBUSY;
 		ret = set_blocksize(bdev, n);
 		if (!(mode & FMODE_EXCL))
-			blkdev_put(bdev, mode | FMODE_EXCL);
+			bd_release(bdev);
 		return ret;
 	case BLKPG:
 		ret = blkpg_ioctl(bdev, (struct blkpg_ioctl_arg __user *) arg);
@@ -310,12 +307,12 @@ int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 		ret = blkdev_reread_part(bdev);
 		break;
 	case BLKGETSIZE:
-		size = i_size_read(bdev->bd_inode);
+		size = bdev->bd_inode->i_size;
 		if ((size >> 9) > ~0UL)
 			return -EFBIG;
 		return put_ulong(arg, size >> 9);
 	case BLKGETSIZE64:
-		return put_u64(arg, i_size_read(bdev->bd_inode));
+		return put_u64(arg, bdev->bd_inode->i_size);
 	case BLKTRACESTART:
 	case BLKTRACESTOP:
 	case BLKTRACESETUP:

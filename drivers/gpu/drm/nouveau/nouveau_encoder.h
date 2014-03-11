@@ -55,7 +55,6 @@ struct nouveau_encoder {
 			int dpcd_version;
 			int link_nr;
 			int link_bw;
-			bool enhanced_frame;
 		} dp;
 	};
 };

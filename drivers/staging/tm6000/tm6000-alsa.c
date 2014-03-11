@@ -76,11 +76,14 @@ MODULE_PARM_DESC(debug, "enable debug messages");
 static int _tm6000_start_audio_dma(struct snd_tm6000_card *chip)
 {
 	struct tm6000_core *core = chip->core;
+	int val;
 
 	dprintk(1, "Starting audio DMA\n");
 
 	/* Enables audio */
-	tm6000_set_reg_mask(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0x40, 0x40);
+	val = tm6000_get_reg(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0x0);
+	val |= 0x20;
+	tm6000_set_reg(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, val);
 
 	tm6000_set_audio_bitrate(core, 48000);
 
@@ -95,11 +98,13 @@ static int _tm6000_start_audio_dma(struct snd_tm6000_card *chip)
 static int _tm6000_stop_audio_dma(struct snd_tm6000_card *chip)
 {
 	struct tm6000_core *core = chip->core;
-
+	int val;
 	dprintk(1, "Stopping audio DMA\n");
 
-	/* Disables audio */
-	tm6000_set_reg_mask(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0x00, 0x40);
+	/* Enables audio */
+	val = tm6000_get_reg(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, 0x0);
+	val &= ~0x20;
+	tm6000_set_reg(core, TM6010_REQ07_RCC_ACTIVE_VIDEO_IF, val);
 
 	tm6000_set_reg(core, TM6010_REQ08_R01_A_INIT, 0);
 
@@ -155,15 +160,15 @@ static struct snd_pcm_hardware snd_tm6000_digital_hw = {
 		SNDRV_PCM_INFO_MMAP_VALID,
 	.formats = SNDRV_PCM_FMTBIT_S16_LE,
 
-	.rates =		SNDRV_PCM_RATE_CONTINUOUS,
+	.rates =		SNDRV_PCM_RATE_48000,
 	.rate_min =		48000,
 	.rate_max =		48000,
 	.channels_min = 2,
 	.channels_max = 2,
-	.period_bytes_min = 64,
-	.period_bytes_max = 12544,
+	.period_bytes_min = 62720,
+	.period_bytes_max = 62720,
 	.periods_min = 1,
-	.periods_max = 98,
+	.periods_max = 1024,
 	.buffer_bytes_max = 62720 * 8,
 };
 
@@ -196,14 +201,6 @@ _error:
  */
 static int snd_tm6000_close(struct snd_pcm_substream *substream)
 {
-	struct snd_tm6000_card *chip = snd_pcm_substream_chip(substream);
-	struct tm6000_core *core = chip->core;
-
-	if (atomic_read(&core->stream_started) > 0) {
-		atomic_set(&core->stream_started, 0);
-		schedule_work(&core->wq_trigger);
-	}
-
 	return 0;
 }
 
@@ -214,66 +211,37 @@ static int tm6000_fillbuf(struct tm6000_core *core, char *buf, int size)
 	struct snd_pcm_runtime *runtime;
 	int period_elapsed = 0;
 	unsigned int stride, buf_pos;
-	int length;
 
-	if (atomic_read(&core->stream_started) == 0)
-		return 0;
-
-	if (!size || !substream) {
-		dprintk(1, "substream was NULL\n");
+	if (!size || !substream)
 		return -EINVAL;
-	}
 
 	runtime = substream->runtime;
-	if (!runtime || !runtime->dma_area) {
-		dprintk(1, "runtime was NULL\n");
+	if (!runtime || !runtime->dma_area)
 		return -EINVAL;
-	}
 
 	buf_pos = chip->buf_pos;
 	stride = runtime->frame_bits >> 3;
-
-	if (stride == 0) {
-		dprintk(1, "stride is zero\n");
-		return -EINVAL;
-	}
-
-	length = size / stride;
-	if (length == 0) {
-		dprintk(1, "%s: length was zero\n", __func__);
-		return -EINVAL;
-	}
 
 	dprintk(1, "Copying %d bytes at %p[%d] - buf size=%d x %d\n", size,
 		runtime->dma_area, buf_pos,
 		(unsigned int)runtime->buffer_size, stride);
 
-	if (buf_pos + length >= runtime->buffer_size) {
-		unsigned int cnt = runtime->buffer_size - buf_pos;
-		memcpy(runtime->dma_area + buf_pos * stride, buf, cnt * stride);
-		memcpy(runtime->dma_area, buf + cnt * stride,
-			length * stride - cnt * stride);
+	if (buf_pos + size >= runtime->buffer_size * stride) {
+		unsigned int cnt = runtime->buffer_size * stride - buf_pos;
+		memcpy(runtime->dma_area + buf_pos, buf, cnt);
+		memcpy(runtime->dma_area, buf + cnt, size - cnt);
 	} else
-		memcpy(runtime->dma_area + buf_pos * stride, buf,
-			length * stride);
+		memcpy(runtime->dma_area + buf_pos, buf, size);
 
-#ifndef NO_PCM_LOCK
-       snd_pcm_stream_lock(substream);
-#endif
+	chip->buf_pos += size;
+	if (chip->buf_pos >= runtime->buffer_size * stride)
+		chip->buf_pos -= runtime->buffer_size * stride;
 
-	chip->buf_pos += length;
-	if (chip->buf_pos >= runtime->buffer_size)
-		chip->buf_pos -= runtime->buffer_size;
-
-	chip->period_pos += length;
+	chip->period_pos += size;
 	if (chip->period_pos >= runtime->period_size) {
 		chip->period_pos -= runtime->period_size;
 		period_elapsed = 1;
 	}
-
-#ifndef NO_PCM_LOCK
-       snd_pcm_stream_unlock(substream);
-#endif
 
 	if (period_elapsed)
 		snd_pcm_period_elapsed(substream);
@@ -304,12 +272,8 @@ static int snd_tm6000_hw_params(struct snd_pcm_substream *substream,
 static int snd_tm6000_hw_free(struct snd_pcm_substream *substream)
 {
 	struct snd_tm6000_card *chip = snd_pcm_substream_chip(substream);
-	struct tm6000_core *core = chip->core;
 
-	if (atomic_read(&core->stream_started) > 0) {
-		atomic_set(&core->stream_started, 0);
-		schedule_work(&core->wq_trigger);
-	}
+	_tm6000_stop_audio_dma(chip);
 
 	return 0;
 }
@@ -331,42 +295,30 @@ static int snd_tm6000_prepare(struct snd_pcm_substream *substream)
 /*
  * trigger callback
  */
-static void audio_trigger(struct work_struct *work)
-{
-	struct tm6000_core *core = container_of(work, struct tm6000_core,
-						wq_trigger);
-	struct snd_tm6000_card *chip = core->adev;
-
-	if (atomic_read(&core->stream_started)) {
-		dprintk(1, "starting capture");
-		_tm6000_start_audio_dma(chip);
-	} else {
-		dprintk(1, "stopping capture");
-		_tm6000_stop_audio_dma(chip);
-	}
-}
-
 static int snd_tm6000_card_trigger(struct snd_pcm_substream *substream, int cmd)
 {
 	struct snd_tm6000_card *chip = snd_pcm_substream_chip(substream);
-	struct tm6000_core *core = chip->core;
-	int err = 0;
+	int err;
+
+	spin_lock(&chip->reg_lock);
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
-		atomic_set(&core->stream_started, 1);
+		err = _tm6000_start_audio_dma(chip);
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
-		atomic_set(&core->stream_started, 0);
+		err = _tm6000_stop_audio_dma(chip);
 		break;
 	default:
 		err = -EINVAL;
 		break;
 	}
-	schedule_work(&core->wq_trigger);
+
+	spin_unlock(&chip->reg_lock);
 
 	return err;
 }
+
 /*
  * pointer callback
  */
@@ -451,7 +403,7 @@ int tm6000_audio_init(struct tm6000_core *dev)
 
 	rc = snd_pcm_new(card, "TM6000 Audio", 0, 0, 1, &pcm);
 	if (rc < 0)
-		goto error_chip;
+		goto error;
 
 	pcm->info_flags = 0;
 	pcm->private_data = chip;
@@ -459,18 +411,14 @@ int tm6000_audio_init(struct tm6000_core *dev)
 
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_tm6000_pcm_ops);
 
-	INIT_WORK(&dev->wq_trigger, audio_trigger);
 	rc = snd_card_register(card);
 	if (rc < 0)
-		goto error_chip;
+		goto error;
 
 	dprintk(1,"Registered audio driver for %s\n", card->longname);
 
 	return 0;
 
-error_chip:
-	kfree(chip);
-	dev->adev = NULL;
 error:
 	snd_card_free(card);
 	return rc;

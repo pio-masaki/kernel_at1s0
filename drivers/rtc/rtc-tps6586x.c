@@ -385,8 +385,6 @@ static int __devinit tps6586x_rtc_probe(struct platform_device *pdev)
 	rtc->epoch_start = mktime(epoch->year, epoch->month, epoch->day,
 				  epoch->hour, epoch->min, epoch->sec);
 
-	dev_set_drvdata(&pdev->dev, rtc);
-
 	rtc->rtc = rtc_device_register("tps6586x-rtc", &pdev->dev,
 				       &tps6586x_rtc_ops, THIS_MODULE);
 
@@ -411,6 +409,7 @@ static int __devinit tps6586x_rtc_probe(struct platform_device *pdev)
 
     tps6586x_rtc_alarm_poweron(&pdev->dev, 0);
 
+	dev_set_drvdata(&pdev->dev, rtc);
 	if (pdata && (pdata->irq >= 0)) {
 		rtc->irq = pdata->irq;
 		err = request_threaded_irq(pdata->irq, NULL, tps6586x_rtc_irq,
@@ -493,4 +492,4 @@ module_exit(tps6586x_rtc_exit);
 MODULE_DESCRIPTION("TI TPS6586x RTC driver");
 MODULE_AUTHOR("NVIDIA Corporation");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:rtc-tps6586x");
+MODULE_ALIAS("platform:rtc-tps6586x")

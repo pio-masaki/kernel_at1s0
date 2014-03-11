@@ -28,17 +28,6 @@
 #include <scsi/scsi_transport_sas.h>
 #include "../scsi_sas_internal.h"
 
-static bool phy_is_wideport_member(struct asd_sas_port *port, struct asd_sas_phy *phy)
-{
-	struct sas_ha_struct *sas_ha = phy->ha;
-
-	if (memcmp(port->attached_sas_addr, phy->attached_sas_addr,
-		   SAS_ADDR_SIZE) != 0 || (sas_ha->strict_wide_ports &&
-	     memcmp(port->sas_addr, phy->sas_addr, SAS_ADDR_SIZE) != 0))
-		return false;
-	return true;
-}
-
 /**
  * sas_form_port -- add this phy to a port
  * @phy: the phy of interest
@@ -56,7 +45,8 @@ static void sas_form_port(struct asd_sas_phy *phy)
 	unsigned long flags;
 
 	if (port) {
-		if (!phy_is_wideport_member(port, phy))
+		if (memcmp(port->attached_sas_addr, phy->attached_sas_addr,
+			   SAS_ADDR_SIZE) != 0)
 			sas_deform_port(phy);
 		else {
 			SAS_DPRINTK("%s: phy%d belongs to port%d already(%d)!\n",
@@ -72,7 +62,9 @@ static void sas_form_port(struct asd_sas_phy *phy)
 		port = sas_ha->sas_port[i];
 		spin_lock(&port->phy_list_lock);
 		if (*(u64 *) port->sas_addr &&
-		    phy_is_wideport_member(port, phy) && port->num_phys > 0) {
+		    memcmp(port->attached_sas_addr,
+			   phy->attached_sas_addr, SAS_ADDR_SIZE) == 0 &&
+		    port->num_phys > 0) {
 			/* wide port */
 			SAS_DPRINTK("phy%d matched wide port%d\n", phy->id,
 				    port->id);

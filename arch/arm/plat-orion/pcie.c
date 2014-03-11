@@ -182,6 +182,11 @@ void __init orion_pcie_setup(void __iomem *base,
 	u32 mask;
 
 	/*
+	 * soft reset PCIe unit
+	 */
+	orion_pcie_reset(base);
+
+	/*
 	 * Point PCIe unit MBUS decode windows to DRAM space.
 	 */
 	orion_pcie_setup_wins(base, dram);

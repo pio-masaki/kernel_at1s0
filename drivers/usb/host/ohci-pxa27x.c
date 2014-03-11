@@ -24,7 +24,6 @@
 #include <linux/platform_device.h>
 #include <linux/clk.h>
 #include <mach/ohci.h>
-#include <mach/pxa3xx-u2d.h>
 
 /*
  * UHC: USB Host Controller (OHCI-like) register definitions
@@ -236,9 +235,6 @@ static int pxa27x_start_hc(struct pxa27x_ohci *ohci, struct device *dev)
 	if (retval < 0)
 		return retval;
 
-	if (cpu_is_pxa3xx())
-		pxa3xx_u2d_start_hc(&ohci_to_hcd(&ohci->ohci)->self);
-
 	uhchr = __raw_readl(ohci->mmio_base + UHCHR) & ~UHCHR_SSE;
 	__raw_writel(uhchr, ohci->mmio_base + UHCHR);
 	__raw_writel(UHCHIE_UPRIE | UHCHIE_RWIE, ohci->mmio_base + UHCHIE);
@@ -254,9 +250,6 @@ static void pxa27x_stop_hc(struct pxa27x_ohci *ohci, struct device *dev)
 	uint32_t uhccoms;
 
 	inf = dev->platform_data;
-
-	if (cpu_is_pxa3xx())
-		pxa3xx_u2d_stop_hc(&ohci_to_hcd(&ohci->ohci)->self);
 
 	if (inf->exit)
 		inf->exit(dev);

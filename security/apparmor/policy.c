@@ -306,7 +306,7 @@ static struct aa_namespace *alloc_namespace(const char *prefix,
 	return ns;
 
 fail_unconfined:
-	kzfree(ns->base.hname);
+	kzfree(ns->base.name);
 fail_ns:
 	kzfree(ns);
 	return NULL;

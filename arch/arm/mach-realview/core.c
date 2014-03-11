@@ -30,8 +30,8 @@
 #include <linux/ata_platform.h>
 #include <linux/amba/mmci.h>
 #include <linux/gfp.h>
-#include <linux/clkdev.h>
 
+#include <asm/clkdev.h>
 #include <asm/system.h>
 #include <mach/hardware.h>
 #include <asm/irq.h>
@@ -47,14 +47,15 @@
 
 #include <asm/hardware/gic.h>
 
+#include <mach/clkdev.h>
 #include <mach/platform.h>
 #include <mach/irqs.h>
-#include <asm/hardware/timer-sp.h>
-
-#include <plat/clcd.h>
-#include <plat/sched_clock.h>
+#include <plat/timer-sp.h>
 
 #include "core.h"
+
+/* used by entry-macro.S and platsmp.c */
+void __iomem *gic_cpu_base_addr;
 
 #ifdef CONFIG_ZONE_DMA
 /*
@@ -258,7 +259,6 @@ struct mmci_platform_data realview_mmc0_plat_data = {
 	.status		= realview_mmc_status,
 	.gpio_wp	= 17,
 	.gpio_cd	= 16,
-	.cd_invert	= true,
 };
 
 struct mmci_platform_data realview_mmc1_plat_data = {
@@ -266,7 +266,6 @@ struct mmci_platform_data realview_mmc1_plat_data = {
 	.status		= realview_mmc_status,
 	.gpio_wp	= 19,
 	.gpio_cd	= 18,
-	.cd_invert	= true,
 };
 
 /*
@@ -360,19 +359,18 @@ static struct clk_lookup lookups[] = {
 	}
 };
 
-void __init realview_init_early(void)
+static int __init clk_init(void)
 {
-	void __iomem *sys = __io_address(REALVIEW_SYS_BASE);
-
 	if (machine_is_realview_pb1176())
-		oscvco_clk.vcoreg = sys + REALVIEW_SYS_OSC0_OFFSET;
+		oscvco_clk.vcoreg = __io_address(REALVIEW_SYS_BASE) + REALVIEW_SYS_OSC0_OFFSET;
 	else
-		oscvco_clk.vcoreg = sys + REALVIEW_SYS_OSC4_OFFSET;
+		oscvco_clk.vcoreg = __io_address(REALVIEW_SYS_BASE) + REALVIEW_SYS_OSC4_OFFSET;
 
 	clkdev_add_table(lookups, ARRAY_SIZE(lookups));
 
-	versatile_sched_clock_init(sys + REALVIEW_SYS_24MHz_OFFSET, 24000000);
+	return 0;
 }
+core_initcall(clk_init);
 
 /*
  * CLCD support.
@@ -386,6 +384,157 @@ void __init realview_init_early(void)
 #define SYS_CLCD_ID_EPSON_2_2	(0x02 << 8)
 #define SYS_CLCD_ID_SANYO_2_5	(0x07 << 8)
 #define SYS_CLCD_ID_VGA		(0x1f << 8)
+
+static struct clcd_panel vga = {
+	.mode		= {
+		.name		= "VGA",
+		.refresh	= 60,
+		.xres		= 640,
+		.yres		= 480,
+		.pixclock	= 39721,
+		.left_margin	= 40,
+		.right_margin	= 24,
+		.upper_margin	= 32,
+		.lower_margin	= 11,
+		.hsync_len	= 96,
+		.vsync_len	= 2,
+		.sync		= 0,
+		.vmode		= FB_VMODE_NONINTERLACED,
+	},
+	.width		= -1,
+	.height		= -1,
+	.tim2		= TIM2_BCD | TIM2_IPC,
+	.cntl		= CNTL_LCDTFT | CNTL_BGR | CNTL_LCDVCOMP(1),
+	.bpp		= 16,
+};
+
+static struct clcd_panel xvga = {
+	.mode		= {
+		.name		= "XVGA",
+		.refresh	= 60,
+		.xres		= 1024,
+		.yres		= 768,
+		.pixclock	= 15748,
+		.left_margin	= 152,
+		.right_margin	= 48,
+		.upper_margin	= 23,
+		.lower_margin	= 3,
+		.hsync_len	= 104,
+		.vsync_len	= 4,
+		.sync		= 0,
+		.vmode		= FB_VMODE_NONINTERLACED,
+	},
+	.width		= -1,
+	.height		= -1,
+	.tim2		= TIM2_BCD | TIM2_IPC,
+	.cntl		= CNTL_LCDTFT | CNTL_BGR | CNTL_LCDVCOMP(1),
+	.bpp		= 16,
+};
+
+static struct clcd_panel sanyo_3_8_in = {
+	.mode		= {
+		.name		= "Sanyo QVGA",
+		.refresh	= 116,
+		.xres		= 320,
+		.yres		= 240,
+		.pixclock	= 100000,
+		.left_margin	= 6,
+		.right_margin	= 6,
+		.upper_margin	= 5,
+		.lower_margin	= 5,
+		.hsync_len	= 6,
+		.vsync_len	= 6,
+		.sync		= 0,
+		.vmode		= FB_VMODE_NONINTERLACED,
+	},
+	.width		= -1,
+	.height		= -1,
+	.tim2		= TIM2_BCD,
+	.cntl		= CNTL_LCDTFT | CNTL_BGR | CNTL_LCDVCOMP(1),
+	.bpp		= 16,
+};
+
+static struct clcd_panel sanyo_2_5_in = {
+	.mode		= {
+		.name		= "Sanyo QVGA Portrait",
+		.refresh	= 116,
+		.xres		= 240,
+		.yres		= 320,
+		.pixclock	= 100000,
+		.left_margin	= 20,
+		.right_margin	= 10,
+		.upper_margin	= 2,
+		.lower_margin	= 2,
+		.hsync_len	= 10,
+		.vsync_len	= 2,
+		.sync		= FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
+		.vmode		= FB_VMODE_NONINTERLACED,
+	},
+	.width		= -1,
+	.height		= -1,
+	.tim2		= TIM2_IVS | TIM2_IHS | TIM2_IPC,
+	.cntl		= CNTL_LCDTFT | CNTL_BGR | CNTL_LCDVCOMP(1),
+	.bpp		= 16,
+};
+
+static struct clcd_panel epson_2_2_in = {
+	.mode		= {
+		.name		= "Epson QCIF",
+		.refresh	= 390,
+		.xres		= 176,
+		.yres		= 220,
+		.pixclock	= 62500,
+		.left_margin	= 3,
+		.right_margin	= 2,
+		.upper_margin	= 1,
+		.lower_margin	= 0,
+		.hsync_len	= 3,
+		.vsync_len	= 2,
+		.sync		= 0,
+		.vmode		= FB_VMODE_NONINTERLACED,
+	},
+	.width		= -1,
+	.height		= -1,
+	.tim2		= TIM2_BCD | TIM2_IPC,
+	.cntl		= CNTL_LCDTFT | CNTL_BGR | CNTL_LCDVCOMP(1),
+	.bpp		= 16,
+};
+
+/*
+ * Detect which LCD panel is connected, and return the appropriate
+ * clcd_panel structure.  Note: we do not have any information on
+ * the required timings for the 8.4in panel, so we presently assume
+ * VGA timings.
+ */
+static struct clcd_panel *realview_clcd_panel(void)
+{
+	void __iomem *sys_clcd = __io_address(REALVIEW_SYS_BASE) + REALVIEW_SYS_CLCD_OFFSET;
+	struct clcd_panel *vga_panel;
+	struct clcd_panel *panel;
+	u32 val;
+
+	if (machine_is_realview_eb())
+		vga_panel = &vga;
+	else
+		vga_panel = &xvga;
+
+	val = readl(sys_clcd) & SYS_CLCD_ID_MASK;
+	if (val == SYS_CLCD_ID_SANYO_3_8)
+		panel = &sanyo_3_8_in;
+	else if (val == SYS_CLCD_ID_SANYO_2_5)
+		panel = &sanyo_2_5_in;
+	else if (val == SYS_CLCD_ID_EPSON_2_2)
+		panel = &epson_2_2_in;
+	else if (val == SYS_CLCD_ID_VGA)
+		panel = vga_panel;
+	else {
+		printk(KERN_ERR "CLCD: unknown LCD panel ID 0x%08x, using VGA\n",
+			val);
+		panel = vga_panel;
+	}
+
+	return panel;
+}
 
 /*
  * Disable all display connectors on the interface module.
@@ -416,60 +565,56 @@ static void realview_clcd_enable(struct clcd_fb *fb)
 	writel(val, sys_clcd);
 }
 
-/*
- * Detect which LCD panel is connected, and return the appropriate
- * clcd_panel structure.  Note: we do not have any information on
- * the required timings for the 8.4in panel, so we presently assume
- * VGA timings.
- */
 static int realview_clcd_setup(struct clcd_fb *fb)
 {
-	void __iomem *sys_clcd = __io_address(REALVIEW_SYS_BASE) + REALVIEW_SYS_CLCD_OFFSET;
-	const char *panel_name, *vga_panel_name;
 	unsigned long framesize;
-	u32 val;
+	dma_addr_t dma;
 
-	if (machine_is_realview_eb()) {
+	if (machine_is_realview_eb())
 		/* VGA, 16bpp */
 		framesize = 640 * 480 * 2;
-		vga_panel_name = "VGA";
-	} else {
+	else
 		/* XVGA, 16bpp */
 		framesize = 1024 * 768 * 2;
-		vga_panel_name = "XVGA";
+
+	fb->panel		= realview_clcd_panel();
+
+	fb->fb.screen_base = dma_alloc_writecombine(&fb->dev->dev, framesize,
+						    &dma, GFP_KERNEL | GFP_DMA);
+	if (!fb->fb.screen_base) {
+		printk(KERN_ERR "CLCD: unable to map framebuffer\n");
+		return -ENOMEM;
 	}
 
-	val = readl(sys_clcd) & SYS_CLCD_ID_MASK;
-	if (val == SYS_CLCD_ID_SANYO_3_8)
-		panel_name = "Sanyo TM38QV67A02A";
-	else if (val == SYS_CLCD_ID_SANYO_2_5)
-		panel_name = "Sanyo QVGA Portrait";
-	else if (val == SYS_CLCD_ID_EPSON_2_2)
-		panel_name = "Epson L2F50113T00";
-	else if (val == SYS_CLCD_ID_VGA)
-		panel_name = vga_panel_name;
-	else {
-		pr_err("CLCD: unknown LCD panel ID 0x%08x, using VGA\n", val);
-		panel_name = vga_panel_name;
-	}
+	fb->fb.fix.smem_start	= dma;
+	fb->fb.fix.smem_len	= framesize;
 
-	fb->panel = versatile_clcd_get_panel(panel_name);
-	if (!fb->panel)
-		return -EINVAL;
+	return 0;
+}
 
-	return versatile_clcd_setup_dma(fb, framesize);
+static int realview_clcd_mmap(struct clcd_fb *fb, struct vm_area_struct *vma)
+{
+	return dma_mmap_writecombine(&fb->dev->dev, vma,
+				     fb->fb.screen_base,
+				     fb->fb.fix.smem_start,
+				     fb->fb.fix.smem_len);
+}
+
+static void realview_clcd_remove(struct clcd_fb *fb)
+{
+	dma_free_writecombine(&fb->dev->dev, fb->fb.fix.smem_len,
+			      fb->fb.screen_base, fb->fb.fix.smem_start);
 }
 
 struct clcd_board clcd_plat_data = {
 	.name		= "RealView",
-	.caps		= CLCD_CAP_ALL,
 	.check		= clcdfb_check,
 	.decode		= clcdfb_decode,
 	.disable	= realview_clcd_disable,
 	.enable		= realview_clcd_enable,
 	.setup		= realview_clcd_setup,
-	.mmap		= versatile_clcd_mmap_dma,
-	.remove		= versatile_clcd_remove_dma,
+	.mmap		= realview_clcd_mmap,
+	.remove		= realview_clcd_remove,
 };
 
 #ifdef CONFIG_LEDS

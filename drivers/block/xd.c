@@ -46,7 +46,7 @@
 #include <linux/init.h>
 #include <linux/wait.h>
 #include <linux/blkdev.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/blkpg.h>
 #include <linux/delay.h>
 #include <linux/io.h>
@@ -58,7 +58,6 @@
 
 #include "xd.h"
 
-static DEFINE_MUTEX(xd_mutex);
 static void __init do_xd_setup (int *integers);
 #ifdef MODULE
 static int xd[5] = { -1,-1,-1,-1, };
@@ -382,9 +381,9 @@ static int xd_ioctl(struct block_device *bdev, fmode_t mode,
 {
 	int ret;
 
-	mutex_lock(&xd_mutex);
+	lock_kernel();
 	ret = xd_locked_ioctl(bdev, mode, cmd, param);
-	mutex_unlock(&xd_mutex);
+	unlock_kernel();
 
 	return ret;
 }

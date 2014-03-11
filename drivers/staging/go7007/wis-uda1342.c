@@ -86,7 +86,6 @@ static const struct i2c_device_id wis_uda1342_id[] = {
 	{ "wis_uda1342", 0 },
 	{ }
 };
-MODULE_DEVICE_TABLE(i2c, wis_uda1342_id);
 
 static struct i2c_driver wis_uda1342_driver = {
 	.driver = {

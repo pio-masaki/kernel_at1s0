@@ -55,7 +55,6 @@
 #include <linux/reboot.h>
 #include <linux/usb.h>
 #include <linux/signal.h>
-#include <linux/firmware.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
 #ifdef SIOCETHTOOL
@@ -259,12 +258,15 @@ typedef enum _VIA_PKT_TYPE
 
 //++ NDIS related
 
+#define NDIS_STATUS     int
+
 typedef enum __DEVICE_NDIS_STATUS {
     STATUS_SUCCESS = 0,
     STATUS_FAILURE,
     STATUS_RESOURCES,
     STATUS_PENDING,
 } DEVICE_NDIS_STATUS, *PDEVICE_NDIS_STATUS;
+
 
 #define MAX_BSSIDINFO_4_PMKID   16
 #define MAX_PMKIDLIST           5
@@ -421,8 +423,6 @@ typedef struct __device_info {
 	struct usb_device*          usb;
     struct net_device*          dev;
     struct net_device_stats     stats;
-
-    const struct firmware	*firmware;
 
     OPTIONS                     sOpts;
 
@@ -713,11 +713,11 @@ typedef struct __device_info {
     BOOL                    bCmdClear;
     BOOL                    bNeedRadioOFF;
 
-    BOOL                    bEnableRoaming;
-    BOOL                    bIsRoaming;
-    BOOL                    bFastRoaming;
-    BYTE                    bSameBSSMaxNum;
-    BYTE                    bSameBSSCurNum;
+    BOOL                    bEnableRoaming;  //DavidWang
+    BOOL                    bIsRoaming;  //DavidWang
+    BOOL                    bFastRoaming;  //DavidWang
+    BYTE                    bSameBSSMaxNum;  //Davidwang
+    BYTE                    bSameBSSCurNum;  //DavidWang
     BOOL                    bRoaming;
     BOOL                    b11hEable;
     unsigned long                   ulTxPower;
@@ -726,6 +726,7 @@ typedef struct __device_info {
     NDIS_802_11_WEP_STATUS  eEncryptionStatus;
     BOOL                    bTransmitKey;
 
+//2007-0925-01<Add>by MikeLiu
 //mike add :save old Encryption
     NDIS_802_11_WEP_STATUS  eOldEncryptionStatus;
 
@@ -890,8 +891,11 @@ typedef struct __device_info {
 #define fMP_CONTROL_READS                   0x00000400
 #define fMP_CONTROL_WRITES                  0x00000800
 
+
+
 #define MP_SET_FLAG(_M, _F)             ((_M)->Flags |= (_F))
 #define MP_CLEAR_FLAG(_M, _F)            ((_M)->Flags &= ~(_F))
+#define MP_TEST_FLAG(_M, _F)            (((_M)->Flags & (_F)) != 0)
 #define MP_TEST_FLAGS(_M, _F)            (((_M)->Flags & (_F)) == (_F))
 
 #define MP_IS_READY(_M)        (((_M)->Flags & \
@@ -905,3 +909,5 @@ typedef struct __device_info {
 BOOL device_alloc_frag_buf(PSDevice pDevice, PSDeFragControlBlock pDeF);
 
 #endif
+
+

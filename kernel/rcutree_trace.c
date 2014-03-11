@@ -64,9 +64,7 @@ static void print_one_rcu_data(struct seq_file *m, struct rcu_data *rdp)
 		   rdp->dynticks_fqs);
 #endif /* #ifdef CONFIG_NO_HZ */
 	seq_printf(m, " of=%lu ri=%lu", rdp->offline_fqs, rdp->resched_ipi);
-	seq_printf(m, " ql=%ld b=%ld", rdp->qlen, rdp->blimit);
-	seq_printf(m, " ci=%lu co=%lu ca=%lu\n",
-		   rdp->n_cbs_invoked, rdp->n_cbs_orphaned, rdp->n_cbs_adopted);
+	seq_printf(m, " ql=%ld b=%ld\n", rdp->qlen, rdp->blimit);
 }
 
 #define PRINT_RCU_DATA(name, func, m) \
@@ -121,9 +119,7 @@ static void print_one_rcu_data_csv(struct seq_file *m, struct rcu_data *rdp)
 		   rdp->dynticks_fqs);
 #endif /* #ifdef CONFIG_NO_HZ */
 	seq_printf(m, ",%lu,%lu", rdp->offline_fqs, rdp->resched_ipi);
-	seq_printf(m, ",%ld,%ld", rdp->qlen, rdp->blimit);
-	seq_printf(m, ",%lu,%lu,%lu\n",
-		   rdp->n_cbs_invoked, rdp->n_cbs_orphaned, rdp->n_cbs_adopted);
+	seq_printf(m, ",%ld,%ld\n", rdp->qlen, rdp->blimit);
 }
 
 static int show_rcudata_csv(struct seq_file *m, void *unused)
@@ -132,7 +128,7 @@ static int show_rcudata_csv(struct seq_file *m, void *unused)
 #ifdef CONFIG_NO_HZ
 	seq_puts(m, "\"dt\",\"dt nesting\",\"dn\",\"df\",");
 #endif /* #ifdef CONFIG_NO_HZ */
-	seq_puts(m, "\"of\",\"ri\",\"ql\",\"b\",\"ci\",\"co\",\"ca\"\n");
+	seq_puts(m, "\"of\",\"ri\",\"ql\",\"b\"\n");
 #ifdef CONFIG_TREE_PREEMPT_RCU
 	seq_puts(m, "\"rcu_preempt:\"\n");
 	PRINT_RCU_DATA(rcu_preempt_data, print_one_rcu_data_csv, m);
@@ -166,13 +162,13 @@ static void print_one_rcu_state(struct seq_file *m, struct rcu_state *rsp)
 
 	gpnum = rsp->gpnum;
 	seq_printf(m, "c=%lu g=%lu s=%d jfq=%ld j=%x "
-		      "nfqs=%lu/nfqsng=%lu(%lu) fqlh=%lu\n",
+		      "nfqs=%lu/nfqsng=%lu(%lu) fqlh=%lu oqlen=%ld\n",
 		   rsp->completed, gpnum, rsp->signaled,
 		   (long)(rsp->jiffies_force_qs - jiffies),
 		   (int)(jiffies & 0xffff),
 		   rsp->n_force_qs, rsp->n_force_qs_ngp,
 		   rsp->n_force_qs - rsp->n_force_qs_ngp,
-		   rsp->n_force_qs_lh);
+		   rsp->n_force_qs_lh, rsp->orphan_qlen);
 	for (rnp = &rsp->node[0]; rnp - &rsp->node[0] < NUM_RCU_NODES; rnp++) {
 		if (rnp->level != level) {
 			seq_puts(m, "\n");
@@ -266,7 +262,7 @@ static void print_rcu_pendings(struct seq_file *m, struct rcu_state *rsp)
 	struct rcu_data *rdp;
 
 	for_each_possible_cpu(cpu) {
-		rdp = per_cpu_ptr(rsp->rda, cpu);
+		rdp = rsp->rda[cpu];
 		if (rdp->beenonline)
 			print_one_rcu_pending(m, rdp);
 	}
@@ -300,7 +296,7 @@ static const struct file_operations rcu_pending_fops = {
 
 static struct dentry *rcudir;
 
-static int __init rcutree_trace_init(void)
+static int __init rcuclassic_trace_init(void)
 {
 	struct dentry *retval;
 
@@ -337,14 +333,14 @@ free_out:
 	return 1;
 }
 
-static void __exit rcutree_trace_cleanup(void)
+static void __exit rcuclassic_trace_cleanup(void)
 {
 	debugfs_remove_recursive(rcudir);
 }
 
 
-module_init(rcutree_trace_init);
-module_exit(rcutree_trace_cleanup);
+module_init(rcuclassic_trace_init);
+module_exit(rcuclassic_trace_cleanup);
 
 MODULE_AUTHOR("Paul E. McKenney");
 MODULE_DESCRIPTION("Read-Copy Update tracing for hierarchical implementation");

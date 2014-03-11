@@ -16,6 +16,7 @@
 #include <linux/device.h>
 
 #include <pcmcia/ss.h>
+#include <pcmcia/cs.h>
 
 #include <asm/system.h>
 #include <asm/io.h>
@@ -54,7 +55,7 @@ static struct pccard_operations i82092aa_operations = {
 	.set_mem_map		= i82092aa_set_mem_map,
 };
 
-/* The card can do up to 4 sockets, allocate a structure for each of them */
+/* The card can do upto 4 sockets, allocate a structure for each of them */
 
 struct socket_info {
 	int	number;

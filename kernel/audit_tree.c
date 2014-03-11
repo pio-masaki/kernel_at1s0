@@ -223,7 +223,7 @@ static void untag_chunk(struct node *p)
 {
 	struct audit_chunk *chunk = find_chunk(p);
 	struct fsnotify_mark *entry = &chunk->mark;
-	struct audit_chunk *new = NULL;
+	struct audit_chunk *new;
 	struct audit_tree *owner;
 	int size = chunk->count - 1;
 	int i, j;
@@ -232,14 +232,9 @@ static void untag_chunk(struct node *p)
 
 	spin_unlock(&hash_lock);
 
-	if (size)
-		new = alloc_chunk(size);
-
 	spin_lock(&entry->lock);
 	if (chunk->dead || !entry->i.inode) {
 		spin_unlock(&entry->lock);
-		if (new)
-			free_chunk(new);
 		goto out;
 	}
 
@@ -260,9 +255,9 @@ static void untag_chunk(struct node *p)
 		goto out;
 	}
 
+	new = alloc_chunk(size);
 	if (!new)
 		goto Fallback;
-
 	fsnotify_duplicate_mark(&new->mark, entry);
 	if (fsnotify_add_mark(&new->mark, new->mark.group, new->mark.i.inode, NULL, 1)) {
 		free_chunk(new);
@@ -607,7 +602,7 @@ void audit_trim_trees(void)
 		spin_lock(&hash_lock);
 		list_for_each_entry(node, &tree->chunks, list) {
 			struct audit_chunk *chunk = find_chunk(node);
-			/* this could be NULL if the watch is dying else where... */
+			/* this could be NULL if the watch is dieing else where... */
 			struct inode *inode = chunk->mark.i.inode;
 			node->index |= 1U<<31;
 			if (iterate_mounts(compare_root, inode, root_mnt))

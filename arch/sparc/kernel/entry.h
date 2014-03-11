@@ -213,8 +213,8 @@ extern struct cheetah_err_info *cheetah_error_log;
 struct ino_bucket {
 /*0x00*/unsigned long __irq_chain_pa;
 
-	/* Interrupt number assigned to this INO.  */
-/*0x08*/unsigned int __irq;
+	/* Virtual interrupt number assigned to this INO.  */
+/*0x08*/unsigned int __virt_irq;
 /*0x0c*/unsigned int __pad;
 };
 

@@ -12,6 +12,7 @@
 #include <linux/uio.h>
 #include <linux/socket.h>
 #include <linux/in.h>
+#include <linux/kref.h>
 #include <linux/ktime.h>
 #include <linux/sunrpc/sched.h>
 #include <linux/sunrpc/xdr.h>
@@ -145,7 +146,7 @@ enum xprt_transports {
 };
 
 struct rpc_xprt {
-	atomic_t		count;		/* Reference count */
+	struct kref		kref;		/* Reference count */
 	struct rpc_xprt_ops *	ops;		/* transport methods */
 
 	const struct rpc_timeout *timeout;	/* timeout parms */
@@ -223,7 +224,6 @@ struct rpc_xprt {
 					bklog_u;	/* backlog queue utilization */
 	} stat;
 
-	struct net		*xprt_net;
 	const char		*address_strings[RPC_DISPLAY_MAX];
 };
 
@@ -249,7 +249,6 @@ static inline int bc_prealloc(struct rpc_rqst *req)
 
 struct xprt_create {
 	int			ident;		/* XPRT_TRANSPORT identifier */
-	struct net *		net;
 	struct sockaddr *	srcaddr;	/* optional local address */
 	struct sockaddr *	dstaddr;	/* remote peer address */
 	size_t			addrlen;
@@ -281,8 +280,6 @@ void			xprt_release_xprt_cong(struct rpc_xprt *xprt, struct rpc_task *task);
 void			xprt_release(struct rpc_task *task);
 struct rpc_xprt *	xprt_get(struct rpc_xprt *xprt);
 void			xprt_put(struct rpc_xprt *xprt);
-struct rpc_xprt *	xprt_alloc(struct net *net, int size, int max_req);
-void			xprt_free(struct rpc_xprt *);
 
 static inline __be32 *xprt_skip_transport_header(struct rpc_xprt *xprt, __be32 *p)
 {
@@ -320,7 +317,6 @@ void			xprt_conditional_disconnect(struct rpc_xprt *xprt, unsigned int cookie);
 #define XPRT_CLOSING		(6)
 #define XPRT_CONNECTION_ABORT	(7)
 #define XPRT_CONNECTION_CLOSE	(8)
-#define XPRT_INITIALIZED	(9)
 
 static inline void xprt_set_connected(struct rpc_xprt *xprt)
 {

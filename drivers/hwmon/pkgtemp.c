@@ -20,9 +20,8 @@
  * 02110-1301 USA.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
+#include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/jiffies.h>
@@ -36,7 +35,6 @@
 #include <linux/cpu.h>
 #include <asm/msr.h>
 #include <asm/processor.h>
-#include <asm/smp.h>
 
 #define DRVNAME	"pkgtemp"
 
@@ -305,7 +303,7 @@ static int __cpuinit pkgtemp_device_add(unsigned int cpu)
 	pdev = platform_device_alloc(DRVNAME, cpu);
 	if (!pdev) {
 		err = -ENOMEM;
-		pr_err("Device allocation failed\n");
+		printk(KERN_ERR DRVNAME ": Device allocation failed\n");
 		goto exit;
 	}
 
@@ -317,7 +315,8 @@ static int __cpuinit pkgtemp_device_add(unsigned int cpu)
 
 	err = platform_device_add(pdev);
 	if (err) {
-		pr_err("Device addition failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device addition failed (%d)\n",
+		       err);
 		goto exit_device_free;
 	}
 
@@ -340,7 +339,8 @@ exit:
 	return err;
 }
 
-static void __cpuinit pkgtemp_device_remove(unsigned int cpu)
+#ifdef CONFIG_HOTPLUG_CPU
+static void pkgtemp_device_remove(unsigned int cpu)
 {
 	struct pdev_entry *p;
 	unsigned int i;
@@ -387,10 +387,12 @@ static int __cpuinit pkgtemp_cpu_callback(struct notifier_block *nfb,
 static struct notifier_block pkgtemp_cpu_notifier __refdata = {
 	.notifier_call = pkgtemp_cpu_callback,
 };
+#endif				/* !CONFIG_HOTPLUG_CPU */
 
 static int __init pkgtemp_init(void)
 {
 	int i, err = -ENODEV;
+	struct pdev_entry *p, *n;
 
 	/* quick check if we run Intel */
 	if (cpu_data(0).x86_vendor != X86_VENDOR_INTEL)
@@ -400,23 +402,31 @@ static int __init pkgtemp_init(void)
 	if (err)
 		goto exit;
 
-	for_each_online_cpu(i)
-		pkgtemp_device_add(i);
-
-#ifndef CONFIG_HOTPLUG_CPU
+	for_each_online_cpu(i) {
+		err = pkgtemp_device_add(i);
+		if (err)
+			goto exit_devices_unreg;
+	}
 	if (list_empty(&pdev_list)) {
 		err = -ENODEV;
 		goto exit_driver_unreg;
 	}
-#endif
 
+#ifdef CONFIG_HOTPLUG_CPU
 	register_hotcpu_notifier(&pkgtemp_cpu_notifier);
+#endif
 	return 0;
 
-#ifndef CONFIG_HOTPLUG_CPU
+exit_devices_unreg:
+	mutex_lock(&pdev_list_mutex);
+	list_for_each_entry_safe(p, n, &pdev_list, list) {
+		platform_device_unregister(p->pdev);
+		list_del(&p->list);
+		kfree(p);
+	}
+	mutex_unlock(&pdev_list_mutex);
 exit_driver_unreg:
 	platform_driver_unregister(&pkgtemp_driver);
-#endif
 exit:
 	return err;
 }
@@ -424,8 +434,9 @@ exit:
 static void __exit pkgtemp_exit(void)
 {
 	struct pdev_entry *p, *n;
-
+#ifdef CONFIG_HOTPLUG_CPU
 	unregister_hotcpu_notifier(&pkgtemp_cpu_notifier);
+#endif
 	mutex_lock(&pdev_list_mutex);
 	list_for_each_entry_safe(p, n, &pdev_list, list) {
 		platform_device_unregister(p->pdev);

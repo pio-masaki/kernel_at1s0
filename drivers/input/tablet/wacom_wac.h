@@ -21,7 +21,6 @@
 #define WACOM_PKGLEN_INTUOS	10
 #define WACOM_PKGLEN_TPC1FG	 5
 #define WACOM_PKGLEN_TPC2FG	14
-#define WACOM_PKGLEN_BBTOUCH	20
 
 /* device IDs */
 #define STYLUS_DEVICE_ID	0x02
@@ -38,10 +37,6 @@
 #define WACOM_REPORT_TPC1FG		6
 #define WACOM_REPORT_TPC2FG		13
 
-/* device quirks */
-#define WACOM_QUIRK_MULTI_INPUT		0x0001
-#define WACOM_QUIRK_BBTOUCH_LOWRES	0x0002
-
 enum {
 	PENPARTNER = 0,
 	GRAPHIRE,
@@ -49,7 +44,6 @@ enum {
 	PTU,
 	PL,
 	DTU,
-	BAMBOO_PT,
 	INTUOS,
 	INTUOS3S,
 	INTUOS3,
@@ -74,31 +68,24 @@ struct wacom_features {
 	int pressure_max;
 	int distance_max;
 	int type;
-	int x_resolution;
-	int y_resolution;
 	int device_type;
 	int x_phy;
 	int y_phy;
 	unsigned char unit;
 	unsigned char unitExpo;
-	int x_fuzz;
-	int y_fuzz;
-	int pressure_fuzz;
-	int distance_fuzz;
-	unsigned quirks;
 };
 
 struct wacom_shared {
 	bool stylus_in_proximity;
-	bool touch_down;
 };
 
 struct wacom_wac {
 	char name[64];
 	unsigned char *data;
-	int tool[2];
-	int id[2];
+	int tool[3];
+	int id[3];
 	__u32 serial[2];
+	int last_finger;
 	struct wacom_features features;
 	struct wacom_shared *shared;
 	struct input_dev *input;

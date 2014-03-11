@@ -405,8 +405,8 @@ static inline void rx_process (struct usbnet *dev, struct sk_buff *skb)
 	}
 
 	netif_dbg(dev, rx_err, dev->net, "drop\n");
-	dev->net->stats.rx_errors++;
 done:
+	dev->net->stats.rx_errors++;
 	skb_queue_tail(&dev->done, skb);
 }
 
@@ -1394,9 +1394,6 @@ usbnet_probe (struct usb_interface *udev, const struct usb_device_id *prod)
 		/* WWAN devices should always be named "wwan%d" */
 		if ((dev->driver_info->flags & FLAG_WWAN) != 0)
 			strcpy(net->name, "wwan%d");
-		/* RMNET devices should always be named "rmnet%d" */
-		if ((dev->driver_info->flags & FLAG_RMNET) != 0)
-			strcpy(net->name, "rmnet%d");
 
 		/* maybe the remote can't receive an Ethernet MTU */
 		if (net->mtu > (dev->hard_mtu - net->hard_header_len))

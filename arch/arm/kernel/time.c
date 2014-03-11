@@ -29,15 +29,13 @@
 
 #include <asm/leds.h>
 #include <asm/thread_info.h>
-#include <asm/sched_clock.h>
 #include <asm/stacktrace.h>
-#include <asm/mach/arch.h>
 #include <asm/mach/time.h>
 
 /*
  * Our system timer.
  */
-static struct sys_timer *system_timer;
+struct sys_timer *system_timer;
 
 #if defined(CONFIG_RTC_DRV_CMOS) || defined(CONFIG_RTC_DRV_CMOS_MODULE)
 /* this needs a better home */
@@ -107,7 +105,9 @@ void timer_tick(void)
 {
 	profile_tick(CPU_PROFILING);
 	do_leds();
-	xtime_update(1);
+	write_seqlock(&xtime_lock);
+	do_timer(1);
+	write_sequnlock(&xtime_lock);
 #ifndef CONFIG_SMP
 	update_process_times(user_mode(get_irq_regs()));
 #endif
@@ -160,10 +160,6 @@ device_initcall(timer_init_sysfs);
 
 void __init time_init(void)
 {
-	system_timer = machine_desc->timer;
 	system_timer->init();
-#ifdef CONFIG_HAVE_SCHED_CLOCK
-	sched_clock_postinit();
-#endif
 }
 

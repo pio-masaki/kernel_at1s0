@@ -455,13 +455,11 @@ void gfs2_recover_func(struct work_struct *work)
 	int ro = 0;
 	unsigned int pass;
 	int error;
-	int jlocked = 0;
 
-	if (sdp->sd_args.ar_spectator ||
-	    (jd->jd_jid != sdp->sd_lockstruct.ls_jid)) {
+	if (jd->jd_jid != sdp->sd_lockstruct.ls_jid) {
 		fs_info(sdp, "jid=%u: Trying to acquire journal lock...\n",
 			jd->jd_jid);
-		jlocked = 1;
+
 		/* Acquire the journal lock so we can do recovery */
 
 		error = gfs2_glock_nq_num(sdp, jd->jd_jid, &gfs2_journal_glops,
@@ -556,12 +554,13 @@ void gfs2_recover_func(struct work_struct *work)
 			jd->jd_jid, t);
 	}
 
+	if (jd->jd_jid != sdp->sd_lockstruct.ls_jid)
+		gfs2_glock_dq_uninit(&ji_gh);
+
 	gfs2_recovery_done(sdp, jd->jd_jid, LM_RD_SUCCESS);
 
-	if (jlocked) {
-		gfs2_glock_dq_uninit(&ji_gh);
+	if (jd->jd_jid != sdp->sd_lockstruct.ls_jid)
 		gfs2_glock_dq_uninit(&j_gh);
-	}
 
 	fs_info(sdp, "jid=%u: Done\n", jd->jd_jid);
 	goto done;
@@ -569,7 +568,7 @@ void gfs2_recover_func(struct work_struct *work)
 fail_gunlock_tr:
 	gfs2_glock_dq_uninit(&t_gh);
 fail_gunlock_ji:
-	if (jlocked) {
+	if (jd->jd_jid != sdp->sd_lockstruct.ls_jid) {
 		gfs2_glock_dq_uninit(&ji_gh);
 fail_gunlock_j:
 		gfs2_glock_dq_uninit(&j_gh);

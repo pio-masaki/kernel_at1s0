@@ -53,7 +53,9 @@ struct gameport {
 #define to_gameport_port(d)	container_of(d, struct gameport, dev)
 
 struct gameport_driver {
-	const char *description;
+
+	void *private;
+	char *description;
 
 	int (*connect)(struct gameport *, struct gameport_driver *drv);
 	int (*reconnect)(struct gameport *);

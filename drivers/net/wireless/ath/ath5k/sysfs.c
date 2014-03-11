@@ -10,8 +10,7 @@ static ssize_t ath5k_attr_show_##name(struct device *dev,		\
 			struct device_attribute *attr,			\
 			char *buf)					\
 {									\
-	struct ieee80211_hw *hw = dev_get_drvdata(dev);			\
-	struct ath5k_softc *sc = hw->priv;				\
+	struct ath5k_softc *sc = dev_get_drvdata(dev);			\
 	return snprintf(buf, PAGE_SIZE, "%d\n", get); 			\
 }									\
 									\
@@ -19,8 +18,7 @@ static ssize_t ath5k_attr_store_##name(struct device *dev,		\
 			struct device_attribute *attr,			\
 			const char *buf, size_t count)			\
 {									\
-	struct ieee80211_hw *hw = dev_get_drvdata(dev);			\
-	struct ath5k_softc *sc = hw->priv;				\
+	struct ath5k_softc *sc = dev_get_drvdata(dev);			\
 	int val;							\
 									\
 	val = (int)simple_strtoul(buf, NULL, 10);			\
@@ -35,8 +33,7 @@ static ssize_t ath5k_attr_show_##name(struct device *dev,		\
 			struct device_attribute *attr,			\
 			char *buf)					\
 {									\
-	struct ieee80211_hw *hw = dev_get_drvdata(dev);			\
-	struct ath5k_softc *sc = hw->priv;				\
+	struct ath5k_softc *sc = dev_get_drvdata(dev);			\
 	return snprintf(buf, PAGE_SIZE, "%d\n", get); 			\
 }									\
 static DEVICE_ATTR(name, S_IRUGO, ath5k_attr_show_##name, NULL)
@@ -98,7 +95,7 @@ static struct attribute_group ath5k_attribute_group_ani = {
 int
 ath5k_sysfs_register(struct ath5k_softc *sc)
 {
-	struct device *dev = sc->dev;
+	struct device *dev = &sc->pdev->dev;
 	int err;
 
 	err = sysfs_create_group(&dev->kobj, &ath5k_attribute_group_ani);
@@ -113,7 +110,7 @@ ath5k_sysfs_register(struct ath5k_softc *sc)
 void
 ath5k_sysfs_unregister(struct ath5k_softc *sc)
 {
-	struct device *dev = sc->dev;
+	struct device *dev = &sc->pdev->dev;
 
 	sysfs_remove_group(&dev->kobj, &ath5k_attribute_group_ani);
 }

@@ -1,6 +1,5 @@
 #include <asm-generic/vmlinux.lds.h>
 #include <asm/thread_info.h>
-#include <asm/cache.h>
 #include <asm/page.h>
 
 OUTPUT_FORMAT("elf64-alpha")
@@ -39,7 +38,7 @@ SECTIONS
 	__init_begin = ALIGN(PAGE_SIZE);
 	INIT_TEXT_SECTION(PAGE_SIZE)
 	INIT_DATA_SECTION(16)
-	PERCPU(L1_CACHE_BYTES, PAGE_SIZE)
+	PERCPU(PAGE_SIZE)
 	/* Align to THREAD_SIZE rather than PAGE_SIZE here so any padding page
 	   needed for the THREAD_SIZE aligned init_task gets freed after init */
 	. = ALIGN(THREAD_SIZE);
@@ -47,7 +46,7 @@ SECTIONS
 	/* Freed after init ends here */
 
 	_data = .;
-	RW_DATA_SECTION(L1_CACHE_BYTES, PAGE_SIZE, THREAD_SIZE)
+	RW_DATA_SECTION(64, PAGE_SIZE, THREAD_SIZE)
 
 	.got : {
 		*(.got)

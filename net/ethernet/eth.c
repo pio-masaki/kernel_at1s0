@@ -347,11 +347,10 @@ void ether_setup(struct net_device *dev)
 EXPORT_SYMBOL(ether_setup);
 
 /**
- * alloc_etherdev_mqs - Allocates and sets up an Ethernet device
+ * alloc_etherdev_mq - Allocates and sets up an Ethernet device
  * @sizeof_priv: Size of additional driver-private structure to be allocated
  *	for this Ethernet device
- * @txqs: The number of TX queues this device has.
- * @rxqs: The number of RX queues this device has.
+ * @queue_count: The number of queues this device has.
  *
  * Fill in the fields of the device structure with Ethernet-generic
  * values. Basically does everything except registering the device.
@@ -361,15 +360,14 @@ EXPORT_SYMBOL(ether_setup);
  * this private data area.
  */
 
-struct net_device *alloc_etherdev_mqs(int sizeof_priv, unsigned int txqs,
-				      unsigned int rxqs)
+struct net_device *alloc_etherdev_mq(int sizeof_priv, unsigned int queue_count)
 {
-	return alloc_netdev_mqs(sizeof_priv, "eth%d", ether_setup, txqs, rxqs);
+	return alloc_netdev_mq(sizeof_priv, "eth%d", ether_setup, queue_count);
 }
-EXPORT_SYMBOL(alloc_etherdev_mqs);
+EXPORT_SYMBOL(alloc_etherdev_mq);
 
 static size_t _format_mac_addr(char *buf, int buflen,
-			       const unsigned char *addr, int len)
+				const unsigned char *addr, int len)
 {
 	int i;
 	char *cp = buf;
@@ -378,7 +376,7 @@ static size_t _format_mac_addr(char *buf, int buflen,
 		cp += scnprintf(cp, buflen - (cp - buf), "%02x", addr[i]);
 		if (i == len - 1)
 			break;
-		cp += scnprintf(cp, buflen - (cp - buf), ":");
+		cp += strlcpy(cp, ":", buflen - (cp - buf));
 	}
 	return cp - buf;
 }
@@ -388,7 +386,7 @@ ssize_t sysfs_format_mac(char *buf, const unsigned char *addr, int len)
 	size_t l;
 
 	l = _format_mac_addr(buf, PAGE_SIZE, addr, len);
-	l += scnprintf(buf + l, PAGE_SIZE - l, "\n");
-	return (ssize_t)l;
+	l += strlcpy(buf + l, "\n", PAGE_SIZE - l);
+	return ((ssize_t) l);
 }
 EXPORT_SYMBOL(sysfs_format_mac);

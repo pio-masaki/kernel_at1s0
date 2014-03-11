@@ -26,49 +26,49 @@
 
 #undef DWMAC_DMA_DEBUG
 #ifdef DWMAC_DMA_DEBUG
-#define DWMAC_LIB_DBG(fmt, args...)  printk(fmt, ## args)
+#define DBG(fmt, args...)  printk(fmt, ## args)
 #else
-#define DWMAC_LIB_DBG(fmt, args...)  do { } while (0)
+#define DBG(fmt, args...)  do { } while (0)
 #endif
 
 /* CSR1 enables the transmit DMA to check for new descriptor */
-void dwmac_enable_dma_transmission(void __iomem *ioaddr)
+void dwmac_enable_dma_transmission(unsigned long ioaddr)
 {
 	writel(1, ioaddr + DMA_XMT_POLL_DEMAND);
 }
 
-void dwmac_enable_dma_irq(void __iomem *ioaddr)
+void dwmac_enable_dma_irq(unsigned long ioaddr)
 {
 	writel(DMA_INTR_DEFAULT_MASK, ioaddr + DMA_INTR_ENA);
 }
 
-void dwmac_disable_dma_irq(void __iomem *ioaddr)
+void dwmac_disable_dma_irq(unsigned long ioaddr)
 {
 	writel(0, ioaddr + DMA_INTR_ENA);
 }
 
-void dwmac_dma_start_tx(void __iomem *ioaddr)
+void dwmac_dma_start_tx(unsigned long ioaddr)
 {
 	u32 value = readl(ioaddr + DMA_CONTROL);
 	value |= DMA_CONTROL_ST;
 	writel(value, ioaddr + DMA_CONTROL);
 }
 
-void dwmac_dma_stop_tx(void __iomem *ioaddr)
+void dwmac_dma_stop_tx(unsigned long ioaddr)
 {
 	u32 value = readl(ioaddr + DMA_CONTROL);
 	value &= ~DMA_CONTROL_ST;
 	writel(value, ioaddr + DMA_CONTROL);
 }
 
-void dwmac_dma_start_rx(void __iomem *ioaddr)
+void dwmac_dma_start_rx(unsigned long ioaddr)
 {
 	u32 value = readl(ioaddr + DMA_CONTROL);
 	value |= DMA_CONTROL_SR;
 	writel(value, ioaddr + DMA_CONTROL);
 }
 
-void dwmac_dma_stop_rx(void __iomem *ioaddr)
+void dwmac_dma_stop_rx(unsigned long ioaddr)
 {
 	u32 value = readl(ioaddr + DMA_CONTROL);
 	value &= ~DMA_CONTROL_SR;
@@ -145,14 +145,14 @@ static void show_rx_process_state(unsigned int status)
 }
 #endif
 
-int dwmac_dma_interrupt(void __iomem *ioaddr,
+int dwmac_dma_interrupt(unsigned long ioaddr,
 			struct stmmac_extra_stats *x)
 {
 	int ret = 0;
 	/* read the status register (CSR5) */
 	u32 intr_status = readl(ioaddr + DMA_STATUS);
 
-	DWMAC_LIB_DBG(KERN_INFO "%s: [CSR5: 0x%08x]\n", __func__, intr_status);
+	DBG(INFO, "%s: [CSR5: 0x%08x]\n", __func__, intr_status);
 #ifdef DWMAC_DMA_DEBUG
 	/* It displays the DMA process states (CSR5 register) */
 	show_tx_process_state(intr_status);
@@ -160,43 +160,43 @@ int dwmac_dma_interrupt(void __iomem *ioaddr,
 #endif
 	/* ABNORMAL interrupts */
 	if (unlikely(intr_status & DMA_STATUS_AIS)) {
-		DWMAC_LIB_DBG(KERN_INFO "CSR5[15] DMA ABNORMAL IRQ: ");
+		DBG(INFO, "CSR5[15] DMA ABNORMAL IRQ: ");
 		if (unlikely(intr_status & DMA_STATUS_UNF)) {
-			DWMAC_LIB_DBG(KERN_INFO "transmit underflow\n");
+			DBG(INFO, "transmit underflow\n");
 			ret = tx_hard_error_bump_tc;
 			x->tx_undeflow_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_TJT)) {
-			DWMAC_LIB_DBG(KERN_INFO "transmit jabber\n");
+			DBG(INFO, "transmit jabber\n");
 			x->tx_jabber_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_OVF)) {
-			DWMAC_LIB_DBG(KERN_INFO "recv overflow\n");
+			DBG(INFO, "recv overflow\n");
 			x->rx_overflow_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_RU)) {
-			DWMAC_LIB_DBG(KERN_INFO "receive buffer unavailable\n");
+			DBG(INFO, "receive buffer unavailable\n");
 			x->rx_buf_unav_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_RPS)) {
-			DWMAC_LIB_DBG(KERN_INFO "receive process stopped\n");
+			DBG(INFO, "receive process stopped\n");
 			x->rx_process_stopped_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_RWT)) {
-			DWMAC_LIB_DBG(KERN_INFO "receive watchdog\n");
+			DBG(INFO, "receive watchdog\n");
 			x->rx_watchdog_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_ETI)) {
-			DWMAC_LIB_DBG(KERN_INFO "transmit early interrupt\n");
+			DBG(INFO, "transmit early interrupt\n");
 			x->tx_early_irq++;
 		}
 		if (unlikely(intr_status & DMA_STATUS_TPS)) {
-			DWMAC_LIB_DBG(KERN_INFO "transmit process stopped\n");
+			DBG(INFO, "transmit process stopped\n");
 			x->tx_process_stopped_irq++;
 			ret = tx_hard_error;
 		}
 		if (unlikely(intr_status & DMA_STATUS_FBI)) {
-			DWMAC_LIB_DBG(KERN_INFO "fatal bus error\n");
+			DBG(INFO, "fatal bus error\n");
 			x->fatal_bus_error_irq++;
 			ret = tx_hard_error;
 		}
@@ -215,11 +215,11 @@ int dwmac_dma_interrupt(void __iomem *ioaddr,
 	/* Clear the interrupt by writing a logic 1 to the CSR5[15-0] */
 	writel((intr_status & 0x1ffff), ioaddr + DMA_STATUS);
 
-	DWMAC_LIB_DBG(KERN_INFO "\n\n");
+	DBG(INFO, "\n\n");
 	return ret;
 }
 
-void dwmac_dma_flush_tx_fifo(void __iomem *ioaddr)
+void dwmac_dma_flush_tx_fifo(unsigned long ioaddr)
 {
 	u32 csr6 = readl(ioaddr + DMA_CONTROL);
 	writel((csr6 | DMA_CONTROL_FTF), ioaddr + DMA_CONTROL);
@@ -227,7 +227,7 @@ void dwmac_dma_flush_tx_fifo(void __iomem *ioaddr)
 	do {} while ((readl(ioaddr + DMA_CONTROL) & DMA_CONTROL_FTF));
 }
 
-void stmmac_set_mac_addr(void __iomem *ioaddr, u8 addr[6],
+void stmmac_set_mac_addr(unsigned long ioaddr, u8 addr[6],
 			 unsigned int high, unsigned int low)
 {
 	unsigned long data;
@@ -238,7 +238,7 @@ void stmmac_set_mac_addr(void __iomem *ioaddr, u8 addr[6],
 	writel(data, ioaddr + low);
 }
 
-void stmmac_get_mac_addr(void __iomem *ioaddr, unsigned char *addr,
+void stmmac_get_mac_addr(unsigned long ioaddr, unsigned char *addr,
 			 unsigned int high, unsigned int low)
 {
 	unsigned int hi_addr, lo_addr;

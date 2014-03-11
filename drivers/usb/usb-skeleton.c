@@ -507,7 +507,6 @@ static const struct file_operations skel_fops = {
 	.open =		skel_open,
 	.release =	skel_release,
 	.flush =	skel_flush,
-	.llseek =	noop_llseek,
 };
 
 /*

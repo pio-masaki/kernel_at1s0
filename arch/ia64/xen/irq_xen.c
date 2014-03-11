@@ -138,6 +138,7 @@ static void
 __xen_register_percpu_irq(unsigned int cpu, unsigned int vec,
 			struct irqaction *action, int save)
 {
+	struct irq_desc *desc;
 	int irq = 0;
 
 	if (xen_slab_ready) {
@@ -222,7 +223,8 @@ __xen_register_percpu_irq(unsigned int cpu, unsigned int vec,
 			 * mark the interrupt for migrations and trigger it
 			 * on cpu hotplug.
 			 */
-			irq_set_status_flags(irq, IRQ_PER_CPU);
+			desc = irq_desc + irq;
+			desc->status |= IRQ_PER_CPU;
 		}
 	}
 

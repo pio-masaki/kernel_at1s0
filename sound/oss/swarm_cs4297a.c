@@ -68,6 +68,7 @@
 #include <linux/delay.h>
 #include <linux/sound.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/soundcard.h>
 #include <linux/ac97_codec.h>
 #include <linux/pci.h>
@@ -93,7 +94,6 @@
 
 struct cs4297a_state;
 
-static DEFINE_MUTEX(swarm_cs4297a_mutex);
 static void stop_dac(struct cs4297a_state *s);
 static void stop_adc(struct cs4297a_state *s);
 static void start_dac(struct cs4297a_state *s);
@@ -875,7 +875,7 @@ static void start_adc(struct cs4297a_state *s)
 		if (s->prop_adc.fmt & AFMT_S8 || s->prop_adc.fmt & AFMT_U8) {
 			// 
 			// now only use 16 bit capture, due to truncation issue
-			// in the chip, noticeable distortion occurs.
+			// in the chip, noticable distortion occurs.
 			// allocate buffer and then convert from 16 bit to 
 			// 8 bit for the user buffer.
 			//
@@ -1535,7 +1535,7 @@ static int cs4297a_open_mixdev(struct inode *inode, struct file *file)
 	CS_DBGOUT(CS_FUNCTION | CS_OPEN, 4,
 		  printk(KERN_INFO "cs4297a: cs4297a_open_mixdev()+\n"));
 
-	mutex_lock(&swarm_cs4297a_mutex);
+	lock_kernel();
 	list_for_each(entry, &cs4297a_devs)
 	{
 		s = list_entry(entry, struct cs4297a_state, list);
@@ -1547,7 +1547,7 @@ static int cs4297a_open_mixdev(struct inode *inode, struct file *file)
 		CS_DBGOUT(CS_FUNCTION | CS_OPEN | CS_ERROR, 2,
 			printk(KERN_INFO "cs4297a: cs4297a_open_mixdev()- -ENODEV\n"));
 
-		mutex_unlock(&swarm_cs4297a_mutex);
+		unlock_kernel();
 		return -ENODEV;
 	}
 	VALIDATE_STATE(s);
@@ -1555,7 +1555,7 @@ static int cs4297a_open_mixdev(struct inode *inode, struct file *file)
 
 	CS_DBGOUT(CS_FUNCTION | CS_OPEN, 4,
 		  printk(KERN_INFO "cs4297a: cs4297a_open_mixdev()- 0\n"));
-	mutex_unlock(&swarm_cs4297a_mutex);
+	unlock_kernel();
 
 	return nonseekable_open(inode, file);
 }
@@ -1575,10 +1575,10 @@ static int cs4297a_ioctl_mixdev(struct file *file,
 			       unsigned int cmd, unsigned long arg)
 {
 	int ret;
-	mutex_lock(&swarm_cs4297a_mutex);
+	lock_kernel();
 	ret = mixer_ioctl((struct cs4297a_state *) file->private_data, cmd,
 			   arg);
-	mutex_unlock(&swarm_cs4297a_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -2350,9 +2350,9 @@ static long cs4297a_unlocked_ioctl(struct file *file, u_int cmd, u_long arg)
 {
 	int ret;
 
-	mutex_lock(&swarm_cs4297a_mutex);
+	lock_kernel();
 	ret = cs4297a_ioctl(file, cmd, arg);
-	mutex_unlock(&swarm_cs4297a_mutex);
+	unlock_kernel();
 
 	return ret;
 }
@@ -2509,9 +2509,9 @@ static int cs4297a_open(struct inode *inode, struct file *file)
 {
 	int ret;
 
-	mutex_lock(&swarm_cs4297a_mutex);
+	lock_kernel();
 	ret = cs4297a_open(inode, file);
-	mutex_unlock(&swarm_cs4297a_mutex);
+	unlock_kernel();
 
 	return ret;
 }

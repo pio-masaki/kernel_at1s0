@@ -69,6 +69,7 @@
  ******************************************************************************/
 #include <linux/version.h>
 #ifdef BUS_PCMCIA
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/cisreg.h>
 #include <pcmcia/ciscode.h>

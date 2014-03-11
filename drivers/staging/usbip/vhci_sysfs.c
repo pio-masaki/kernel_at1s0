@@ -21,7 +21,6 @@
 #include "vhci.h"
 
 #include <linux/in.h>
-#include <linux/kthread.h>
 
 /* TODO: refine locking ?*/
 
@@ -225,8 +224,11 @@ static ssize_t store_attach(struct device *dev, struct device_attribute *attr,
 	spin_unlock(&the_controller->lock);
 	/* end the lock */
 
-	vdev->ud.tcp_rx = kthread_run(vhci_rx_loop, &vdev->ud, "vhci_rx");
-	vdev->ud.tcp_tx = kthread_run(vhci_tx_loop, &vdev->ud, "vhci_tx");
+	/*
+	 * this function will sleep, so should be out of the lock. but, it's ok
+	 * because we already marked vdev as being used. really?
+	 */
+	usbip_start_threads(&vdev->ud);
 
 	rh_port_connect(rhport, speed);
 

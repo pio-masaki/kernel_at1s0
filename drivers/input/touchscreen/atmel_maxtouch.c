@@ -118,7 +118,7 @@ int pw_flag=0;
 int ac_on = 0;
 int counter = 0;
 int first_boot=0;
-//#define FORCE_RELEASE
+#define FORCE_RELEASE
 #ifdef FORCE_RELEASE
 	static int stored_size[10];
 	static int stored_x[10];
@@ -1337,7 +1337,7 @@ static int init_touch_config(struct mxt_data *mxt)
 	mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_GEN_ACQUIRECONFIG_T8, mxt)+7, 1);
 	mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_GEN_ACQUIRECONFIG_T8, mxt)+8, 0);
 	mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_GEN_ACQUIRECONFIG_T8, mxt)+9, 0);
-	mxt_debug(DEBUG_INFO,"[PEGA-BSP] DQM-TAIS-ISSUE: Disable touch auto K\n");
+	printk( "[PEGA-BSP] DQM-TAIS-ISSUE: Disable touch auto K\n");
 
 #endif
 	mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_TOUCH_MULTITOUCHSCREEN_T9, mxt), 131);
@@ -1946,7 +1946,7 @@ static irqreturn_t mxt_irq_handler(int irq, void *_mxt)
 	mxt->irq_counter++;
 	if (mxt->valid_interrupt()) {
 		/* Send the signal only if falling edge generated the irq. */
-		//cancel_delayed_work(&mxt->dwork);
+		cancel_delayed_work(&mxt->dwork);
 		schedule_delayed_work(&mxt->dwork, 0);
 		mxt->valid_irq_counter++;
 	} else {
@@ -2546,18 +2546,19 @@ void forcerelease(struct mxt_data *mxt)
 #if defined(CONFIG_PM)
 static void mxt_start(struct mxt_data *mxt)
 {
-		mxt_debug(DEBUG_INFO,KERN_INFO "[PEGA-BSP] maXTouch mxt_start, addr = %d\n", MXT_BASE_ADDR(MXT_GEN_POWERCONFIG_T7, mxt));
+		printk(KERN_INFO "[PEGA-BSP] maXTouch mxt_start, addr = %d\n", MXT_BASE_ADDR(MXT_GEN_POWERCONFIG_T7, mxt));
 		mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_GEN_POWERCONFIG_T7, mxt), 25);
 		mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_GEN_POWERCONFIG_T7, mxt) + 1, 255);
 
 #if defined(CONFIG_TOUCHSCREEN_AUTOK)	
-		mxt_debug(DEBUG_INFO, "[PEGA-BSP] Use auto calibration\n");
+		printk( "[PEGA-BSP] Use auto calibration\n");
 		mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_GEN_COMMANDPROCESSOR_T6, mxt) + MXT_ADR_T6_CALIBRATE, 1);
 #else
-		mxt_debug(DEBUG_INFO, "[PEGA-BSP] DQM-TAIS-ISSUE: touch force K\n");
+		printk( "[PEGA-BSP] DQM-TAIS-ISSUE: touch force K\n");
 		mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_GEN_COMMANDPROCESSOR_T6, mxt) + MXT_ADR_T6_CALIBRATE, 1);/*force K*/
 
 #endif		
+		enable_irq(mxt->irq);
 }
 
 static void mxt_stop(struct mxt_data *mxt)
@@ -2566,6 +2567,7 @@ static void mxt_stop(struct mxt_data *mxt)
 		printk(KERN_INFO "maXTouch mxt_stop\n");	
 		mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_GEN_POWERCONFIG_T7, mxt), 0);
 		mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_GEN_POWERCONFIG_T7, mxt) + 1, 0);
+		disable_irq(mxt->irq);	
 }
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
@@ -2627,7 +2629,7 @@ static int mxt_resume(struct i2c_client *client)
 #if defined(CONFIG_TOUCHSCREEN_PM)	
 void mxt_power_manager(int ac_online, int batt_capacity)
 {
-	mxt_debug(DEBUG_INFO,"[PEGA-BSP] Touch power manager : ac_online= %d batt_capacity = %d flag=%d\n", ac_online, batt_capacity,  pw_flag);
+	printk("[PEGA-BSP] Touch power manager : ac_online= %d batt_capacity = %d flag=%d\n", ac_online, batt_capacity,  pw_flag);
 
 	struct mxt_data *mxt;
 	mxt = procdata;
@@ -2637,7 +2639,7 @@ void mxt_power_manager(int ac_online, int batt_capacity)
 	int hdmi_on=0;
 	if(hdmi == 1)
 	{
-		mxt_debug(DEBUG_INFO,"[PEGA-BSP] Touch HDMI detected.\n" );
+		printk("[PEGA-BSP] Touch HDMI detected.\n" );
 		return;
 	}
 	else
@@ -2645,27 +2647,27 @@ void mxt_power_manager(int ac_online, int batt_capacity)
 			hdmi_on = gpio_get_value(HDMI_GPIO);
 			if (hdmi_on)
 			{
-				mxt_debug(DEBUG_INFO,"[PEGA-BSP] Touch HDMI detected by GPIO.\n" );
+				printk("[PEGA-BSP] Touch HDMI detected by GPIO.\n" );
 				#if defined(CONFIG_TOUCHSCREEN_HDMI_FOR_TCL_CONF)
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_TOUCH_MULTITOUCHSCREEN_T9, mxt)+7, 100);
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+8, 40);
-							mxt_debug(DEBUG_INFO,"[PEGA-BSP] TT =100 NT =40\n" );
+							printk("[PEGA-BSP] TT =100 NT =40\n" );
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+11, 90);
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+12, 93);
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+13, 95);
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+14, 98);
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+15, 100);
-							mxt_debug(DEBUG_INFO,"[PEGA-BSP] freq = 90,93,95,98,100 (TCL)\n");
+							printk("[PEGA-BSP] freq = 90,93,95,98,100 (TCL)\n");
 				#else
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_TOUCH_MULTITOUCHSCREEN_T9, mxt)+7, 80);
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+8, 70);
-							mxt_debug(DEBUG_INFO,"[PEGA-BSP] TT =80 NT =70\n" );
+							printk("[PEGA-BSP] TT =80 NT =70\n" );
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+11, 108);
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+12, 112);
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+13, 115);
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+14, 255);
 							mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+15, 255);
-							mxt_debug(DEBUG_INFO,"[PEGA-BSP] freq = 108,112,115,255,255\n");
+							printk("[PEGA-BSP] freq = 108,112,115,255,255\n");
 				
 				#endif
 						
@@ -2684,13 +2686,13 @@ void mxt_power_manager(int ac_online, int batt_capacity)
 			{
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_TOUCH_MULTITOUCHSCREEN_T9, mxt)+7, 65);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+8, 50);
-				mxt_debug(DEBUG_INFO,"[PEGA-BSP] TT =65 NT =50\n" );
+				printk("[PEGA-BSP] TT =65 NT =50\n" );
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+11, 18);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+12, 20);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+13, 25);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+14, 30);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+15, 46);
-				mxt_debug(DEBUG_INFO,"[PEGA-BSP] freq = 18,20,25,30,46\n");
+				printk("[PEGA-BSP] freq = 18,20,25,30,46\n");
 				pw_flag = 1;
 			}
 		}
@@ -2700,13 +2702,13 @@ void mxt_power_manager(int ac_online, int batt_capacity)
 			{
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_TOUCH_MULTITOUCHSCREEN_T9, mxt)+7, 55);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+8, 45);
-				mxt_debug(DEBUG_INFO,"[PEGA-BSP] TT =55 NT =45\n" );
+				printk("[PEGA-BSP] TT =55 NT =45\n" );
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+11, 18);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+12, 20);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+13, 25);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+14, 30);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+15, 46);
-				mxt_debug(DEBUG_INFO,"[PEGA-BSP] freq = 18,20,25,30,46\n");
+				printk("[PEGA-BSP] freq = 18,20,25,30,46\n");
 				pw_flag = 2;
 			}
 		}
@@ -2717,13 +2719,13 @@ void mxt_power_manager(int ac_online, int batt_capacity)
 		{
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_TOUCH_MULTITOUCHSCREEN_T9, mxt)+7, 50);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+8, 40);
-			mxt_debug(DEBUG_INFO,"[PEGA-BSP] TT =50 NT =40\n" );
+			printk("[PEGA-BSP] TT =50 NT =40\n" );
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+11, 15);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+12, 18);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+13, 20);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+14, 25);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+15, 30);
-			mxt_debug(DEBUG_INFO,"[PEGA-BSP] freq = 15,18,20,25,30\n");
+			printk("[PEGA-BSP] freq = 15,18,20,25,30\n");
 			pw_flag = 3;
 		}
 	}
@@ -2747,23 +2749,23 @@ void mxt_hdmi_manager(int hdmi_online)
 		#if defined(CONFIG_TOUCHSCREEN_HDMI_FOR_TCL_CONF)
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_TOUCH_MULTITOUCHSCREEN_T9, mxt)+7, 100);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+8, 40);
-			mxt_debug(DEBUG_INFO,"[PEGA-BSP] TT =100 NT =40\n" );
+			printk("[PEGA-BSP] TT =100 NT =40\n" );
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+11, 90);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+12, 93);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+13, 95);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+14, 98);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+15, 100);
-			mxt_debug(DEBUG_INFO,"[PEGA-BSP] freq = 90,93,95,98,100 (TCL)\n");
+			printk("[PEGA-BSP] freq = 90,93,95,98,100 (TCL)\n");
 		#else
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_TOUCH_MULTITOUCHSCREEN_T9, mxt)+7, 80);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+8, 70);
-			mxt_debug(DEBUG_INFO,"[PEGA-BSP] TT =80 NT =70\n" );
+			printk("[PEGA-BSP] TT =80 NT =70\n" );
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+11, 108);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+12, 112);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+13, 115);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+14, 255);
 			mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+15, 255);
-			mxt_debug(DEBUG_INFO,"[PEGA-BSP] freq = 108,112,115,255,255\n");
+			printk("[PEGA-BSP] freq = 108,112,115,255,255\n");
 
 		#endif
 		
@@ -2776,26 +2778,26 @@ void mxt_hdmi_manager(int hdmi_online)
 			{
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_TOUCH_MULTITOUCHSCREEN_T9, mxt)+7, 55);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+8, 45);
-				mxt_debug(DEBUG_INFO,"[PEGA-BSP] TT =55 NT =45\n" );
+				printk("[PEGA-BSP] TT =55 NT =45\n" );
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+11, 18);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+12, 20);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+13, 25);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+14, 30);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+15, 46);
-				mxt_debug(DEBUG_INFO,"[PEGA-BSP] freq = 18,20,25,30,46\n");
+				printk("[PEGA-BSP] freq = 18,20,25,30,46\n");
 				pw_flag = 2;
 			}
 			else
 			{
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_TOUCH_MULTITOUCHSCREEN_T9, mxt)+7, 50);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+8, 40);
-				mxt_debug(DEBUG_INFO,"[PEGA-BSP] TT =50 NT =40\n" );
+				printk("[PEGA-BSP] TT =50 NT =40\n" );
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+11, 15);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+12, 18);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+13, 20);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+14, 25);
 				mxt_write_byte(mxt->client, MXT_BASE_ADDR(MXT_PROCG_NOISESUPPRESSION_T22, mxt)+15, 30);
-				mxt_debug(DEBUG_INFO,"[PEGA-BSP] freq = 15,18,20,25,30\n");
+				printk("[PEGA-BSP] freq = 15,18,20,25,30\n");
 				pw_flag = 3;
 			}
 			hdmi = 0;
@@ -2955,8 +2957,7 @@ static int __devinit mxt_probe(struct i2c_client *client,
 	mxt_debug(DEBUG_INFO, "maXTouch phys: \"%s\"\n", input->phys);
 	mxt_debug(DEBUG_INFO, "maXTouch driver setting abs parameters\n");
 
-	/*Disable BTN_TOUCH, it cause mistake from ICS HAL */
-	//set_bit(BTN_TOUCH, input->keybit);
+	set_bit(BTN_TOUCH, input->keybit);
 
 	/* Single touch */
 	input_set_abs_params(input, ABS_X, 0, mxt->max_x_val, 0, 0);

@@ -31,12 +31,11 @@
     Miniport generic portion header file
 
     Revision History:
-    Who         	When          	What
+    Who         When          What
     --------    ----------    ----------------------------------------------
-    Paul Lin    	2002-08-01    	created
-    James Tan   	2002-09-06    	modified (Revise NTCRegTable)
-    John Chang  	2004-09-06    	modified for RT2600
-    Justin P. Mattock	11/07/2010	Fix some typos
+    Paul Lin    2002-08-01    created
+    James Tan   2002-09-06    modified (Revise NTCRegTable)
+    John Chang  2004-09-06    modified for RT2600
 */
 #ifndef __RTMP_H__
 #define __RTMP_H__
@@ -325,6 +324,14 @@ struct rt_rtmp_sg_list {
 /* */
 /*  Some utility macros */
 /* */
+#ifndef min
+#define min(_a, _b)     (((_a) < (_b)) ? (_a) : (_b))
+#endif
+
+#ifndef max
+#define max(_a, _b)     (((_a) > (_b)) ? (_a) : (_b))
+#endif
+
 #define GET_LNA_GAIN(_pAd)	((_pAd->LatchRfRegs.Channel <= 14) ? (_pAd->BLNAGain) : ((_pAd->LatchRfRegs.Channel <= 64) ? (_pAd->ALNAGain0) : ((_pAd->LatchRfRegs.Channel <= 128) ? (_pAd->ALNAGain1) : (_pAd->ALNAGain2))))
 
 #define INC_COUNTER64(Val)          (Val.QuadPart++)
@@ -338,7 +345,7 @@ struct rt_rtmp_sg_list {
 #define LEAP_ON(_p)                 (((_p)->StaCfg.LeapAuthMode) == CISCO_AuthModeLEAP)
 #define LEAP_CCKM_ON(_p)            ((((_p)->StaCfg.LeapAuthMode) == CISCO_AuthModeLEAP) && ((_p)->StaCfg.LeapAuthInfo.CCKM == TRUE))
 
-/* if original Ethernet frame contains no LLC/SNAP, then an extra LLC/SNAP encap is required */
+/* if orginal Ethernet frame contains no LLC/SNAP, then an extra LLC/SNAP encap is required */
 #define EXTRA_LLCSNAP_ENCAP_FROM_PKT_START(_pBufVA, _pExtraLlcSnapEncap)		\
 {																\
 	if (((*(_pBufVA + 12) << 8) + *(_pBufVA + 13)) > 1500) {	\
@@ -467,7 +474,7 @@ struct rt_rtmp_dmabuf {
 /* Control block (Descriptor) for all ring descriptor DMA operation, buffer must be */
 /* contiguous physical memory. char stored the binding Rx packet descriptor */
 /* which won't be released, driver has to wait until upper layer return the packet */
-/* before giving up this rx ring descriptor to ASIC. NDIS_BUFFER is associated pair */
+/* before giveing up this rx ring descriptor to ASIC. NDIS_BUFFER is assocaited pair */
 /* to describe the packet buffer. For Tx, char stored the tx packet descriptor */
 /* which driver should ACK upper layer when the tx is physically done or failed. */
 /* */
@@ -603,7 +610,7 @@ struct rt_counter_ralink {
 };
 
 struct rt_counter_drs {
-	/* record each TX rate's quality. 0 is best, the bigger the worse. */
+	/* to record the each TX rate's quality. 0 is best, the bigger the worse. */
 	u16 TxQuality[MAX_STEP_OF_TX_RATE_SWITCH];
 	u8 PER[MAX_STEP_OF_TX_RATE_SWITCH];
 	u8 TxRateUpPenalty;	/* extra # of second penalty due to last unstable condition */
@@ -720,7 +727,7 @@ struct rt_fragment_frame {
 /* Packet information for NdisQueryPacket */
 /* */
 struct rt_packet_info {
-	u32 PhysicalBufferCount;	/* Physical breaks of buffer descriptor chained */
+	u32 PhysicalBufferCount;	/* Physical breaks of buffer descripor chained */
 	u32 BufferCount;	/* Number of Buffer descriptor chained */
 	u32 TotalPacketLength;	/* Self explained */
 	char *pFirstBuffer;	/* Pointer to first buffer descriptor */
@@ -756,7 +763,7 @@ struct rt_tkip_key_info {
 /* */
 struct rt_private {
 	u32 SystemResetCnt;	/* System reset counter */
-	u32 TxRingFullCnt;	/* Tx ring full occurrence number */
+	u32 TxRingFullCnt;	/* Tx ring full occurrance number */
 	u32 PhyRxErrCnt;	/* PHY Rx error count, for debug purpose, might move to global counter */
 	/* Variables for WEP encryption / decryption in rtmp_wep.c */
 	u32 FCSCRC32;
@@ -847,8 +854,8 @@ typedef enum _ABGBAND_STATE_ {
 /* Power save method control */
 typedef union _PS_CONTROL {
 	struct {
-		unsigned long EnablePSinIdle:1;	/* Enable radio off when not connected to AP. radio on only when sitesurvey, */
-		unsigned long EnableNewPS:1;	/* Enable new  Chip power save function . New method can only be applied in chip version after 2872. and PCIe. */
+		unsigned long EnablePSinIdle:1;	/* Enable radio off when not connect to AP. radio on only when sitesurvey, */
+		unsigned long EnableNewPS:1;	/* Enable new  Chip power save fucntion . New method can only be applied in chip version after 2872. and PCIe. */
 		unsigned long rt30xxPowerMode:2;	/* Power Level Mode for rt30xx chip */
 		unsigned long rt30xxFollowHostASPM:1;	/* Card Follows Host's setting for rt30xx chip. */
 		unsigned long rt30xxForceASPMTest:1;	/* Force enable L1 for rt30xx chip. This has higher priority than rt30xxFollowHostASPM Mode. */
@@ -925,7 +932,7 @@ struct rt_mlme {
   **************************************************************************/
 struct reordering_mpdu {
 	struct reordering_mpdu *next;
-	void *pPacket;	/* converted to 802.3 frame */
+	void *pPacket;	/* coverted to 802.3 frame */
 	int Sequence;		/* sequence number of MPDU */
 	BOOLEAN bAMSDU;
 };
@@ -1118,8 +1125,8 @@ struct rt_beacon_sync {
 	unsigned long TimIELocationInBeacon[HW_BEACON_MAX_COUNT];
 	unsigned long CapabilityInfoLocationInBeacon[HW_BEACON_MAX_COUNT];
 	BOOLEAN EnableBeacon;	/* trigger to enable beacon transmission. */
-	u8 BeaconBitMap;	/* NOTE: If the MAX_MBSSID_NUM is larger than 8, this parameter needs to change. */
-	u8 DtimBitOn;	/* NOTE: If the MAX_MBSSID_NUM is larger than 8, this parameter needs to change. */
+	u8 BeaconBitMap;	/* NOTE: If the MAX_MBSSID_NUM is larger than 8, this parameter need to change. */
+	u8 DtimBitOn;	/* NOTE: If the MAX_MBSSID_NUM is larger than 8, this parameter need to change. */
 };
 #endif /* RTMP_MAC_USB // */
 
@@ -1212,7 +1219,7 @@ struct rt_common_config {
 	/*BOOLEAN               bAutoTxRateSwitch; */
 	u8 MinTxRate;	/* RATE_1, RATE_2, RATE_5_5, RATE_11 */
 	u8 RtsRate;		/* RATE_xxx */
-	HTTRANSMIT_SETTING MlmeTransmit;	/* MGMT frame PHY rate setting when operation at Ht rate. */
+	HTTRANSMIT_SETTING MlmeTransmit;	/* MGMT frame PHY rate setting when operatin at Ht rate. */
 	u8 MlmeRate;		/* RATE_xxx, used to send MLME frames */
 	u8 BasicMlmeRate;	/* Default Rate for sending MLME frames */
 
@@ -1265,7 +1272,7 @@ struct rt_common_config {
 	struct rt_ht_capability_ie HtCapability;
 	struct rt_add_ht_info_ie AddHTInfo;	/* Useful as AP. */
 	/*This IE is used with channel switch announcement element when changing to a new 40MHz. */
-	/*This IE is included in channel switch announcement frames 7.4.1.5, beacons, probe Rsp. */
+	/*This IE is included in channel switch ammouncement frames 7.4.1.5, beacons, probe Rsp. */
 	struct rt_new_ext_chan_ie NewExtChanOffset;	/*7.3.2.20A, 1 if extension channel is above the control channel, 3 if below, 0 if not present */
 
 	BOOLEAN bHTProtect;
@@ -1330,7 +1337,7 @@ struct rt_sta_admin_config {
 	/* GROUP 1 - */
 	/*   User configuration loaded from Registry, E2PROM or OID_xxx. These settings describe */
 	/*   the user intended configuration, but not necessary fully equal to the final */
-	/*   settings in ACTIVE BSS after negotiation/compromise with the BSS holder (either */
+	/*   settings in ACTIVE BSS after negotiation/compromize with the BSS holder (either */
 	/*   AP or IBSS holder). */
 	/*   Once initialized, user configuration can only be changed via OID_xxx */
 	u8 BssType;		/* BSS_INFRA or BSS_ADHOC */
@@ -1387,12 +1394,12 @@ struct rt_sta_admin_config {
 
 	/* For WPA countermeasures */
 	unsigned long LastMicErrorTime;	/* record last MIC error time */
-	unsigned long MicErrCnt;	/* Should be 0, 1, 2, then reset to zero (after disassociation). */
+	unsigned long MicErrCnt;	/* Should be 0, 1, 2, then reset to zero (after disassoiciation). */
 	BOOLEAN bBlockAssoc;	/* Block associate attempt for 60 seconds after counter measure occurred. */
 	/* For WPA-PSK supplicant state */
 	WPA_STATE WpaState;	/* Default is SS_NOTUSE and handled by microsoft 802.1x */
 	u8 ReplayCounter[8];
-	u8 ANonce[32];	/* ANonce for WPA-PSK from auhenticator */
+	u8 ANonce[32];	/* ANonce for WPA-PSK from aurhenticator */
 	u8 SNonce[32];	/* SNonce for WPA-PSK */
 
 	u8 LastSNR0;		/* last received BEACON's SNR */
@@ -1424,7 +1431,7 @@ struct rt_sta_admin_config {
 	u8 RSNIE_Len;
 	u8 RSN_IE[MAX_LEN_OF_RSNIE];	/* The content saved here should be little-endian format. */
 
-	unsigned long CLBusyBytes;	/* Save the total bytes received during channel load scan time */
+	unsigned long CLBusyBytes;	/* Save the total bytes received durning channel load scan time */
 	u16 RPIDensity[8];	/* Array for RPI density collection */
 
 	u8 RMReqCnt;		/* Number of measurement request saved. */
@@ -1490,9 +1497,9 @@ struct rt_sta_admin_config {
 	BOOLEAN bForceTxBurst;	/* 1: force enble TX PACKET BURST, 0: disable */
 };
 
-/* This data structure keeps the current active BSS/IBSS's configuration that this STA */
+/* This data structure keep the current active BSS/IBSS's configuration that this STA */
 /* had agreed upon joining the network. Which means these parameters are usually decided */
-/* by the BSS/IBSS creator instead of user configuration. Data in this data structure */
+/* by the BSS/IBSS creator instead of user configuration. Data in this data structurre */
 /* is valid only when either ADHOC_ON(pAd) or INFRA_ON(pAd) is TRUE. */
 /* Normally, after SCAN or failed roaming attempts, we need to recover back to */
 /* the current active settings. */
@@ -1520,7 +1527,7 @@ struct rt_mac_table_entry {
 	/*Choose 1 from ValidAsWDS and ValidAsCLI  to validize. */
 	BOOLEAN ValidAsCLI;	/* Sta mode, set this TRUE after Linkup,too. */
 	BOOLEAN ValidAsWDS;	/* This is WDS Entry. only for AP mode. */
-	BOOLEAN ValidAsApCli;	/* This is a AP-Client entry, only for AP mode which enable AP-Client functions. */
+	BOOLEAN ValidAsApCli;	/*This is a AP-Client entry, only for AP mode which enable AP-Client functions. */
 	BOOLEAN ValidAsMesh;
 	BOOLEAN ValidAsDls;	/* This is DLS Entry. only for STA mode. */
 	BOOLEAN isCached;
@@ -1528,7 +1535,7 @@ struct rt_mac_table_entry {
 
 	u8 EnqueueEapolStartTimerRunning;	/* Enqueue EAPoL-Start for triggering EAP SM */
 	/*jan for wpa */
-	/* record which entry revoke MIC Failure, if it leaves the BSS itself, AP won't update aMICFailTime MIB */
+	/* record which entry revoke MIC Failure , if it leaves the BSS itself, AP won't update aMICFailTime MIB */
 	u8 CMTimerRunning;
 	u8 apidx;		/* MBSS number */
 	u8 RSNIE_Len;
@@ -1723,7 +1730,7 @@ struct rt_rtmp_adapter {
 	unsigned long Rt3xxRalinkLinkCtrl;	/* USed for 3090F chip */
 	u16 DeviceID;	/* Read from PCI config */
 	unsigned long AccessBBPFailCount;
-	BOOLEAN bPCIclkOff;	/* flag that indicates if the PICE power status in Configuration Space.. */
+	BOOLEAN bPCIclkOff;	/* flag that indicate if the PICE power status in Configuration SPace.. */
 	BOOLEAN bPCIclkOffDisableTx;	/* */
 
 	BOOLEAN brt30xxBanMcuCmd;	/*when = 0xff means all commands are ok to set . */
@@ -1872,9 +1879,9 @@ struct rt_rtmp_adapter {
 	/* ---------------------------- */
 	u8 RfIcType;		/* RFIC_xxx */
 	unsigned long RfFreqOffset;	/* Frequency offset for channel switching */
-	struct rt_rtmp_rf_regs LatchRfRegs;	/* latch the latest RF programming value since RF IC doesn't support READ */
+	struct rt_rtmp_rf_regs LatchRfRegs;	/* latch th latest RF programming value since RF IC doesn't support READ */
 
-	EEPROM_ANTENNA_STRUC Antenna;	/* Since Antenna definition is different for a & g. We need to save it for future reference. */
+	EEPROM_ANTENNA_STRUC Antenna;	/* Since ANtenna definition is different for a & g. We need to save it for future reference. */
 	EEPROM_NIC_CONFIG2_STRUC NicConfig2;
 
 	/* This soft Rx Antenna Diversity mechanism is used only when user set */
@@ -1991,7 +1998,7 @@ struct rt_rtmp_adapter {
 	struct rt_common_config CommonCfg;
 	struct rt_mlme Mlme;
 
-	/* AP needs those variables for site survey feature. */
+	/* AP needs those vaiables for site survey feature. */
 	struct rt_mlme_aux MlmeAux;	/* temporary settings used during MLME state machine */
 	struct rt_bss_table ScanTab;	/* store the latest SCAN result */
 
@@ -2013,7 +2020,7 @@ struct rt_rtmp_adapter {
 	/* various Counters */
 	struct rt_counter_802_3 Counters8023;	/* 802.3 counters */
 	struct rt_counter_802_11 WlanCounters;	/* 802.11 MIB counters */
-	struct rt_counter_ralink RalinkCounters;	/* Ralink proprietary counters */
+	struct rt_counter_ralink RalinkCounters;	/* Ralink propriety counters */
 	struct rt_counter_drs DrsCounters;	/* counters for Dynamic TX Rate Switching */
 	struct rt_private PrivateInfo;	/* Private information & counters */
 
@@ -2025,7 +2032,7 @@ struct rt_rtmp_adapter {
 	u16 Sequence;
 
 	/* Control disconnect / connect event generation */
-	/*+++Not used anymore */
+	/*+++Didn't used anymore */
 	unsigned long LinkDownTime;
 	/*--- */
 	unsigned long LastRxRate;
@@ -2037,7 +2044,7 @@ struct rt_rtmp_adapter {
 	unsigned long ExtraInfo;	/* Extra information for displaying status */
 	unsigned long SystemErrorBitmap;	/* b0: E2PROM version error */
 
-	/*+++Not used anymore */
+	/*+++Didn't used anymore */
 	unsigned long MacIcVersion;	/* MAC/BBP serial interface issue solved after ver.D */
 	/*--- */
 
@@ -2090,7 +2097,7 @@ struct rt_rtmp_adapter {
 	unsigned long BulkOutReq;
 	unsigned long BulkOutComplete;
 	unsigned long BulkOutCompleteOther;
-	unsigned long BulkOutCompleteCancel;	/* seems not used now? */
+	unsigned long BulkOutCompleteCancel;	/* seems not use now? */
 	unsigned long BulkInReq;
 	unsigned long BulkInComplete;
 	unsigned long BulkInCompleteFail;
@@ -2197,9 +2204,9 @@ struct rt_rx_blk {
 struct rt_tx_blk {
 	u8 QueIdx;
 	u8 TxFrameType;	/* Indicate the Transmission type of the all frames in one batch */
-	u8 TotalFrameNum;	/* Total frame number that wants to send-out in one batch */
+	u8 TotalFrameNum;	/* Total frame number want to send-out in one batch */
 	u16 TotalFragNum;	/* Total frame fragments required in one batch */
-	u16 TotalFrameLen;	/* Total length of all frames that wants to send-out in one batch */
+	u16 TotalFrameLen;	/* Total length of all frames want to send-out in one batch */
 
 	struct rt_queue_header TxPacketList;
 	struct rt_mac_table_entry *pMacEntry;	/* NULL: packet with 802.11 RA field is multicast/broadcast address */
@@ -2208,7 +2215,7 @@ struct rt_tx_blk {
 	/* Following structure used for the characteristics of a specific packet. */
 	void *pPacket;
 	u8 *pSrcBufHeader;	/* Reference to the head of sk_buff->data */
-	u8 *pSrcBufData;	/* Reference to the sk_buff->data, will change depending on the handling progresss */
+	u8 *pSrcBufData;	/* Reference to the sk_buff->data, will changed depends on hanlding progresss */
 	u32 SrcBufLen;		/* Length of packet payload which not including Layer 2 header */
 	u8 *pExtraLlcSnapEncap;	/* NULL means no extra LLC/SNAP is required */
 	u8 HeaderBuf[128];	/* TempBuffer for TX_INFO + TX_WI + 802.11 Header + padding + AMSDU SubHeader + LLC/SNAP */
@@ -2220,7 +2227,7 @@ struct rt_tx_blk {
 	u8 apidx;		/* The interface associated to this packet */
 	u8 Wcid;		/* The MAC entry associated to this packet */
 	u8 UserPriority;	/* priority class of packet */
-	u8 FrameGap;		/* what kind of IFS does this packet use */
+	u8 FrameGap;		/* what kind of IFS this packet use */
 	u8 MpduReqNum;	/* number of fragments of this frame */
 	u8 TxRate;		/* TODO: Obsoleted? Should change to MCS? */
 	u8 CipherAlg;	/* cipher alogrithm */
@@ -2232,15 +2239,15 @@ struct rt_tx_blk {
 	unsigned long Priv;		/* Hardware specific value saved in here. */
 };
 
-#define fTX_bRtsRequired	0x0001	/* Indicate if need send RTS frame for protection. Not used in RT2860/RT2870. */
-#define fTX_bAckRequired	0x0002	/* the packet need ack response */
-#define fTX_bPiggyBack		0x0004	/* Legacy device use Piggback or not */
-#define fTX_bHTRate		0x0008	/* allow to use HT rate */
-#define fTX_bForceNonQoS	0x0010	/* force to transmit frame without WMM-QoS in HT mode */
-#define fTX_bAllowFrag		0x0020	/* allow to fragment the packet, A-MPDU, A-MSDU, A-Ralink is not allowed to fragment */
-#define fTX_bMoreData		0x0040	/* there are more data packets in PowerSave Queue */
-#define fTX_bWMM		0x0080	/* QOS Data */
-#define fTX_bClearEAPFrame	0x0100
+#define fTX_bRtsRequired		0x0001	/* Indicate if need send RTS frame for protection. Not used in RT2860/RT2870. */
+#define fTX_bAckRequired       	0x0002	/* the packet need ack response */
+#define fTX_bPiggyBack     		0x0004	/* Legacy device use Piggback or not */
+#define fTX_bHTRate         	0x0008	/* allow to use HT rate */
+#define fTX_bForceNonQoS       	0x0010	/* force to transmit frame without WMM-QoS in HT mode */
+#define fTX_bAllowFrag       	0x0020	/* allow to fragment the packet, A-MPDU, A-MSDU, A-Ralink is not allowed to fragment */
+#define fTX_bMoreData			0x0040	/* there are more data packets in PowerSave Queue */
+#define fTX_bWMM				0x0080	/* QOS Data */
+#define fTX_bClearEAPFrame		0x0100
 
 #define TX_BLK_SET_FLAG(_pTxBlk, _flag)		(_pTxBlk->Flags |= _flag)
 #define TX_BLK_TEST_FLAG(_pTxBlk, _flag)	(((_pTxBlk->Flags & _flag) == _flag) ? 1 : 0)
@@ -2979,7 +2986,7 @@ void LinkDown(struct rt_rtmp_adapter *pAd, IN BOOLEAN IsReqFromAP);
 
 void IterateOnBssTab(struct rt_rtmp_adapter *pAd);
 
-void IterateOnBssTab2(struct rt_rtmp_adapter *pAd);
+void IterateOnBssTab2(struct rt_rtmp_adapter *pAd);;
 
 void JoinParmFill(struct rt_rtmp_adapter *pAd,
 		  struct rt_mlme_join_req *JoinReq, unsigned long BssIdx);
@@ -3611,7 +3618,7 @@ struct rt_rtmp_sg_list *rt_get_sg_list_from_packet(void *pPacket,
 
 void announce_802_3_packet(struct rt_rtmp_adapter *pAd, void *pPacket);
 
-u32 BA_Reorder_AMSDU_Announce(struct rt_rtmp_adapter *pAd, void *pPacket);
+u32 BA_Reorder_AMSDU_Annnounce(struct rt_rtmp_adapter *pAd, void *pPacket);
 
 struct net_device *get_netdev_from_bssid(struct rt_rtmp_adapter *pAd, u8 FromWhichBSSID);
 

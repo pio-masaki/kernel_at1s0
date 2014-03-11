@@ -10,18 +10,14 @@
  */
 #include <linux/module.h>
 #include <linux/types.h>
-#include <linux/cpu.h>
 #include <linux/kernel.h>
-#include <linux/notifier.h>
 #include <linux/signal.h>
 #include <linux/sched.h>
-#include <linux/smp.h>
 #include <linux/init.h>
 
 #include <asm/cputype.h>
 #include <asm/thread_notify.h>
 #include <asm/vfp.h>
-#include <asm/cpu_pm.h>
 
 #include "vfpinstr.h"
 #include "vfp.h"
@@ -79,14 +75,6 @@ static void vfp_thread_exit(struct thread_info *thread)
 	put_cpu();
 }
 
-static void vfp_thread_copy(struct thread_info *thread)
-{
-	struct thread_info *parent = current_thread_info();
-
-	vfp_sync_hwstate(parent);
-	thread->vfpstate = parent->vfpstate;
-}
-
 /*
  * When this function is called with the following 'cmd's, the following
  * is true while this function is being run:
@@ -113,17 +101,12 @@ static void vfp_thread_copy(struct thread_info *thread)
 static int vfp_notifier(struct notifier_block *self, unsigned long cmd, void *v)
 {
 	struct thread_info *thread = v;
-	u32 fpexc;
-#ifdef CONFIG_SMP
-	unsigned int cpu;
-#endif
 
-	switch (cmd) {
-	case THREAD_NOTIFY_SWITCH:
-		fpexc = fmrx(FPEXC);
+	if (likely(cmd == THREAD_NOTIFY_SWITCH)) {
+		u32 fpexc = fmrx(FPEXC);
 
 #ifdef CONFIG_SMP
-		cpu = thread->cpu;
+		unsigned int cpu = thread->cpu;
 
 		/*
 		 * On SMP, if VFP is enabled, save the old state in
@@ -148,20 +131,13 @@ static int vfp_notifier(struct notifier_block *self, unsigned long cmd, void *v)
 		 * old state.
 		 */
 		fmxr(FPEXC, fpexc & ~FPEXC_EN);
-		break;
-
-	case THREAD_NOTIFY_FLUSH:
-		vfp_thread_flush(thread);
-		break;
-
-	case THREAD_NOTIFY_EXIT:
-		vfp_thread_exit(thread);
-		break;
-
-	case THREAD_NOTIFY_COPY:
-		vfp_thread_copy(thread);
-		break;
+		return NOTIFY_DONE;
 	}
+
+	if (cmd == THREAD_NOTIFY_FLUSH)
+		vfp_thread_flush(thread);
+	else
+		vfp_thread_exit(thread);
 
 	return NOTIFY_DONE;
 }
@@ -170,40 +146,11 @@ static struct notifier_block vfp_notifier_block = {
 	.notifier_call	= vfp_notifier,
 };
 
-static int vfp_cpu_pm_notifier(struct notifier_block *self, unsigned long cmd,
-	void *v)
-{
-	u32 fpexc = fmrx(FPEXC);
-	unsigned int cpu = smp_processor_id();
-
-	switch (cmd) {
-	case CPU_PM_ENTER:
-		if (last_VFP_context[cpu]) {
-			fmxr(FPEXC, fpexc | FPEXC_EN);
-			vfp_save_state(last_VFP_context[cpu], fpexc);
-			/* force a reload when coming back from idle */
-			last_VFP_context[cpu] = NULL;
-			fmxr(FPEXC, fpexc & ~FPEXC_EN);
-		}
-		break;
-	case CPU_PM_ENTER_FAILED:
-	case CPU_PM_EXIT:
-		/* make sure VFP is disabled when leaving idle */
-		fmxr(FPEXC, fpexc & ~FPEXC_EN);
-		break;
-	}
-	return NOTIFY_OK;
-}
-
-static struct notifier_block vfp_cpu_pm_notifier_block = {
-	.notifier_call = vfp_cpu_pm_notifier,
-};
-
 /*
  * Raise a SIGFPE for the current process.
  * sicode describes the signal being raised.
  */
-static void vfp_raise_sigfpe(unsigned int sicode, struct pt_regs *regs)
+void vfp_raise_sigfpe(unsigned int sicode, struct pt_regs *regs)
 {
 	siginfo_t info;
 
@@ -435,12 +382,6 @@ static int vfp_pm_suspend(struct sys_device *dev, pm_message_t state)
 	struct thread_info *ti = current_thread_info();
 	u32 fpexc = fmrx(FPEXC);
 
-	/* If lazy disable, re-enable the VFP ready for it to be saved */
-	if (last_VFP_context[ti->cpu] != &ti->vfpstate) {
-		fpexc |= FPEXC_EN;
-		fmxr(FPEXC, fpexc);
-	}
-
 	/* if vfp is on, then save state for resumption */
 	if (fpexc & FPEXC_EN) {
 		printk(KERN_DEBUG "%s: saving vfp state\n", __func__);
@@ -543,27 +484,7 @@ void vfp_flush_hwstate(struct thread_info *thread)
 	put_cpu();
 }
 
-/*
- * VFP hardware can lose all context when a CPU goes offline.
- * As we will be running in SMP mode with CPU hotplug, we will save the
- * hardware state at every thread switch.  We clear our held state when
- * a CPU has been killed, indicating that the VFP hardware doesn't contain
- * a threads VFP state.  When a CPU starts up, we re-enable access to the
- * VFP hardware.
- *
- * Both CPU_DYING and CPU_STARTING are called on the CPU which
- * is being offlined/onlined.
- */
-static int vfp_hotplug(struct notifier_block *b, unsigned long action,
-	void *hcpu)
-{
-	if (action == CPU_DYING || action == CPU_DYING_FROZEN) {
-		unsigned int cpu = (long)hcpu;
-		last_VFP_context[cpu] = NULL;
-	} else if (action == CPU_STARTING || action == CPU_STARTING_FROZEN)
-		vfp_enable(NULL);
-	return NOTIFY_OK;
-}
+#include <linux/smp.h>
 
 /*
  * VFP support code initialisation.
@@ -573,9 +494,6 @@ static int __init vfp_init(void)
 	unsigned int vfpsid;
 	unsigned int cpu_arch = cpu_architecture();
 
-#ifdef CONFIG_SMP
-	preempt_disable();
-#endif
 	if (cpu_arch >= CPU_ARCH_ARMv6)
 		vfp_enable(NULL);
 
@@ -596,8 +514,6 @@ static int __init vfp_init(void)
 	else if (vfpsid & FPSID_NODOUBLE) {
 		printk("no double precision support\n");
 	} else {
-		hotcpu_notifier(vfp_hotplug, 0);
-
 		smp_call_function(vfp_enable, NULL, 1);
 
 		VFP_arch = (vfpsid & FPSID_ARCH_MASK) >> FPSID_ARCH_BIT;  /* Extract the architecture version */
@@ -611,7 +527,6 @@ static int __init vfp_init(void)
 		vfp_vector = vfp_support_entry;
 
 		thread_register_notifier(&vfp_notifier_block);
-		cpu_pm_register_notifier(&vfp_cpu_pm_notifier_block);
 		vfp_pm_init();
 
 		/*
@@ -644,9 +559,6 @@ static int __init vfp_init(void)
 		}
 #endif
 	}
-#ifdef CONFIG_SMP
-	preempt_enable();
-#endif
 	return 0;
 }
 

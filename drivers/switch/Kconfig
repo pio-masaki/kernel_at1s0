@@ -18,9 +18,4 @@ config SWITCH_ANTARES_DOCK
         help
           Say Y here if you want to enable a dock switch device node
 
-config SWITCH_SCORPIO_DOCK
-        tristate "Dock driver for Scorpio board"
-        depends on MACH_SCORPIO 
-        help
-          Say Y here if you want to enable a dock switch device node
 endif # SWITCH

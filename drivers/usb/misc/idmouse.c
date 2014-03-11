@@ -105,7 +105,6 @@ static const struct file_operations idmouse_fops = {
 	.read = idmouse_read,
 	.open = idmouse_open,
 	.release = idmouse_release,
-	.llseek = default_llseek,
 };
 
 /* class driver information */

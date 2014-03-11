@@ -73,11 +73,12 @@ sun4e_notsup:
 
 	/* The Sparc trap table, bootloader gives us control at _start. */
 	__HEAD
-	.globl	_stext, _start, __stext
+	.globl	start, _stext, _start, __stext
 	.globl  trapbase
 _start:   /* danger danger */
 __stext:
 _stext:
+start:
 trapbase:
 #ifdef CONFIG_SMP
 trapbase_cpu0:

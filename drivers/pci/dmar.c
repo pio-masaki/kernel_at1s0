@@ -36,7 +36,6 @@
 #include <linux/tboot.h>
 #include <linux/dmi.h>
 #include <linux/slab.h>
-#include <asm/iommu_table.h>
 
 #define PREFIX "DMAR: "
 
@@ -688,7 +687,7 @@ failed:
 	return 0;
 }
 
-int __init detect_intel_iommu(void)
+void __init detect_intel_iommu(void)
 {
 	int ret;
 
@@ -724,8 +723,6 @@ int __init detect_intel_iommu(void)
 	}
 	early_acpi_os_unmap_memory(dmar_tbl, dmar_tbl_size);
 	dmar_tbl = NULL;
-
-	return ret ? 1 : -ENODEV;
 }
 
 
@@ -1224,9 +1221,9 @@ const char *dmar_get_fault_reason(u8 fault_reason, int *fault_type)
 	}
 }
 
-void dmar_msi_unmask(struct irq_data *data)
+void dmar_msi_unmask(unsigned int irq)
 {
-	struct intel_iommu *iommu = irq_data_get_irq_handler_data(data);
+	struct intel_iommu *iommu = get_irq_data(irq);
 	unsigned long flag;
 
 	/* unmask it */
@@ -1237,10 +1234,10 @@ void dmar_msi_unmask(struct irq_data *data)
 	spin_unlock_irqrestore(&iommu->register_lock, flag);
 }
 
-void dmar_msi_mask(struct irq_data *data)
+void dmar_msi_mask(unsigned int irq)
 {
 	unsigned long flag;
-	struct intel_iommu *iommu = irq_data_get_irq_handler_data(data);
+	struct intel_iommu *iommu = get_irq_data(irq);
 
 	/* mask it */
 	spin_lock_irqsave(&iommu->register_lock, flag);
@@ -1252,7 +1249,7 @@ void dmar_msi_mask(struct irq_data *data)
 
 void dmar_msi_write(int irq, struct msi_msg *msg)
 {
-	struct intel_iommu *iommu = irq_get_handler_data(irq);
+	struct intel_iommu *iommu = get_irq_data(irq);
 	unsigned long flag;
 
 	spin_lock_irqsave(&iommu->register_lock, flag);
@@ -1264,7 +1261,7 @@ void dmar_msi_write(int irq, struct msi_msg *msg)
 
 void dmar_msi_read(int irq, struct msi_msg *msg)
 {
-	struct intel_iommu *iommu = irq_get_handler_data(irq);
+	struct intel_iommu *iommu = get_irq_data(irq);
 	unsigned long flag;
 
 	spin_lock_irqsave(&iommu->register_lock, flag);
@@ -1382,12 +1379,12 @@ int dmar_set_interrupt(struct intel_iommu *iommu)
 		return -EINVAL;
 	}
 
-	irq_set_handler_data(irq, iommu);
+	set_irq_data(irq, iommu);
 	iommu->irq = irq;
 
 	ret = arch_setup_dmar_msi(irq);
 	if (ret) {
-		irq_set_handler_data(irq, NULL);
+		set_irq_data(irq, NULL);
 		iommu->irq = 0;
 		destroy_irq(irq);
 		return ret;
@@ -1463,4 +1460,3 @@ int __init dmar_ir_support(void)
 		return 0;
 	return dmar->flags & 0x1;
 }
-IOMMU_INIT_POST(detect_intel_iommu);

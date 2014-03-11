@@ -21,16 +21,22 @@
 
 static int s5p6442_cfg_i2s(struct platform_device *pdev)
 {
-	unsigned int base;
-
 	/* configure GPIO for i2s port */
 	switch (pdev->id) {
 	case 1:
-		base = S5P6442_GPC1(0);
+		s3c_gpio_cfgpin(S5P6442_GPC1(0), S3C_GPIO_SFN(2));
+		s3c_gpio_cfgpin(S5P6442_GPC1(1), S3C_GPIO_SFN(2));
+		s3c_gpio_cfgpin(S5P6442_GPC1(2), S3C_GPIO_SFN(2));
+		s3c_gpio_cfgpin(S5P6442_GPC1(3), S3C_GPIO_SFN(2));
+		s3c_gpio_cfgpin(S5P6442_GPC1(4), S3C_GPIO_SFN(2));
 		break;
 
-	case 0:
-		base = S5P6442_GPC0(0);
+	case -1:
+		s3c_gpio_cfgpin(S5P6442_GPC0(0), S3C_GPIO_SFN(2));
+		s3c_gpio_cfgpin(S5P6442_GPC0(1), S3C_GPIO_SFN(2));
+		s3c_gpio_cfgpin(S5P6442_GPC0(2), S3C_GPIO_SFN(2));
+		s3c_gpio_cfgpin(S5P6442_GPC0(3), S3C_GPIO_SFN(2));
+		s3c_gpio_cfgpin(S5P6442_GPC0(4), S3C_GPIO_SFN(2));
 		break;
 
 	default:
@@ -38,23 +44,11 @@ static int s5p6442_cfg_i2s(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	s3c_gpio_cfgpin_range(base, 5, S3C_GPIO_SFN(2));
 	return 0;
 }
 
-static const char *rclksrc_v35[] = {
-	[0] = "busclk",
-	[1] = "i2sclk",
-};
-
-static struct s3c_audio_pdata i2sv35_pdata = {
+static struct s3c_audio_pdata s3c_i2s_pdata = {
 	.cfg_gpio = s5p6442_cfg_i2s,
-	.type = {
-		.i2s = {
-			.quirks = QUIRK_SEC_DAI | QUIRK_NEED_RSTCLR,
-			.src_clk = rclksrc_v35,
-		},
-	},
 };
 
 static struct resource s5p6442_iis0_resource[] = {
@@ -73,34 +67,15 @@ static struct resource s5p6442_iis0_resource[] = {
 		.end   = DMACH_I2S0_RX,
 		.flags = IORESOURCE_DMA,
 	},
-	[3] = {
-		.start = DMACH_I2S0S_TX,
-		.end = DMACH_I2S0S_TX,
-		.flags = IORESOURCE_DMA,
-	},
 };
 
 struct platform_device s5p6442_device_iis0 = {
-	.name = "samsung-i2s",
-	.id = 0,
+	.name		  = "s3c64xx-iis-v4",
+	.id		  = -1,
 	.num_resources	  = ARRAY_SIZE(s5p6442_iis0_resource),
 	.resource	  = s5p6442_iis0_resource,
 	.dev = {
-		.platform_data = &i2sv35_pdata,
-	},
-};
-
-static const char *rclksrc_v3[] = {
-	[0] = "iis",
-	[1] = "sclk_audio",
-};
-
-static struct s3c_audio_pdata i2sv3_pdata = {
-	.cfg_gpio = s5p6442_cfg_i2s,
-	.type = {
-		.i2s = {
-			.src_clk = rclksrc_v3,
-		},
+		.platform_data = &s3c_i2s_pdata,
 	},
 };
 
@@ -123,12 +98,12 @@ static struct resource s5p6442_iis1_resource[] = {
 };
 
 struct platform_device s5p6442_device_iis1 = {
-	.name		  = "samsung-i2s",
+	.name		  = "s3c64xx-iis",
 	.id		  = 1,
 	.num_resources	  = ARRAY_SIZE(s5p6442_iis1_resource),
 	.resource	  = s5p6442_iis1_resource,
 	.dev = {
-		.platform_data = &i2sv3_pdata,
+		.platform_data = &s3c_i2s_pdata,
 	},
 };
 
@@ -136,15 +111,21 @@ struct platform_device s5p6442_device_iis1 = {
 
 static int s5p6442_pcm_cfg_gpio(struct platform_device *pdev)
 {
-	unsigned int base;
-
 	switch (pdev->id) {
 	case 0:
-		base = S5P6442_GPC0(0);
+		s3c_gpio_cfgpin(S5P6442_GPC0(0), S3C_GPIO_SFN(3));
+		s3c_gpio_cfgpin(S5P6442_GPC0(1), S3C_GPIO_SFN(3));
+		s3c_gpio_cfgpin(S5P6442_GPC0(2), S3C_GPIO_SFN(3));
+		s3c_gpio_cfgpin(S5P6442_GPC0(3), S3C_GPIO_SFN(3));
+		s3c_gpio_cfgpin(S5P6442_GPC0(4), S3C_GPIO_SFN(3));
 		break;
 
 	case 1:
-		base = S5P6442_GPC1(0);
+		s3c_gpio_cfgpin(S5P6442_GPC1(0), S3C_GPIO_SFN(3));
+		s3c_gpio_cfgpin(S5P6442_GPC1(1), S3C_GPIO_SFN(3));
+		s3c_gpio_cfgpin(S5P6442_GPC1(2), S3C_GPIO_SFN(3));
+		s3c_gpio_cfgpin(S5P6442_GPC1(3), S3C_GPIO_SFN(3));
+		s3c_gpio_cfgpin(S5P6442_GPC1(4), S3C_GPIO_SFN(3));
 		break;
 
 	default:
@@ -152,7 +133,6 @@ static int s5p6442_pcm_cfg_gpio(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	s3c_gpio_cfgpin_range(base, 5, S3C_GPIO_SFN(3));
 	return 0;
 }
 

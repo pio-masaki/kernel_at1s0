@@ -47,11 +47,11 @@ void phy_print_status(struct phy_device *phydev)
 	pr_info("PHY: %s - Link is %s", dev_name(&phydev->dev),
 			phydev->link ? "Up" : "Down");
 	if (phydev->link)
-		printk(KERN_CONT " - %d/%s", phydev->speed,
+		printk(" - %d/%s", phydev->speed,
 				DUPLEX_FULL == phydev->duplex ?
 				"Full" : "Half");
 
-	printk(KERN_CONT "\n");
+	printk("\n");
 }
 EXPORT_SYMBOL(phy_print_status);
 
@@ -65,7 +65,7 @@ EXPORT_SYMBOL(phy_print_status);
  *
  * Returns 0 on success on < 0 on error.
  */
-static int phy_clear_interrupt(struct phy_device *phydev)
+int phy_clear_interrupt(struct phy_device *phydev)
 {
 	int err = 0;
 
@@ -82,7 +82,7 @@ static int phy_clear_interrupt(struct phy_device *phydev)
  *
  * Returns 0 on success on < 0 on error.
  */
-static int phy_config_interrupt(struct phy_device *phydev, u32 interrupts)
+int phy_config_interrupt(struct phy_device *phydev, u32 interrupts)
 {
 	int err = 0;
 
@@ -208,7 +208,7 @@ static inline int phy_find_valid(int idx, u32 features)
  *   duplexes.  Drop down by one in this order:  1000/FULL,
  *   1000/HALF, 100/FULL, 100/HALF, 10/FULL, 10/HALF.
  */
-static void phy_sanitize_settings(struct phy_device *phydev)
+void phy_sanitize_settings(struct phy_device *phydev)
 {
 	u32 features = phydev->supported;
 	int idx;
@@ -223,6 +223,7 @@ static void phy_sanitize_settings(struct phy_device *phydev)
 	phydev->speed = settings[idx].speed;
 	phydev->duplex = settings[idx].duplex;
 }
+EXPORT_SYMBOL(phy_sanitize_settings);
 
 /**
  * phy_ethtool_sset - generic ethtool sset function, handles all the details
@@ -319,8 +320,7 @@ int phy_mii_ioctl(struct phy_device *phydev,
 		/* fall through */
 
 	case SIOCGMIIREG:
-		mii_data->val_out = mdiobus_read(phydev->bus, mii_data->phy_id,
-						 mii_data->reg_num);
+		mii_data->val_out = phy_read(phydev, mii_data->reg_num);
 		break;
 
 	case SIOCSMIIREG:
@@ -351,9 +351,8 @@ int phy_mii_ioctl(struct phy_device *phydev,
 			}
 		}
 
-		mdiobus_write(phydev->bus, mii_data->phy_id,
-			      mii_data->reg_num, val);
-
+		phy_write(phydev, mii_data->reg_num, val);
+		
 		if (mii_data->reg_num == MII_BMCR &&
 		    val & BMCR_RESET &&
 		    phydev->drv->config_init) {
@@ -533,7 +532,7 @@ static irqreturn_t phy_interrupt(int irq, void *phy_dat)
  * phy_enable_interrupts - Enable the interrupts from the PHY side
  * @phydev: target phy_device struct
  */
-static int phy_enable_interrupts(struct phy_device *phydev)
+int phy_enable_interrupts(struct phy_device *phydev)
 {
 	int err;
 
@@ -546,12 +545,13 @@ static int phy_enable_interrupts(struct phy_device *phydev)
 
 	return err;
 }
+EXPORT_SYMBOL(phy_enable_interrupts);
 
 /**
  * phy_disable_interrupts - Disable the PHY interrupts from the PHY side
  * @phydev: target phy_device struct
  */
-static int phy_disable_interrupts(struct phy_device *phydev)
+int phy_disable_interrupts(struct phy_device *phydev)
 {
 	int err;
 
@@ -574,6 +574,7 @@ phy_err:
 
 	return err;
 }
+EXPORT_SYMBOL(phy_disable_interrupts);
 
 /**
  * phy_start_interrupts - request and enable interrupts for a PHY device

@@ -32,6 +32,8 @@
 
 #include <linux/uaccess.h>
 
+#include <mach/legacy_irq.h>
+
 struct tegra_fiq_debugger {
 	struct fiq_debugger_pdata pdata;
 	void __iomem *debug_port_base;
