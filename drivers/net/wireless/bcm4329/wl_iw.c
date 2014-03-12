@@ -107,12 +107,6 @@ static int wl_iw_set_ap_security(struct net_device *dev, struct ap_profile *ap);
 static int wl_iw_softap_deassoc_stations(struct net_device *dev, u8 *mac);
 #endif
 
-#define WL_IW_FRAMEBURST
-#ifdef WL_IW_FRAMEBURST
-static int iw_link_state_changed = 0;
-static int iw_link_state = 0;
-#endif
-
 #define WL_IW_IOCTL_CALL(func_call) \
 	do {				\
 		func_call;		\
@@ -321,21 +315,6 @@ static void swap_key_to_BE(
 	key->iv_initialized = dtoh32(key->iv_initialized);
 }
 
-static int is_set_command(int cmd)
-{
-	int ok=0;
-
-	switch (cmd) {
-		case WLC_SET_PM:
-			ok = 1;
-			break;
-		default:
-			ok = 0;
-	}
-
-	return ok;
-}
-
 static int
 dev_wlc_ioctl(
 	struct net_device *dev,
@@ -364,7 +343,6 @@ dev_wlc_ioctl(
 		ioc.cmd = cmd;
 		ioc.buf = arg;
 		ioc.len = len;
-		ioc.set = is_set_command(cmd);
 
 		strcpy(ifr.ifr_name, dev->name);
 		ifr.ifr_data = (caddr_t) &ioc;
@@ -1503,51 +1481,6 @@ exit_proc:
 }
 #endif
 
-#ifdef WL_IW_FRAMEBURST
-typedef enum wifi_link_mode {
-	WIFI_B_MODE = 1,
-	WIFI_G_MODE,
-	WIFI_N_MODE
-} wifi_link_mode_t;
-
-static int
-wl_iw_get_ch_info(struct net_device *dev, int *mode, int *channel)
-{
-	char bi_buf[256];
-	wl_bss_info_t *bi;
-	
-	*(uint32*)bi_buf = htod32(WLC_IOCTL_SMLEN);
-
-	dev_wlc_ioctl(dev, WLC_GET_BSS_INFO, bi_buf,256);
-
-	bi = (wl_bss_info_t*)(bi_buf + 4);
-
-	if (dtoh32(bi->version) != WL_BSS_INFO_VERSION) {
-		WL_ERROR(("can't get bi info!\n"));
-		return -1;
-	}
-
-	/* check the bss info */
-	/* get channel */
-	*channel = (bi->ctl_ch == 0) ? CHSPEC_CHANNEL(bi->chanspec) : bi->ctl_ch;
-	WL_TRACE(("get channel = %d\n", *channel));
-	
-	/* get mode b/g/n */
-	if (dtoh32(bi->rateset.count) <= 4) {
-		WL_TRACE(("b only mode\n"));
-		*mode = WIFI_B_MODE;
-	} else if (bi->ctl_ch) {
-		WL_TRACE(("n mode\n"));
-		*mode = WIFI_N_MODE;
-	} else {
-		WL_TRACE(("g mode\n"));
-		*mode = WIFI_G_MODE;
-	}
-
-	return 0;
-}
-#endif
-
 static int
 wl_iw_get_rssi(
 	struct net_device *dev,
@@ -1592,42 +1525,6 @@ wl_iw_get_rssi(
 	wrqu->data.length = p - extra + 1;
 
 	net_os_wake_unlock(dev);
-
-#ifdef WL_IW_FRAMEBURST
-
-	if (iw_link_state_changed && iw_link_state) 
-		{
-			int mode = 0;
-			int get_chan = 0;
-			int frameburst = 0;
-			/* link up, check channel */
-			if (wl_iw_get_ch_info(dev, &mode, &get_chan) != 0)
-				goto end;
-			if (mode == WIFI_N_MODE) 
-			{
-					/*Disable frameburst */
-					frameburst = 0;
-			}
-			else if(mode == WIFI_B_MODE)
-			{
-					/*Disable frameburst */
-					frameburst = 0;
-			}
-			else	//G mode
-			{
-				  /*enable frameburst */
-				  frameburst = 1;
-			}
-		
-		dev_wlc_ioctl(dev, WLC_SET_FAKEFRAG, &frameburst, sizeof(frameburst));	
-		}
-
-		
-	
-end:
-	iw_link_state_changed = 0;
-#endif
-
 	return error;
 }
 
@@ -1738,6 +1635,7 @@ wl_iw_control_wl_off(
 		sdioh_stop(NULL);
 		mdelay(10); //10ms
 #endif
+
 		dhd_dev_reset(dev, 1);
 
 #if defined(WL_IW_USE_ISCAN)
@@ -1754,7 +1652,6 @@ wl_iw_control_wl_off(
 		g_first_counter_scans = 0;
 #endif
 #endif
-
 
 		net_os_set_dtim_skip(dev, 0);
 
@@ -5977,7 +5874,7 @@ static int iwpriv_set_cscan(struct net_device *dev, struct iw_request_info *info
 	int nssid = 0;
 	int nchan = 0;
 
-	WL_TRACE(("\%s: info->cmd:%x, info->flags:%x, u.data=0x%p, u.len=%d\n",
+	WL_TRACE(("%s: info->cmd:%x, info->flags:%x, u.data=0x%p, u.len=%d\n",
 		__FUNCTION__, info->cmd, info->flags,
 		wrqu->data.pointer, wrqu->data.length));
 
@@ -7340,27 +7237,39 @@ static int wl_iw_set_priv(
 			ret = wl_iw_set_pno_enable(dev, info, (union iwreq_data *)dwrq, extra);
 #endif
 #if defined(CSCAN)
-	    else if (strnicmp(extra, CSCAN_COMMAND, strlen(CSCAN_COMMAND)) == 0)
+		else if (strnicmp(extra, CSCAN_COMMAND, strlen(CSCAN_COMMAND)) == 0)
 			ret = wl_iw_set_cscan(dev, info, (union iwreq_data *)dwrq, extra);
-#endif 
+#endif
 #ifdef CUSTOMER_HW2
 		else if (strnicmp(extra, "POWERMODE", strlen("POWERMODE")) == 0)
 			ret = wl_iw_set_power_mode(dev, info, (union iwreq_data *)dwrq, extra);
-	    else if (strnicmp(extra, "BTCOEXMODE", strlen("BTCOEXMODE")) == 0) {
+		else if (strnicmp(extra, "BTCOEXMODE", strlen("BTCOEXMODE")) == 0) {
 			WL_TRACE_COEX(("%s:got Framwrork cmd: 'BTCOEXMODE'\n", __FUNCTION__));
 			ret = wl_iw_set_btcoex_dhcp(dev, info, (union iwreq_data *)dwrq, extra);
-	    }
+		}
 #else
 		else if (strnicmp(extra, "POWERMODE", strlen("POWERMODE")) == 0)
 			ret = wl_iw_set_btcoex_dhcp(dev, info, (union iwreq_data *)dwrq, extra);
 #endif
 		else if (strnicmp(extra, "GETPOWER", strlen("GETPOWER")) == 0)
 			ret = wl_iw_get_power_mode(dev, info, (union iwreq_data *)dwrq, extra);
+		else if (strnicmp(extra, RXFILTER_START_CMD, strlen(RXFILTER_START_CMD)) == 0)
+			ret = net_os_set_packet_filter(dev, 1);
+		else if (strnicmp(extra, RXFILTER_STOP_CMD, strlen(RXFILTER_STOP_CMD)) == 0)
+			ret = net_os_set_packet_filter(dev, 0);
+		else if (strnicmp(extra, RXFILTER_ADD_CMD, strlen(RXFILTER_ADD_CMD)) == 0) {
+			int filter_num = *(extra + strlen(RXFILTER_ADD_CMD) + 1) - '0';
+			ret = net_os_rxfilter_add_remove(dev, TRUE, filter_num);
+		}
+		else if (strnicmp(extra, RXFILTER_REMOVE_CMD, strlen(RXFILTER_REMOVE_CMD)) == 0) {
+			int filter_num = *(extra + strlen(RXFILTER_REMOVE_CMD) + 1) - '0';
+			ret = net_os_rxfilter_add_remove(dev, FALSE, filter_num);
+		}
 #ifdef SOFTAP
 #ifdef SOFTAP_TLV_CFG
 		else if (strnicmp(extra, SOFTAP_SET_CMD, strlen(SOFTAP_SET_CMD)) == 0) {
 		    wl_iw_softap_cfg_tlv(dev, info, (union iwreq_data *)dwrq, extra);
-	    }
+		}
 #endif
 		else if (strnicmp(extra, "ASCII_CMD", strlen("ASCII_CMD")) == 0) {
 			wl_iw_process_private_ascii_cmd(dev, info, (union iwreq_data *)dwrq, extra);
@@ -7956,9 +7865,12 @@ wl_iw_event(struct net_device *dev, wl_event_msg_t *e, void* data)
 		break;
 	case WLC_E_ROAM:
 		if (status == WLC_E_STATUS_SUCCESS) {
-			memcpy(wrqu.addr.sa_data, &e->addr.octet, ETHER_ADDR_LEN);
-			wrqu.addr.sa_family = ARPHRD_ETHER;
-			cmd = SIOCGIWAP;
+			WL_ASSOC(("%s: WLC_E_ROAM: success\n", __FUNCTION__));
+#if defined(ROAM_NOT_USED)
+			roam_no_success_send = FALSE;
+			roam_no_success = 0;
+#endif
+			goto wl_iw_event_end;
 		}
 #if defined(ROAM_NOT_USED)
 		else if (status == WLC_E_STATUS_NO_NETWORKS) {
@@ -8014,10 +7926,6 @@ wl_iw_event(struct net_device *dev, wl_event_msg_t *e, void* data)
 
 			bzero(wrqu.addr.sa_data, ETHER_ADDR_LEN);
 			bzero(&extra, ETHER_ADDR_LEN);
-#ifdef WL_IW_FRAMEBURST
-			iw_link_state = 0;
-			iw_link_state_changed = 1;
-#endif
 		}
 		else {
 			memcpy(wrqu.addr.sa_data, &e->addr, ETHER_ADDR_LEN);
@@ -8035,10 +7943,6 @@ wl_iw_event(struct net_device *dev, wl_event_msg_t *e, void* data)
 				wl_iw_send_priv_event(priv_dev, "AP_UP");
 			} else {
 				WL_TRACE(("STA_LINK_UP\n"));
-#ifdef WL_IW_FRAMEBURST
-				iw_link_state_changed = 1;
-				iw_link_state = 1;
-#endif
 #if defined(ROAM_NOT_USED)
 				roam_no_success_send = FALSE;
 				roam_no_success = 0;
@@ -8170,7 +8074,6 @@ wl_iw_event(struct net_device *dev, wl_event_msg_t *e, void* data)
 #endif
 
 #if WIRELESS_EXT > 14
-	
 	memset(extra, 0, sizeof(extra));
 	if (wl_iw_check_conn_fail(e, extra, sizeof(extra))) {
 		cmd = IWEVCUSTOM;
