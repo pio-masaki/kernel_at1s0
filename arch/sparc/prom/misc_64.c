@@ -169,8 +169,7 @@ unsigned char prom_get_idprom(char *idbuf, int num_bytes)
 
 int prom_get_mmu_ihandle(void)
 {
-	phandle node;
-	int ret;
+	int node, ret;
 
 	if (prom_mmu_ihandle_cache != 0)
 		return prom_mmu_ihandle_cache;
@@ -188,8 +187,7 @@ int prom_get_mmu_ihandle(void)
 static int prom_get_memory_ihandle(void)
 {
 	static int memory_ihandle_cache;
-	phandle node;
-	int ret;
+	int node, ret;
 
 	if (memory_ihandle_cache != 0)
 		return memory_ihandle_cache;

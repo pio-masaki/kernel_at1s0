@@ -54,7 +54,6 @@
 #include <net/netfilter/nf_conntrack_expect.h>
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_nat_helper.h>
-#include <linux/netfilter/nf_conntrack_snmp.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("James Morris <jmorris@intercode.com.au>");
@@ -1311,9 +1310,9 @@ static int __init nf_nat_snmp_basic_init(void)
 {
 	int ret = 0;
 
-	BUG_ON(nf_nat_snmp_hook != NULL);
-	rcu_assign_pointer(nf_nat_snmp_hook, help);
-
+	ret = nf_conntrack_helper_register(&snmp_helper);
+	if (ret < 0)
+		return ret;
 	ret = nf_conntrack_helper_register(&snmp_trap_helper);
 	if (ret < 0) {
 		nf_conntrack_helper_unregister(&snmp_helper);
@@ -1324,7 +1323,7 @@ static int __init nf_nat_snmp_basic_init(void)
 
 static void __exit nf_nat_snmp_basic_fini(void)
 {
-	rcu_assign_pointer(nf_nat_snmp_hook, NULL);
+	nf_conntrack_helper_unregister(&snmp_helper);
 	nf_conntrack_helper_unregister(&snmp_trap_helper);
 }
 

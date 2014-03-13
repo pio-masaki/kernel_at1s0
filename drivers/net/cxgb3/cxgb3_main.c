@@ -1266,13 +1266,11 @@ static int cxgb_up(struct adapter *adap)
 	}
 
 	if (!(adap->flags & QUEUES_BOUND)) {
-		int ret = bind_qsets(adap);
-
-		if (ret < 0) {
-			CH_ERR(adap, "failed to bind qsets, err %d\n", ret);
+		err = bind_qsets(adap);
+		if (err) {
+			CH_ERR(adap, "failed to bind qsets, err %d\n", err);
 			t3_intr_disable(adap);
 			free_irq_resources(adap);
-			err = ret;
 			goto out;
 		}
 		adap->flags |= QUEUES_BOUND;
@@ -1288,7 +1286,7 @@ irq_err:
 /*
  * Release resources when all the ports and offloading have been stopped.
  */
-static void cxgb_down(struct adapter *adapter, int on_wq)
+static void cxgb_down(struct adapter *adapter)
 {
 	t3_sge_stop(adapter);
 	spin_lock_irq(&adapter->work_lock);	/* sync with PHY intr task */
@@ -1298,8 +1296,7 @@ static void cxgb_down(struct adapter *adapter, int on_wq)
 	free_irq_resources(adapter);
 	quiesce_rx(adapter);
 	t3_sge_stop(adapter);
-	if (!on_wq)
-		flush_workqueue(cxgb3_wq);/* wait for external IRQ handler */
+	flush_workqueue(cxgb3_wq);	/* wait for external IRQ handler */
 }
 
 static void schedule_chk_task(struct adapter *adap)
@@ -1359,7 +1356,6 @@ out:
 static int offload_close(struct t3cdev *tdev)
 {
 	struct adapter *adapter = tdev2adap(tdev);
-	struct t3c_data *td = T3C_DATA(tdev);
 
 	if (!test_bit(OFFLOAD_DEVMAP_BIT, &adapter->open_device_map))
 		return 0;
@@ -1370,7 +1366,7 @@ static int offload_close(struct t3cdev *tdev)
 	sysfs_remove_group(&tdev->lldev->dev.kobj, &offload_attr_group);
 
 	/* Flush work scheduled while releasing TIDs */
-	flush_work_sync(&td->tid_release_task);
+	flush_scheduled_work();
 
 	tdev->lldev = NULL;
 	cxgb3_set_dummy_ops(tdev);
@@ -1378,7 +1374,7 @@ static int offload_close(struct t3cdev *tdev)
 	clear_bit(OFFLOAD_DEVMAP_BIT, &adapter->open_device_map);
 
 	if (!adapter->open_device_map)
-		cxgb_down(adapter, 0);
+		cxgb_down(adapter);
 
 	cxgb3_offload_deactivate(adapter);
 	return 0;
@@ -1402,10 +1398,7 @@ static int cxgb_open(struct net_device *dev)
 			       "Could not initialize offload capabilities\n");
 	}
 
-	netif_set_real_num_tx_queues(dev, pi->nqsets);
-	err = netif_set_real_num_rx_queues(dev, pi->nqsets);
-	if (err)
-		return err;
+	dev->real_num_tx_queues = pi->nqsets;
 	link_start(dev);
 	t3_port_intr_enable(adapter, pi->port_id);
 	netif_tx_start_all_queues(dev);
@@ -1416,7 +1409,7 @@ static int cxgb_open(struct net_device *dev)
 	return 0;
 }
 
-static int __cxgb_close(struct net_device *dev, int on_wq)
+static int cxgb_close(struct net_device *dev)
 {
 	struct port_info *pi = netdev_priv(dev);
 	struct adapter *adapter = pi->adapter;
@@ -1443,15 +1436,10 @@ static int __cxgb_close(struct net_device *dev, int on_wq)
 		cancel_delayed_work_sync(&adapter->adap_check_task);
 
 	if (!adapter->open_device_map)
-		cxgb_down(adapter, on_wq);
+		cxgb_down(adapter);
 
 	cxgb3_event_notify(&adapter->tdev, OFFLOAD_PORT_DOWN, pi->port_id);
 	return 0;
-}
-
-static int cxgb_close(struct net_device *dev)
-{
-	return __cxgb_close(dev, 0);
 }
 
 static struct net_device_stats *cxgb_get_stats(struct net_device *dev)
@@ -1983,20 +1971,14 @@ static int set_coalesce(struct net_device *dev, struct ethtool_coalesce *c)
 {
 	struct port_info *pi = netdev_priv(dev);
 	struct adapter *adapter = pi->adapter;
-	struct qset_params *qsp;
-	struct sge_qset *qs;
-	int i;
+	struct qset_params *qsp = &adapter->params.sge.qset[0];
+	struct sge_qset *qs = &adapter->sge.qs[0];
 
 	if (c->rx_coalesce_usecs * 10 > M_NEWTIMER)
 		return -EINVAL;
 
-	for (i = 0; i < pi->nqsets; i++) {
-		qsp = &adapter->params.sge.qset[i];
-		qs = &adapter->sge.qs[i];
-		qsp->coalesce_usecs = c->rx_coalesce_usecs;
-		t3_update_qset_coalesce(qs, qsp);
-	}
-
+	qsp->coalesce_usecs = c->rx_coalesce_usecs;
+	t3_update_qset_coalesce(qs, qsp);
 	return 0;
 }
 
@@ -2882,7 +2864,7 @@ void t3_os_link_fault_handler(struct adapter *adapter, int port_id)
 	spin_unlock(&adapter->work_lock);
 }
 
-static int t3_adapter_error(struct adapter *adapter, int reset, int on_wq)
+static int t3_adapter_error(struct adapter *adapter, int reset)
 {
 	int i, ret = 0;
 
@@ -2897,7 +2879,7 @@ static int t3_adapter_error(struct adapter *adapter, int reset, int on_wq)
 		struct net_device *netdev = adapter->port[i];
 
 		if (netif_running(netdev))
-			__cxgb_close(netdev, on_wq);
+			cxgb_close(netdev);
 	}
 
 	/* Stop SGE timers */
@@ -2968,7 +2950,7 @@ static void fatal_error_task(struct work_struct *work)
 	int err = 0;
 
 	rtnl_lock();
-	err = t3_adapter_error(adapter, 1, 1);
+	err = t3_adapter_error(adapter, 1);
 	if (!err)
 		err = t3_reenable_adapter(adapter);
 	if (!err)
@@ -3013,11 +2995,12 @@ static pci_ers_result_t t3_io_error_detected(struct pci_dev *pdev,
 					     pci_channel_state_t state)
 {
 	struct adapter *adapter = pci_get_drvdata(pdev);
+	int ret;
 
 	if (state == pci_channel_io_perm_failure)
 		return PCI_ERS_RESULT_DISCONNECT;
 
-	t3_adapter_error(adapter, 0, 0);
+	ret = t3_adapter_error(adapter, 0);
 
 	/* Request a slot reset. */
 	return PCI_ERS_RESULT_NEED_RESET;
@@ -3307,6 +3290,7 @@ static int __devinit init_one(struct pci_dev *pdev,
 		pi->rx_offload = T3_RX_CSUM | T3_LRO;
 		pi->port_id = i;
 		netif_carrier_off(netdev);
+		netif_tx_stop_all_queues(netdev);
 		netdev->irq = pdev->irq;
 		netdev->mem_start = mmio_start;
 		netdev->mem_end = mmio_start + mmio_len - 1;

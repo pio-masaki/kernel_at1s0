@@ -345,7 +345,7 @@ static enum drm_connector_status
 	return connector_status_disconnected;
 }
 
-static const struct drm_display_mode vmw_ldu_connector_builtin[] = {
+static struct drm_display_mode vmw_ldu_connector_builtin[] = {
 	/* 640x480@60Hz */
 	{ DRM_MODE("640x480", DRM_MODE_TYPE_DRIVER, 25175, 640, 656,
 		   752, 800, 0, 480, 489, 492, 525, 0,
@@ -427,7 +427,6 @@ static int vmw_ldu_connector_fill_modes(struct drm_connector *connector,
 {
 	struct vmw_legacy_display_unit *ldu = vmw_connector_to_ldu(connector);
 	struct drm_device *dev = connector->dev;
-	struct vmw_private *dev_priv = vmw_priv(dev);
 	struct drm_display_mode *mode = NULL;
 	struct drm_display_mode prefmode = { DRM_MODE("preferred",
 		DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
@@ -444,32 +443,22 @@ static int vmw_ldu_connector_fill_modes(struct drm_connector *connector,
 		mode->hdisplay = ldu->pref_width;
 		mode->vdisplay = ldu->pref_height;
 		mode->vrefresh = drm_mode_vrefresh(mode);
-		if (vmw_kms_validate_mode_vram(dev_priv, mode->hdisplay * 2,
-					       mode->vdisplay)) {
-			drm_mode_probed_add(connector, mode);
+		drm_mode_probed_add(connector, mode);
 
-			if (ldu->pref_mode) {
-				list_del_init(&ldu->pref_mode->head);
-				drm_mode_destroy(dev, ldu->pref_mode);
-			}
-
-			ldu->pref_mode = mode;
+		if (ldu->pref_mode) {
+			list_del_init(&ldu->pref_mode->head);
+			drm_mode_destroy(dev, ldu->pref_mode);
 		}
+
+		ldu->pref_mode = mode;
 	}
 
 	for (i = 0; vmw_ldu_connector_builtin[i].type != 0; i++) {
-		const struct drm_display_mode *bmode;
-
-		bmode = &vmw_ldu_connector_builtin[i];
-		if (bmode->hdisplay > max_width ||
-		    bmode->vdisplay > max_height)
+		if (vmw_ldu_connector_builtin[i].hdisplay > max_width ||
+		    vmw_ldu_connector_builtin[i].vdisplay > max_height)
 			continue;
 
-		if (!vmw_kms_validate_mode_vram(dev_priv, bmode->hdisplay * 2,
-						bmode->vdisplay))
-			continue;
-
-		mode = drm_mode_duplicate(dev, bmode);
+		mode = drm_mode_duplicate(dev, &vmw_ldu_connector_builtin[i]);
 		if (!mode)
 			return 0;
 		mode->vrefresh = drm_mode_vrefresh(mode);
@@ -558,7 +547,7 @@ int vmw_kms_init_legacy_display_system(struct vmw_private *dev_priv)
 		return -EINVAL;
 	}
 
-	dev_priv->ldu_priv = kmalloc(sizeof(*dev_priv->ldu_priv), GFP_KERNEL);
+	dev_priv->ldu_priv = kmalloc(GFP_KERNEL, sizeof(*dev_priv->ldu_priv));
 
 	if (!dev_priv->ldu_priv)
 		return -ENOMEM;

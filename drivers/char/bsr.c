@@ -155,7 +155,6 @@ static const struct file_operations bsr_fops = {
 	.owner = THIS_MODULE,
 	.mmap  = bsr_mmap,
 	.open  = bsr_open,
-	.llseek = noop_llseek,
 };
 
 static void bsr_cleanup_devs(void)

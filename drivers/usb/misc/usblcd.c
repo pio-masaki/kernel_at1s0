@@ -282,7 +282,6 @@ static const struct file_operations lcd_fops = {
         .open =         lcd_open,
 	.unlocked_ioctl = lcd_ioctl,
         .release =      lcd_release,
-        .llseek =	 noop_llseek,
 };
 
 /*

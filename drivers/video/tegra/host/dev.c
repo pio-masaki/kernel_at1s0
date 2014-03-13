@@ -3,7 +3,7 @@
  *
  * Tegra Graphics Host Driver Entrypoint
  *
- * Copyright (c) 2010-2012, NVIDIA Corporation.
+ * Copyright (c) 2010, NVIDIA Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +21,6 @@
  */
 
 #include "dev.h"
-#include "bus_client.h"
 
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -32,103 +31,54 @@
 #include <linux/uaccess.h>
 #include <linux/file.h>
 #include <linux/clk.h>
-#include <linux/hrtimer.h>
-#define CREATE_TRACE_POINTS
-#include <trace/events/nvhost.h>
 
-#include <linux/io.h>
+#include <asm/io.h>
 
-#include <linux/nvhost.h>
-#include <linux/nvhost_ioctl.h>
+#include <mach/nvhost.h>
 #include <mach/nvmap.h>
-#include <mach/gpufuse.h>
-#include <mach/hardware.h>
-
-#include "debug.h"
-#include "nvhost_job.h"
-#include "t20/t20.h"
-#include "t30/t30.h"
 
 #define DRIVER_NAME "tegra_grhost"
 #define IFACE_NAME "nvhost"
-#define TRACE_MAX_LENGTH 128U
 
 static int nvhost_major = NVHOST_MAJOR;
-static int nvhost_minor;
-static unsigned int register_sets;
+static int nvhost_minor = NVHOST_CHANNEL_BASE;
 
 struct nvhost_channel_userctx {
 	struct nvhost_channel *ch;
 	struct nvhost_hwctx *hwctx;
 	struct nvhost_submit_hdr_ext hdr;
-	int num_relocshifts;
-	struct nvhost_job *job;
+	struct nvmap_handle_ref *gather_mem;
+	struct nvhost_op_pair *gathers;
+	int num_gathers;
+	int pinarray_size;
+	struct nvmap_pinarray_elem pinarray[NVHOST_MAX_HANDLES];
+	struct nvmap_handle *unpinarray[NVHOST_MAX_HANDLES];
 	struct nvmap_client *nvmap;
-	u32 timeout;
-	u32 priority;
-	int clientid;
+	struct nvhost_waitchk waitchks[NVHOST_MAX_WAIT_CHECKS];
+	u32 num_waitchks;
 };
 
 struct nvhost_ctrl_userctx {
 	struct nvhost_master *dev;
-	u32 *mod_locks;
+	u32 mod_locks[NV_HOST1X_NB_MLOCKS];
 };
-
-/*
- * Write cmdbuf to ftrace output. Checks if cmdbuf contents should be output
- * and mmaps the cmdbuf contents if required.
- */
-static void trace_write_cmdbufs(struct nvhost_job *job)
-{
-	struct nvmap_handle_ref handle;
-	void *mem = NULL;
-	int i = 0;
-
-	for (i = 0; i < job->num_gathers; i++) {
-		struct nvhost_channel_gather *gather = &job->gathers[i];
-		if (nvhost_debug_trace_cmdbuf) {
-			handle.handle = nvmap_id_to_handle(gather->mem_id);
-			mem = nvmap_mmap(&handle);
-			if (IS_ERR_OR_NULL(mem))
-				mem = NULL;
-		};
-
-		if (mem) {
-			u32 i;
-			/*
-			 * Write in batches of 128 as there seems to be a limit
-			 * of how much you can output to ftrace at once.
-			 */
-			for (i = 0; i < gather->words; i += TRACE_MAX_LENGTH) {
-				trace_nvhost_channel_write_cmdbuf_data(
-					job->ch->dev->name,
-					gather->mem_id,
-					min(gather->words - i,
-					    TRACE_MAX_LENGTH),
-					gather->offset + i * sizeof(u32),
-					mem);
-			}
-			nvmap_munmap(&handle, mem);
-		}
-	}
-}
 
 static int nvhost_channelrelease(struct inode *inode, struct file *filp)
 {
 	struct nvhost_channel_userctx *priv = filp->private_data;
 
-	trace_nvhost_channel_release(priv->ch->dev->name);
-
 	filp->private_data = NULL;
 
-	nvhost_module_remove_client(priv->ch->dev, priv);
 	nvhost_putchannel(priv->ch, priv->hwctx);
 
 	if (priv->hwctx)
 		priv->ch->ctxhandler.put(priv->hwctx);
 
-	if (priv->job)
-		nvhost_job_put(priv->job);
+	if (priv->gathers)
+		nvmap_munmap(priv->gather_mem, priv->gathers);
+
+	if (!IS_ERR_OR_NULL(priv->gather_mem))
+		nvmap_free(priv->ch->dev->nvmap, priv->gather_mem);
 
 	nvmap_client_put(priv->nvmap);
 	kfree(priv);
@@ -139,12 +89,12 @@ static int nvhost_channelopen(struct inode *inode, struct file *filp)
 {
 	struct nvhost_channel_userctx *priv;
 	struct nvhost_channel *ch;
+	size_t gather_size;
 
 	ch = container_of(inode->i_cdev, struct nvhost_channel, cdev);
 	ch = nvhost_getchannel(ch);
 	if (!ch)
 		return -ENOMEM;
-	trace_nvhost_channel_open(ch->dev->name);
 
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv) {
@@ -153,21 +103,19 @@ static int nvhost_channelopen(struct inode *inode, struct file *filp)
 	}
 	filp->private_data = priv;
 	priv->ch = ch;
-	nvhost_module_add_client(ch->dev, priv);
+	gather_size = sizeof(struct nvhost_op_pair) * NVHOST_MAX_GATHERS;
+	priv->gather_mem = nvmap_alloc(ch->dev->nvmap, gather_size, 32,
+				       NVMAP_HANDLE_CACHEABLE);
+	if (IS_ERR(priv->gather_mem))
+		goto fail;
 
 	if (ch->ctxhandler.alloc) {
 		priv->hwctx = ch->ctxhandler.alloc(ch);
 		if (!priv->hwctx)
 			goto fail;
 	}
-	priv->priority = NVHOST_PRIORITY_MEDIUM;
-	priv->clientid = atomic_add_return(1,
-			&nvhost_get_host(ch->dev)->clientid);
 
-	priv->job = nvhost_job_alloc(ch, priv->hwctx, &priv->hdr,
-			NULL, priv->priority, priv->clientid);
-	if (!priv->job)
-		goto fail;
+	priv->gathers = (struct nvhost_op_pair *)nvmap_mmap(priv->gather_mem);
 
 	return 0;
 fail:
@@ -175,39 +123,37 @@ fail:
 	return -ENOMEM;
 }
 
+static void add_gather(struct nvhost_channel_userctx *ctx, int idx,
+		       u32 mem_id, u32 words, u32 offset)
+{
+	struct nvmap_pinarray_elem *pin;
+	pin = &ctx->pinarray[ctx->pinarray_size++];
+	pin->patch_mem = (u32)nvmap_ref_to_handle(ctx->gather_mem);
+	pin->patch_offset = (idx * sizeof(struct nvhost_op_pair)) +
+		offsetof(struct nvhost_op_pair, op2);
+	pin->pin_mem = mem_id;
+	pin->pin_offset = offset;
+	ctx->gathers[idx].op1 = nvhost_opcode_gather(0, words);
+}
+
 static int set_submit(struct nvhost_channel_userctx *ctx)
 {
-	struct device *device = &ctx->ch->dev->dev;
+	int err = 0;
 
 	/* submit should have at least 1 cmdbuf */
 	if (!ctx->hdr.num_cmdbufs)
-		return -EIO;
-
-	if (!ctx->nvmap) {
-		dev_err(device, "no nvmap context set\n");
 		return -EFAULT;
-	}
 
-	ctx->job = nvhost_job_realloc(ctx->job,
-			&ctx->hdr,
-			ctx->nvmap,
-			ctx->priority,
-			ctx->clientid);
-	if (!ctx->job)
-		return -ENOMEM;
-	ctx->job->timeout = ctx->timeout;
-
-	if (ctx->hdr.submit_version >= NVHOST_SUBMIT_VERSION_V2)
-		ctx->num_relocshifts = ctx->hdr.num_relocs;
-
-	return 0;
+	/* leave room for ctx switch */
+	ctx->num_gathers = 2;
+	ctx->pinarray_size = 0;
+	return err;
 }
 
 static void reset_submit(struct nvhost_channel_userctx *ctx)
 {
 	ctx->hdr.num_cmdbufs = 0;
 	ctx->hdr.num_relocs = 0;
-	ctx->num_relocshifts = 0;
 	ctx->hdr.num_waitchks = 0;
 }
 
@@ -217,31 +163,22 @@ static ssize_t nvhost_channelwrite(struct file *filp, const char __user *buf,
 	struct nvhost_channel_userctx *priv = filp->private_data;
 	size_t remaining = count;
 	int err = 0;
-	struct nvhost_job *job = priv->job;
-	struct nvhost_submit_hdr_ext *hdr = &priv->hdr;
-	const char *chname = priv->ch->dev->name;
 
 	while (remaining) {
 		size_t consumed;
-		if (!hdr->num_relocs &&
-		    !priv->num_relocshifts &&
-		    !hdr->num_cmdbufs &&
-		    !hdr->num_waitchks) {
+		if (!priv->hdr.num_relocs && !priv->hdr.num_cmdbufs && !priv->hdr.num_waitchks) {
 			consumed = sizeof(struct nvhost_submit_hdr);
 			if (remaining < consumed)
 				break;
-			if (copy_from_user(hdr, buf, consumed)) {
+			if (copy_from_user(&priv->hdr, buf, consumed)) {
 				err = -EFAULT;
 				break;
 			}
-			hdr->submit_version = NVHOST_SUBMIT_VERSION_V0;
+			BUG_ON(priv->hdr.submit_version != NVHOST_SUBMIT_VERSION_V0);
 			err = set_submit(priv);
 			if (err)
 				break;
-			trace_nvhost_channel_write_submit(chname,
-			  count, hdr->num_cmdbufs, hdr->num_relocs,
-			  hdr->syncpt_id, hdr->syncpt_incrs);
-		} else if (hdr->num_cmdbufs) {
+		} else if (priv->hdr.num_cmdbufs) {
 			struct nvhost_cmdbuf cmdbuf;
 			consumed = sizeof(cmdbuf);
 			if (remaining < consumed)
@@ -250,54 +187,34 @@ static ssize_t nvhost_channelwrite(struct file *filp, const char __user *buf,
 				err = -EFAULT;
 				break;
 			}
-			trace_nvhost_channel_write_cmdbuf(chname,
-				cmdbuf.mem, cmdbuf.words, cmdbuf.offset);
-			nvhost_job_add_gather(job,
-				cmdbuf.mem, cmdbuf.words, cmdbuf.offset);
-			hdr->num_cmdbufs--;
-		} else if (hdr->num_relocs) {
-			consumed = sizeof(struct nvhost_reloc);
+			add_gather(priv, priv->num_gathers++,
+				   cmdbuf.mem, cmdbuf.words, cmdbuf.offset);
+			priv->hdr.num_cmdbufs--;
+		} else if (priv->hdr.num_relocs) {
+			int numrelocs = remaining / sizeof(struct nvhost_reloc);
+			if (!numrelocs)
+				break;
+			numrelocs = min_t(int, numrelocs, priv->hdr.num_relocs);
+			consumed = numrelocs * sizeof(struct nvhost_reloc);
+			if (copy_from_user(&priv->pinarray[priv->pinarray_size],
+						buf, consumed)) {
+				err = -EFAULT;
+				break;
+			}
+			priv->pinarray_size += numrelocs;
+			priv->hdr.num_relocs -= numrelocs;
+		} else if (priv->hdr.num_waitchks) {
+			struct nvhost_waitchk *waitp;
+			consumed = sizeof(struct nvhost_waitchk);
 			if (remaining < consumed)
 				break;
-			if (copy_from_user(&job->pinarray[job->num_pins],
-					buf, consumed)) {
+			waitp = &priv->waitchks[priv->num_waitchks];
+			if (copy_from_user(waitp, buf, consumed)) {
 				err = -EFAULT;
 				break;
 			}
-			trace_nvhost_channel_write_reloc(chname);
-			job->num_pins++;
-			hdr->num_relocs--;
-		} else if (hdr->num_waitchks) {
-			int numwaitchks =
-				(remaining / sizeof(struct nvhost_waitchk));
-			if (!numwaitchks)
-				break;
-			numwaitchks = min_t(int,
-				numwaitchks, hdr->num_waitchks);
-			consumed = numwaitchks * sizeof(struct nvhost_waitchk);
-			if (copy_from_user(&job->waitchk[job->num_waitchk],
-					buf, consumed)) {
-				err = -EFAULT;
-				break;
-			}
-			trace_nvhost_channel_write_waitchks(
-			  chname, numwaitchks,
-			  hdr->waitchk_mask);
-			job->num_waitchk += numwaitchks;
-			hdr->num_waitchks -= numwaitchks;
-		} else if (priv->num_relocshifts) {
-			int next_shift =
-				job->num_pins - priv->num_relocshifts;
-			consumed = sizeof(struct nvhost_reloc_shift);
-			if (remaining < consumed)
-				break;
-			if (copy_from_user(
-					&job->pinarray[next_shift].reloc_shift,
-					buf, consumed)) {
-				err = -EFAULT;
-				break;
-			}
-			priv->num_relocshifts--;
+			priv->num_waitchks++;
+			priv->hdr.num_waitchks--;
 		} else {
 			err = -EFAULT;
 			break;
@@ -307,66 +224,135 @@ static ssize_t nvhost_channelwrite(struct file *filp, const char __user *buf,
 	}
 
 	if (err < 0) {
-		dev_err(&priv->ch->dev->dev, "channel write error\n");
+		dev_err(&priv->ch->dev->pdev->dev, "channel write error\n");
 		reset_submit(priv);
 		return err;
 	}
 
-	return count - remaining;
+	return (count - remaining);
 }
 
-static int nvhost_ioctl_channel_flush(
-	struct nvhost_channel_userctx *ctx,
-	struct nvhost_get_param_args *args,
-	int null_kickoff)
+static int nvhost_ioctl_channel_flush(struct nvhost_channel_userctx *ctx,
+                                      struct nvhost_get_param_args *args,
+                                      int null_kickoff)
 {
-	struct device *device = &ctx->ch->dev->dev;
+	struct nvhost_cpuinterrupt ctxsw;
+	int gather_idx = 2;
+	int num_intrs = 0;
+	u32 syncval;
+	int num_unpin;
 	int err;
+	int nulled_incrs = null_kickoff ? ctx->hdr.syncpt_incrs : 0;
 
-	trace_nvhost_ioctl_channel_flush(ctx->ch->dev->name);
-
-	if (!ctx->job ||
-	    ctx->hdr.num_relocs ||
-	    ctx->hdr.num_cmdbufs ||
-	    ctx->hdr.num_waitchks) {
+	if (ctx->hdr.num_relocs || ctx->hdr.num_cmdbufs || ctx->hdr.num_waitchks) {
 		reset_submit(ctx);
-		dev_err(device, "channel submit out of sync\n");
+		dev_err(&ctx->ch->dev->pdev->dev, "channel submit out of sync\n");
 		return -EFAULT;
 	}
+	if (!ctx->nvmap) {
+		dev_err(&ctx->ch->dev->pdev->dev, "no nvmap context set\n");
+		return -EFAULT;
+	}
+	if (ctx->num_gathers <= 2)
+		return 0;
 
-	err = nvhost_job_pin(ctx->job);
+	/* keep module powered */
+	nvhost_module_busy(&ctx->ch->mod);
+
+	/* pin mem handles and patch physical addresses */
+	num_unpin = nvmap_pin_array(ctx->nvmap,
+				    nvmap_ref_to_handle(ctx->gather_mem),
+				    ctx->pinarray, ctx->pinarray_size,
+				    ctx->unpinarray);
+	if (num_unpin < 0) {
+		dev_warn(&ctx->ch->dev->pdev->dev, "nvmap_pin_array failed: "
+			 "%d\n", num_unpin);
+		nvhost_module_idle(&ctx->ch->mod);
+		return num_unpin;
+	}
+
+	/* get submit lock */
+	err = mutex_lock_interruptible(&ctx->ch->submitlock);
 	if (err) {
-		dev_warn(device, "nvhost_job_pin failed: %d\n", err);
+		nvmap_unpin_handles(ctx->nvmap, ctx->unpinarray, num_unpin);
+		nvhost_module_idle(&ctx->ch->mod);
 		return err;
 	}
 
-	if (nvhost_debug_null_kickoff_pid == current->tgid)
-		null_kickoff = 1;
-	ctx->job->null_kickoff = null_kickoff;
-
-	if ((nvhost_debug_force_timeout_pid == current->tgid) &&
-	    (nvhost_debug_force_timeout_channel == ctx->ch->chid)) {
-		ctx->timeout = nvhost_debug_force_timeout_val;
+	/* remove stale waits */
+	if (ctx->num_waitchks) {
+		err = nvhost_syncpt_wait_check(ctx->nvmap,
+				&ctx->ch->dev->syncpt, ctx->hdr.waitchk_mask,
+				ctx->waitchks, ctx->num_waitchks);
+		if (err) {
+			dev_warn(&ctx->ch->dev->pdev->dev,
+				"nvhost_syncpt_wait_check failed: %d\n", err);
+			mutex_unlock(&ctx->ch->submitlock);
+			nvmap_unpin_handles(ctx->nvmap, ctx->unpinarray, num_unpin);
+			nvhost_module_idle(&ctx->ch->mod);
+			return err;
+		}
+		ctx->num_waitchks = 0;
 	}
 
-	trace_write_cmdbufs(ctx->job);
+	/* context switch */
+	if (ctx->ch->cur_ctx != ctx->hwctx) {
+		struct nvhost_hwctx *hw = ctx->hwctx;
+		if (hw && hw->valid) {
+			gather_idx--;
+			ctx->gathers[gather_idx].op1 =
+				nvhost_opcode_gather(0, hw->restore_size);
+			ctx->gathers[gather_idx].op2 = hw->restore_phys;
+			ctx->hdr.syncpt_incrs += hw->restore_incrs;
+		}
+		hw = ctx->ch->cur_ctx;
+		if (hw) {
+			gather_idx--;
+			ctx->gathers[gather_idx].op1 =
+				nvhost_opcode_gather(0, hw->save_size);
+			ctx->gathers[gather_idx].op2 = hw->save_phys;
+			ctx->hdr.syncpt_incrs += hw->save_incrs;
+			num_intrs = 1;
+			ctxsw.syncpt_val = hw->save_incrs - 1;
+			ctxsw.intr_data = hw;
+			hw->valid = true;
+			ctx->ch->ctxhandler.get(hw);
+		}
+		ctx->ch->cur_ctx = ctx->hwctx;
+	}
 
-	/* context switch if needed, and submit user's gathers to the channel */
-	err = nvhost_channel_submit(ctx->job);
-	args->value = ctx->job->syncpt_end;
-	if (err)
-		nvhost_job_unpin(ctx->job);
+	/* add a setclass for modules that require it */
+	if (gather_idx == 2 && ctx->ch->desc->class) {
+		gather_idx--;
+		ctx->gathers[gather_idx].op1 =
+			nvhost_opcode_setclass(ctx->ch->desc->class, 0, 0);
+		ctx->gathers[gather_idx].op2 = NVHOST_OPCODE_NOOP;
+	}
 
-	return err;
-}
+	/* get absolute sync value */
+	if (BIT(ctx->hdr.syncpt_id) & NVSYNCPTS_CLIENT_MANAGED)
+		syncval = nvhost_syncpt_set_max(&ctx->ch->dev->syncpt,
+						ctx->hdr.syncpt_id, ctx->hdr.syncpt_incrs);
+	else
+		syncval = nvhost_syncpt_incr_max(&ctx->ch->dev->syncpt,
+						ctx->hdr.syncpt_id, ctx->hdr.syncpt_incrs);
 
-static int nvhost_ioctl_channel_read_3d_reg(
-	struct nvhost_channel_userctx *ctx,
-	struct nvhost_read_3d_reg_args *args)
-{
-	BUG_ON(!channel_op(ctx->ch).read3dreg);
-	return channel_op(ctx->ch).read3dreg(ctx->ch, ctx->hwctx,
-			args->offset, &args->value);
+	/* patch absolute syncpt value into interrupt triggers */
+	ctxsw.syncpt_val += syncval - ctx->hdr.syncpt_incrs;
+
+	nvhost_channel_submit(ctx->ch, ctx->nvmap, &ctx->gathers[gather_idx],
+			      (null_kickoff ? 2 : ctx->num_gathers) - gather_idx, &ctxsw, num_intrs,
+			      ctx->unpinarray, num_unpin,
+			      ctx->hdr.syncpt_id, syncval,
+			      nulled_incrs);
+
+	/* schedule a submit complete interrupt */
+	nvhost_intr_add_action(&ctx->ch->dev->intr, ctx->hdr.syncpt_id, syncval,
+			NVHOST_INTR_ACTION_SUBMIT_COMPLETE, ctx->ch, NULL);
+
+	mutex_unlock(&ctx->ch->submitlock);
+	args->value = syncval;
+	return 0;
 }
 
 static long nvhost_channelctl(struct file *filp,
@@ -397,50 +383,37 @@ static long nvhost_channelctl(struct file *filp,
 		break;
 	case NVHOST_IOCTL_CHANNEL_SUBMIT_EXT:
 	{
-		struct nvhost_submit_hdr_ext *hdr;
+		struct nvhost_submit_hdr_ext *hdr = (struct nvhost_submit_hdr_ext *)buf;
 
-		if (priv->hdr.num_relocs ||
-		    priv->num_relocshifts ||
-		    priv->hdr.num_cmdbufs ||
-		    priv->hdr.num_waitchks) {
+		if (priv->hdr.num_relocs || priv->hdr.num_cmdbufs || priv->hdr.num_waitchks) {
 			reset_submit(priv);
-			dev_err(&priv->ch->dev->dev,
-				"channel submit out of sync\n");
-			err = -EIO;
+			dev_err(&priv->ch->dev->pdev->dev, "channel submit out of sync\n");
+			err = -EFAULT;
 			break;
 		}
-
-		hdr = (struct nvhost_submit_hdr_ext *)buf;
 		if (hdr->submit_version > NVHOST_SUBMIT_VERSION_MAX_SUPPORTED) {
-			dev_err(&priv->ch->dev->dev,
-				"submit version %d > max supported %d\n",
-				hdr->submit_version,
-				NVHOST_SUBMIT_VERSION_MAX_SUPPORTED);
+			dev_err(&priv->ch->dev->pdev->dev, "submit version %d > max supported %d\n",
+				hdr->submit_version, NVHOST_SUBMIT_VERSION_MAX_SUPPORTED);
 			err = -EINVAL;
 			break;
 		}
 		memcpy(&priv->hdr, hdr, sizeof(struct nvhost_submit_hdr_ext));
 		err = set_submit(priv);
-		trace_nvhost_ioctl_channel_submit(priv->ch->dev->name,
-			priv->hdr.submit_version,
-			priv->hdr.num_cmdbufs, priv->hdr.num_relocs,
-			priv->hdr.num_waitchks,
-			priv->hdr.syncpt_id, priv->hdr.syncpt_incrs);
 		break;
 	}
 	case NVHOST_IOCTL_CHANNEL_GET_SYNCPOINTS:
 		/* host syncpt ID is used by the RM (and never be given out) */
-		BUG_ON(priv->ch->dev->syncpts & (1 << NVSYNCPT_GRAPHICS_HOST));
+		BUG_ON(priv->ch->desc->syncpts & (1 << NVSYNCPT_GRAPHICS_HOST));
 		((struct nvhost_get_param_args *)buf)->value =
-			priv->ch->dev->syncpts;
+			priv->ch->desc->syncpts;
 		break;
 	case NVHOST_IOCTL_CHANNEL_GET_WAITBASES:
 		((struct nvhost_get_param_args *)buf)->value =
-			priv->ch->dev->waitbases;
+			priv->ch->desc->waitbases;
 		break;
 	case NVHOST_IOCTL_CHANNEL_GET_MODMUTEXES:
 		((struct nvhost_get_param_args *)buf)->value =
-			priv->ch->dev->modulemutexes;
+			priv->ch->desc->modulemutexes;
 		break;
 	case NVHOST_IOCTL_CHANNEL_SET_NVMAP_FD:
 	{
@@ -458,44 +431,6 @@ static long nvhost_channelctl(struct file *filp,
 		priv->nvmap = new_client;
 		break;
 	}
-	case NVHOST_IOCTL_CHANNEL_READ_3D_REG:
-		err = nvhost_ioctl_channel_read_3d_reg(priv, (void *)buf);
-		break;
-	case NVHOST_IOCTL_CHANNEL_GET_CLK_RATE:
-	{
-		unsigned long rate;
-		struct nvhost_clk_rate_args *arg =
-				(struct nvhost_clk_rate_args *)buf;
-
-		err = nvhost_module_get_rate(priv->ch->dev, &rate, 0);
-		if (err == 0)
-			arg->rate = rate;
-		break;
-	}
-	case NVHOST_IOCTL_CHANNEL_SET_CLK_RATE:
-	{
-		struct nvhost_clk_rate_args *arg =
-				(struct nvhost_clk_rate_args *)buf;
-		unsigned long rate = (unsigned long)arg->rate;
-
-		err = nvhost_module_set_rate(priv->ch->dev, priv, rate, 0);
-		break;
-	}
-	case NVHOST_IOCTL_CHANNEL_SET_TIMEOUT:
-		priv->timeout =
-			(u32)((struct nvhost_set_timeout_args *)buf)->timeout;
-		dev_dbg(&priv->ch->dev->dev,
-			"%s: setting buffer timeout (%d ms) for userctx 0x%p\n",
-			__func__, priv->timeout, priv);
-		break;
-	case NVHOST_IOCTL_CHANNEL_GET_TIMEDOUT:
-		((struct nvhost_get_param_args *)buf)->value =
-				priv->hwctx->has_timedout;
-		break;
-	case NVHOST_IOCTL_CHANNEL_SET_PRIORITY:
-		priv->priority =
-			(u32)((struct nvhost_set_priority_args *)buf)->priority;
-		break;
 	default:
 		err = -ENOTTY;
 		break;
@@ -507,7 +442,7 @@ static long nvhost_channelctl(struct file *filp,
 	return err;
 }
 
-static const struct file_operations nvhost_channelops = {
+static struct file_operations nvhost_channelops = {
 	.owner = THIS_MODULE,
 	.release = nvhost_channelrelease,
 	.open = nvhost_channelopen,
@@ -520,15 +455,12 @@ static int nvhost_ctrlrelease(struct inode *inode, struct file *filp)
 	struct nvhost_ctrl_userctx *priv = filp->private_data;
 	int i;
 
-	trace_nvhost_ctrlrelease(priv->dev->dev->name);
-
 	filp->private_data = NULL;
 	if (priv->mod_locks[0])
-		nvhost_module_idle(priv->dev->dev);
-	for (i = 1; i < priv->dev->syncpt.nb_mlocks; i++)
+		nvhost_module_idle(&priv->dev->mod);
+	for (i = 1; i < NV_HOST1X_NB_MLOCKS; i++)
 		if (priv->mod_locks[i])
-			nvhost_mutex_unlock(&priv->dev->syncpt, i);
-	kfree(priv->mod_locks);
+			nvhost_mutex_unlock(&priv->dev->cpuaccess, i);
 	kfree(priv);
 	return 0;
 }
@@ -537,21 +469,12 @@ static int nvhost_ctrlopen(struct inode *inode, struct file *filp)
 {
 	struct nvhost_master *host = container_of(inode->i_cdev, struct nvhost_master, cdev);
 	struct nvhost_ctrl_userctx *priv;
-	u32 *mod_locks;
-
-	trace_nvhost_ctrlopen(host->dev->name);
 
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
-	mod_locks = kzalloc(sizeof(u32) * host->syncpt.nb_mlocks, GFP_KERNEL);
-
-	if (!(priv && mod_locks)) {
-		kfree(priv);
-		kfree(mod_locks);
+	if (!priv)
 		return -ENOMEM;
-	}
 
 	priv->dev = host;
-	priv->mod_locks = mod_locks;
 	filp->private_data = priv;
 	return 0;
 }
@@ -560,9 +483,8 @@ static int nvhost_ioctl_ctrl_syncpt_read(
 	struct nvhost_ctrl_userctx *ctx,
 	struct nvhost_ctrl_syncpt_read_args *args)
 {
-	if (args->id >= ctx->dev->syncpt.nb_pts)
+	if (args->id >= NV_HOST1X_SYNCPT_NB_PTS)
 		return -EINVAL;
-	trace_nvhost_ioctl_ctrl_syncpt_read(args->id);
 	args->value = nvhost_syncpt_read(&ctx->dev->syncpt, args->id);
 	return 0;
 }
@@ -571,9 +493,8 @@ static int nvhost_ioctl_ctrl_syncpt_incr(
 	struct nvhost_ctrl_userctx *ctx,
 	struct nvhost_ctrl_syncpt_incr_args *args)
 {
-	if (args->id >= ctx->dev->syncpt.nb_pts)
+	if (args->id >= NV_HOST1X_SYNCPT_NB_PTS)
 		return -EINVAL;
-	trace_nvhost_ioctl_ctrl_syncpt_incr(args->id);
 	nvhost_syncpt_incr(&ctx->dev->syncpt, args->id);
 	return 0;
 }
@@ -583,15 +504,13 @@ static int nvhost_ioctl_ctrl_syncpt_waitex(
 	struct nvhost_ctrl_syncpt_waitex_args *args)
 {
 	u32 timeout;
-	if (args->id >= ctx->dev->syncpt.nb_pts)
+	if (args->id >= NV_HOST1X_SYNCPT_NB_PTS)
 		return -EINVAL;
 	if (args->timeout == NVHOST_NO_TIMEOUT)
 		timeout = MAX_SCHEDULE_TIMEOUT;
 	else
 		timeout = (u32)msecs_to_jiffies(args->timeout);
 
-	trace_nvhost_ioctl_ctrl_syncpt_wait(args->id, args->thresh,
-	  args->timeout);
 	return nvhost_syncpt_wait_timeout(&ctx->dev->syncpt, args->id,
 					args->thresh, timeout, &args->value);
 }
@@ -601,40 +520,26 @@ static int nvhost_ioctl_ctrl_module_mutex(
 	struct nvhost_ctrl_module_mutex_args *args)
 {
 	int err = 0;
-	if (args->id >= ctx->dev->syncpt.nb_mlocks ||
+	if (args->id >= NV_HOST1X_NB_MLOCKS ||
 	    args->lock > 1)
 		return -EINVAL;
 
-	trace_nvhost_ioctl_ctrl_module_mutex(args->lock, args->id);
 	if (args->lock && !ctx->mod_locks[args->id]) {
 		if (args->id == 0)
-			nvhost_module_busy(ctx->dev->dev);
+			nvhost_module_busy(&ctx->dev->mod);
 		else
-			err = nvhost_mutex_try_lock(&ctx->dev->syncpt,
-					args->id);
+			err = nvhost_mutex_try_lock(&ctx->dev->cpuaccess, args->id);
 		if (!err)
 			ctx->mod_locks[args->id] = 1;
-	} else if (!args->lock && ctx->mod_locks[args->id]) {
+	}
+	else if (!args->lock && ctx->mod_locks[args->id]) {
 		if (args->id == 0)
-			nvhost_module_idle(ctx->dev->dev);
+			nvhost_module_idle(&ctx->dev->mod);
 		else
-			nvhost_mutex_unlock(&ctx->dev->syncpt, args->id);
+			nvhost_mutex_unlock(&ctx->dev->cpuaccess, args->id);
 		ctx->mod_locks[args->id] = 0;
 	}
 	return err;
-}
-
-static struct nvhost_device *get_ndev_by_moduleid(struct nvhost_master *host,
-		u32 id)
-{
-	int i;
-
-	for (i = 0; i < host->nb_channels; i++) {
-		struct nvhost_device *ndev = host->channels[i].dev;
-		if (id == ndev->moduleid)
-			return ndev;
-	}
-	return NULL;
 }
 
 static int nvhost_ioctl_ctrl_module_regrdwr(
@@ -643,40 +548,30 @@ static int nvhost_ioctl_ctrl_module_regrdwr(
 {
 	u32 num_offsets = args->num_offsets;
 	u32 *offsets = args->offsets;
-	u32 *values = args->values;
+	void *values = args->values;
 	u32 vals[64];
-	struct nvhost_device *ndev;
 
-	trace_nvhost_ioctl_ctrl_module_regrdwr(args->id,
-			args->num_offsets, args->write);
-	/* Check that there is something to read and that block size is
-	 * u32 aligned */
-	if (num_offsets == 0 || args->block_size & 3)
-		return -EINVAL;
-
-	ndev = get_ndev_by_moduleid(ctx->dev, args->id);
-	if (!ndev)
+	if (!nvhost_access_module_regs(&ctx->dev->cpuaccess, args->id) ||
+	    (num_offsets == 0))
 		return -EINVAL;
 
 	while (num_offsets--) {
-		int remaining = args->block_size >> 2;
+		u32 remaining = args->block_size;
 		u32 offs;
 		if (get_user(offs, offsets))
 			return -EFAULT;
 		offsets++;
 		while (remaining) {
-			int batch = min(remaining, 64);
+			u32 batch = min(remaining, 64*sizeof(u32));
 			if (args->write) {
-				if (copy_from_user(vals, values,
-							batch*sizeof(u32)))
+				if (copy_from_user(vals, values, batch))
 					return -EFAULT;
-				nvhost_write_module_regs(ndev,
-						offs, batch, vals);
+				nvhost_write_module_regs(&ctx->dev->cpuaccess,
+							args->id, offs, batch, vals);
 			} else {
-				nvhost_read_module_regs(ndev,
-						offs, batch, vals);
-				if (copy_to_user(values, vals,
-							batch*sizeof(u32)))
+				nvhost_read_module_regs(&ctx->dev->cpuaccess,
+							args->id, offs, batch, vals);
+				if (copy_to_user(values, vals, batch))
 					return -EFAULT;
 			}
 			remaining -= batch;
@@ -685,14 +580,6 @@ static int nvhost_ioctl_ctrl_module_regrdwr(
 		}
 	}
 
-	return 0;
-}
-
-static int nvhost_ioctl_ctrl_get_version(
-	struct nvhost_ctrl_userctx *ctx,
-	struct nvhost_get_param_args *args)
-{
-	args->value = NVHOST_SUBMIT_VERSION_MAX_SUPPORTED;
 	return 0;
 }
 
@@ -734,9 +621,6 @@ static long nvhost_ctrlctl(struct file *filp,
 	case NVHOST_IOCTL_CTRL_SYNCPT_WAITEX:
 		err = nvhost_ioctl_ctrl_syncpt_waitex(priv, (void *)buf);
 		break;
-	case NVHOST_IOCTL_CTRL_GET_VERSION:
-		err = nvhost_ioctl_ctrl_get_version(priv, (void *)buf);
-		break;
 	default:
 		err = -ENOTTY;
 		break;
@@ -748,26 +632,26 @@ static long nvhost_ctrlctl(struct file *filp,
 	return err;
 }
 
-static const struct file_operations nvhost_ctrlops = {
+static struct file_operations nvhost_ctrlops = {
 	.owner = THIS_MODULE,
 	.release = nvhost_ctrlrelease,
 	.open = nvhost_ctrlopen,
 	.unlocked_ioctl = nvhost_ctrlctl
 };
 
-static void power_on_host(struct nvhost_device *dev)
+static void power_host(struct nvhost_module *mod, enum nvhost_power_action action)
 {
-	struct nvhost_master *host = nvhost_get_drvdata(dev);
-	nvhost_syncpt_reset(&host->syncpt);
-	nvhost_intr_start(&host->intr, clk_get_rate(dev->clk[0]));
-}
+	struct nvhost_master *dev = container_of(mod, struct nvhost_master, mod);
 
-static int power_off_host(struct nvhost_device *dev)
-{
-	struct nvhost_master *host = nvhost_get_drvdata(dev);
-	nvhost_syncpt_save(&host->syncpt);
-	nvhost_intr_stop(&host->intr);
-	return 0;
+	if (action == NVHOST_POWER_ACTION_ON) {
+		nvhost_intr_configure(&dev->intr, clk_get_rate(mod->clk[0]));
+	}
+	else if (action == NVHOST_POWER_ACTION_OFF) {
+		int i;
+		for (i = 0; i < NVHOST_NUMCHANNELS; i++)
+			nvhost_channel_suspend(&dev->channels[i]);
+		nvhost_syncpt_save(&dev->syncpt);
+	}
 }
 
 static int __devinit nvhost_user_init(struct nvhost_master *host)
@@ -781,15 +665,20 @@ static int __devinit nvhost_user_init(struct nvhost_master *host)
 		goto fail;
 	}
 
-	err = alloc_chrdev_region(&devno, nvhost_minor,
-				host->nb_channels + 1, IFACE_NAME);
-	nvhost_major = MAJOR(devno);
+	if (nvhost_major) {
+		devno = MKDEV(nvhost_major, nvhost_minor);
+		err = register_chrdev_region(devno, NVHOST_NUMCHANNELS + 1, IFACE_NAME);
+	} else {
+		err = alloc_chrdev_region(&devno, nvhost_minor,
+					NVHOST_NUMCHANNELS + 1, IFACE_NAME);
+		nvhost_major = MAJOR(devno);
+	}
 	if (err < 0) {
 		dev_err(&host->pdev->dev, "failed to reserve chrdev region\n");
 		goto fail;
 	}
 
-	for (i = 0; i < host->nb_channels; i++) {
+	for (i = 0; i < NVHOST_NUMCHANNELS; i++) {
 		struct nvhost_channel *ch = &host->channels[i];
 
 		cdev_init(&ch->cdev, &nvhost_channelops);
@@ -802,7 +691,7 @@ static int __devinit nvhost_user_init(struct nvhost_master *host)
 			goto fail;
 		}
 		ch->node = device_create(host->nvhost_class, NULL, devno, NULL,
-				IFACE_NAME "-%s", ch->dev->name);
+				IFACE_NAME "-%s", ch->desc->name);
 		if (IS_ERR(ch->node)) {
 			err = PTR_ERR(ch->node);
 			dev_err(&host->pdev->dev, "failed to create chan %i device\n", i);
@@ -812,7 +701,7 @@ static int __devinit nvhost_user_init(struct nvhost_master *host)
 
 	cdev_init(&host->cdev, &nvhost_ctrlops);
 	host->cdev.owner = THIS_MODULE;
-	devno = MKDEV(nvhost_major, nvhost_minor + host->nb_channels);
+	devno = MKDEV(nvhost_major, nvhost_minor + NVHOST_NUMCHANNELS);
 	err = cdev_add(&host->cdev, devno, 1);
 	if (err < 0)
 		goto fail;
@@ -828,84 +717,6 @@ static int __devinit nvhost_user_init(struct nvhost_master *host)
 fail:
 	return err;
 }
-
-static void nvhost_remove_chip_support(struct nvhost_master *host)
-{
-
-	kfree(host->channels);
-	host->channels = 0;
-
-	kfree(host->syncpt.min_val);
-	host->syncpt.min_val = 0;
-
-	kfree(host->syncpt.max_val);
-	host->syncpt.max_val = 0;
-
-	kfree(host->syncpt.base_val);
-	host->syncpt.base_val = 0;
-
-	kfree(host->intr.syncpt);
-	host->intr.syncpt = 0;
-
-	kfree(host->syncpt.lock_counts);
-	host->syncpt.lock_counts = 0;
-}
-
-static int __devinit nvhost_init_chip_support(struct nvhost_master *host)
-{
-	int err;
-	switch (tegra_get_chipid()) {
-	case TEGRA_CHIPID_TEGRA2:
-		err = nvhost_init_t20_support(host);
-		break;
-
-	case TEGRA_CHIPID_TEGRA3:
-		err = nvhost_init_t30_support(host);
-		break;
-	default:
-		return -ENODEV;
-	}
-
-	if (err)
-		return err;
-
-	/* allocate items sized in chip specific support init */
-	host->channels = kzalloc(sizeof(struct nvhost_channel) *
-				 host->nb_channels, GFP_KERNEL);
-
-	host->syncpt.min_val = kzalloc(sizeof(atomic_t) *
-				       host->syncpt.nb_pts, GFP_KERNEL);
-
-	host->syncpt.max_val = kzalloc(sizeof(atomic_t) *
-				       host->syncpt.nb_pts, GFP_KERNEL);
-
-	host->syncpt.base_val = kzalloc(sizeof(u32) *
-					host->syncpt.nb_bases, GFP_KERNEL);
-
-	host->intr.syncpt = kzalloc(sizeof(struct nvhost_intr_syncpt) *
-				    host->syncpt.nb_pts, GFP_KERNEL);
-
-	host->syncpt.lock_counts = kzalloc(sizeof(atomic_t) *
-				       host->syncpt.nb_mlocks, GFP_KERNEL);
-
-	if (!(host->channels && host->syncpt.min_val &&
-	      host->syncpt.max_val && host->syncpt.base_val &&
-	      host->intr.syncpt && host->syncpt.lock_counts)) {
-		/* frees happen in the support removal phase */
-		return -ENOMEM;
-	}
-
-	return 0;
-}
-
-struct nvhost_device hostdev = {
-	.name = "host1x",
-	.id = -1,
-	.finalize_poweron = power_on_host,
-	.prepare_poweroff = power_off_host,
-	.clocks = {{"host1x", UINT_MAX}, {} },
-	NVHOST_MODULE_NO_POWERGATE_IDS,
-};
 
 static int __devinit nvhost_probe(struct platform_device *pdev)
 {
@@ -948,51 +759,35 @@ static int __devinit nvhost_probe(struct platform_device *pdev)
 		err = -ENXIO;
 		goto fail;
 	}
+	host->sync_aperture = host->aperture +
+		(NV_HOST1X_CHANNEL0_BASE +
+			HOST1X_CHANNEL_SYNC_REG_BASE);
 
-	err = nvhost_init_chip_support(host);
-	if (err) {
-		dev_err(&pdev->dev, "failed to init chip support\n");
-		goto fail;
-	}
-
-	/*  Register host1x device as bus master */
-	nvhost_device_register(&hostdev);
-	host->dev = &hostdev;
-	nvhost_bus_add_host(host);
-
-	/*  Give pointer to host1x via driver */
-	nvhost_set_drvdata(&hostdev, host);
-
-	BUG_ON(!host_channel_op(host).init);
-	for (i = 0; i < host->nb_channels; i++) {
+	for (i = 0; i < NVHOST_NUMCHANNELS; i++) {
 		struct nvhost_channel *ch = &host->channels[i];
 		err = nvhost_channel_init(ch, host, i);
-		if (err)
+		if (err < 0) {
+			dev_err(&pdev->dev, "failed to init channel %d\n", i);
 			goto fail;
+		}
 	}
 
+	err = nvhost_cpuaccess_init(&host->cpuaccess, pdev);
+	if (err) goto fail;
 	err = nvhost_intr_init(&host->intr, intr1->start, intr0->start);
-	if (err)
-		goto fail;
-
+	if (err) goto fail;
 	err = nvhost_user_init(host);
-	if (err)
-		goto fail;
-
-	err = nvhost_module_init(&hostdev);
-	if (err)
-		goto fail;
-
-	for (i = 0; i < host->nb_channels; i++) {
-		struct nvhost_channel *ch = &host->channels[i];
-		nvhost_module_init(ch->dev);
-	}
+	if (err) goto fail;
+	err = nvhost_module_init(&host->mod, "host1x", power_host, NULL, &pdev->dev);
+	if (err) goto fail;
 
 	platform_set_drvdata(pdev, host);
 
-	clk_enable(host->dev->clk[0]);
+	clk_enable(host->mod.clk[0]);
 	nvhost_syncpt_reset(&host->syncpt);
-	clk_disable(host->dev->clk[0]);
+	clk_disable(host->mod.clk[0]);
+
+	nvhost_bus_register(host);
 
 	nvhost_debug_init(host);
 
@@ -1000,40 +795,38 @@ static int __devinit nvhost_probe(struct platform_device *pdev)
 	return 0;
 
 fail:
-	nvhost_remove_chip_support(host);
 	if (host->nvmap)
 		nvmap_client_put(host->nvmap);
+	/* TODO: [ahatala 2010-05-04] */
 	kfree(host);
 	return err;
 }
 
 static int __exit nvhost_remove(struct platform_device *pdev)
 {
-	struct nvhost_master *host = platform_get_drvdata(pdev);
-	nvhost_remove_chip_support(host);
 	return 0;
 }
 
 static int nvhost_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	struct nvhost_master *host = platform_get_drvdata(pdev);
-	int i, ret;
 	dev_info(&pdev->dev, "suspending\n");
-
-	for (i = 0; i < host->nb_channels; i++) {
-		ret = nvhost_channel_suspend(&host->channels[i]);
-		if (ret)
-			return ret;
-	}
-
-	ret = nvhost_module_suspend(host->dev, true);
-	dev_info(&pdev->dev, "suspend status: %d\n", ret);
-	return ret;
+	nvhost_module_suspend(&host->mod, true);
+	clk_enable(host->mod.clk[0]);
+	nvhost_syncpt_save(&host->syncpt);
+	clk_disable(host->mod.clk[0]);
+	dev_info(&pdev->dev, "suspended\n");
+	return 0;
 }
 
 static int nvhost_resume(struct platform_device *pdev)
 {
+	struct nvhost_master *host = platform_get_drvdata(pdev);
 	dev_info(&pdev->dev, "resuming\n");
+	clk_enable(host->mod.clk[0]);
+	nvhost_syncpt_reset(&host->syncpt);
+	clk_disable(host->mod.clk[0]);
+	dev_info(&pdev->dev, "resumed\n");
 	return 0;
 }
 
@@ -1049,7 +842,6 @@ static struct platform_driver nvhost_driver = {
 
 static int __init nvhost_mod_init(void)
 {
-	register_sets = tegra_gpu_register_sets();
 	return platform_driver_probe(&nvhost_driver, nvhost_probe);
 }
 
@@ -1060,9 +852,6 @@ static void __exit nvhost_mod_exit(void)
 
 module_init(nvhost_mod_init);
 module_exit(nvhost_mod_exit);
-
-module_param_call(register_sets, NULL, param_get_uint, &register_sets, 0444);
-MODULE_PARM_DESC(register_sets, "Number of register sets");
 
 MODULE_AUTHOR("NVIDIA");
 MODULE_DESCRIPTION("Graphics host driver for Tegra products");

@@ -8,7 +8,7 @@
 #include "linux/slab.h"
 #include "linux/sound.h"
 #include "linux/soundcard.h"
-#include "linux/mutex.h"
+#include "linux/smp_lock.h"
 #include "asm/uaccess.h"
 #include "init.h"
 #include "os.h"
@@ -62,8 +62,6 @@ static int set_mixer(char *name, int *add)
 
 __uml_setup("mixer=", set_mixer, "mixer=<mixer device>\n" MIXER_HELP);
 #endif
-
-static DEFINE_MUTEX(hostaudio_mutex);
 
 /* /dev/dsp file operations */
 
@@ -200,9 +198,9 @@ static int hostaudio_open(struct inode *inode, struct file *file)
 		w = 1;
 
 	kparam_block_sysfs_write(dsp);
-	mutex_lock(&hostaudio_mutex);
+	lock_kernel();
 	ret = os_open_file(dsp, of_set_rw(OPENFLAGS(), r, w), 0);
-	mutex_unlock(&hostaudio_mutex);
+	unlock_kernel();
 	kparam_unblock_sysfs_write(dsp);
 
 	if (ret < 0) {
@@ -261,9 +259,9 @@ static int hostmixer_open_mixdev(struct inode *inode, struct file *file)
 		w = 1;
 
 	kparam_block_sysfs_write(mixer);
-	mutex_lock(&hostaudio_mutex);
+	lock_kernel();
 	ret = os_open_file(mixer, of_set_rw(OPENFLAGS(), r, w), 0);
-	mutex_unlock(&hostaudio_mutex);
+	unlock_kernel();
 	kparam_unblock_sysfs_write(mixer);
 
 	if (ret < 0) {

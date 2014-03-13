@@ -168,6 +168,7 @@ struct uea_softc {
 	union cmv_dsc cmv_dsc;
 
 	struct work_struct task;
+	struct workqueue_struct *work_q;
 	u16 pageno;
 	u16 ovl;
 
@@ -1283,7 +1284,7 @@ static void uea_set_bulk_timeout(struct uea_softc *sc, u32 dsrate)
 
 	/* in bulk mode the modem have problem with high rate
 	 * changing internal timing could improve things, but the
-	 * value is mysterious.
+	 * value is misterious.
 	 * ADI930 don't support it (-EPIPE error).
 	 */
 
@@ -1743,7 +1744,7 @@ static int uea_send_cmvs_e1(struct uea_softc *sc)
 				goto out;
 		}
 	} else {
-		/* This really should not happen */
+		/* This realy should not happen */
 		uea_err(INS_TO_USBDEV(sc), "bad cmvs version %d\n", ver);
 		goto out;
 	}
@@ -1798,7 +1799,7 @@ static int uea_send_cmvs_e4(struct uea_softc *sc)
 				goto out;
 		}
 	} else {
-		/* This really should not happen */
+		/* This realy should not happen */
 		uea_err(INS_TO_USBDEV(sc), "bad cmvs version %d\n", ver);
 		goto out;
 	}
@@ -1829,7 +1830,7 @@ static int uea_start_reset(struct uea_softc *sc)
 
 	/* mask interrupt */
 	sc->booting = 1;
-	/* We need to set this here because, a ack timeout could have occurred,
+	/* We need to set this here because, a ack timeout could have occured,
 	 * but before we start the reboot, the ack occurs and set this to 1.
 	 * So we will failed to wait Ready CMV.
 	 */
@@ -1878,7 +1879,7 @@ static int uea_start_reset(struct uea_softc *sc)
 	/* start loading DSP */
 	sc->pageno = 0;
 	sc->ovl = 0;
-	schedule_work(&sc->task);
+	queue_work(sc->work_q, &sc->task);
 
 	/* wait for modem ready CMV */
 	ret = wait_cmv_ack(sc);
@@ -2090,14 +2091,14 @@ static void uea_schedule_load_page_e1(struct uea_softc *sc,
 {
 	sc->pageno = intr->e1_bSwapPageNo;
 	sc->ovl = intr->e1_bOvl >> 4 | intr->e1_bOvl << 4;
-	schedule_work(&sc->task);
+	queue_work(sc->work_q, &sc->task);
 }
 
 static void uea_schedule_load_page_e4(struct uea_softc *sc,
 						struct intr_pkt *intr)
 {
 	sc->pageno = intr->e4_bSwapPageNo;
-	schedule_work(&sc->task);
+	queue_work(sc->work_q, &sc->task);
 }
 
 /*
@@ -2169,6 +2170,13 @@ static int uea_boot(struct uea_softc *sc)
 
 	init_waitqueue_head(&sc->sync_q);
 
+	sc->work_q = create_workqueue("ueagle-dsp");
+	if (!sc->work_q) {
+		uea_err(INS_TO_USBDEV(sc), "cannot allocate workqueue\n");
+		uea_leaves(INS_TO_USBDEV(sc));
+		return -ENOMEM;
+	}
+
 	if (UEA_CHIP_VERSION(sc) == ADI930)
 		load_XILINX_firmware(sc);
 
@@ -2198,11 +2206,8 @@ static int uea_boot(struct uea_softc *sc)
 		goto err1;
 	}
 
-	/* Create worker thread, but don't start it here.  Start it after
-	 * all usbatm generic initialization is done.
-	 */
-	sc->kthread = kthread_create(uea_kthread, sc, "ueagle-atm");
-	if (IS_ERR(sc->kthread)) {
+	sc->kthread = kthread_run(uea_kthread, sc, "ueagle-atm");
+	if (sc->kthread == ERR_PTR(-ENOMEM)) {
 		uea_err(INS_TO_USBDEV(sc), "failed to create thread\n");
 		goto err2;
 	}
@@ -2217,6 +2222,7 @@ err1:
 	sc->urb_int = NULL;
 	kfree(intr);
 err0:
+	destroy_workqueue(sc->work_q);
 	uea_leaves(INS_TO_USBDEV(sc));
 	return -ENOMEM;
 }
@@ -2237,8 +2243,8 @@ static void uea_stop(struct uea_softc *sc)
 	kfree(sc->urb_int->transfer_buffer);
 	usb_free_urb(sc->urb_int);
 
-	/* flush the work item, when no one can schedule it */
-	flush_work_sync(&sc->task);
+	/* stop any pending boot process, when no one can schedule work */
+	destroy_workqueue(sc->work_q);
 
 	if (sc->dsp_firm)
 		release_firmware(sc->dsp_firm);
@@ -2618,7 +2624,6 @@ static struct usbatm_driver uea_usbatm_driver = {
 static int uea_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
 	struct usb_device *usb = interface_to_usbdev(intf);
-	int ret;
 
 	uea_enters(usb);
 	uea_info(usb, "ADSL device founded vid (%#X) pid (%#X) Rev (%#X): %s\n",
@@ -2632,19 +2637,7 @@ static int uea_probe(struct usb_interface *intf, const struct usb_device_id *id)
 	if (UEA_IS_PREFIRM(id))
 		return uea_load_firmware(usb, UEA_CHIP_VERSION(id));
 
-	ret = usbatm_usb_probe(intf, id, &uea_usbatm_driver);
-	if (ret == 0) {
-		struct usbatm_data *usbatm = usb_get_intfdata(intf);
-		struct uea_softc *sc = usbatm->driver_data;
-
-		/* Ensure carrier is initialized to off as early as possible */
-		UPDATE_ATM_SIGNAL(ATM_PHY_SIG_LOST);
-
-		/* Only start the worker thread when all init is done */
-		wake_up_process(sc->kthread);
-	}
-
-	return ret;
+	return usbatm_usb_probe(intf, id, &uea_usbatm_driver);
 }
 
 static void uea_disconnect(struct usb_interface *intf)

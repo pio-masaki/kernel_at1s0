@@ -164,18 +164,24 @@ long kvm_arch_vm_ioctl(struct file *filp,
 	return r;
 }
 
-int kvm_arch_init_vm(struct kvm *kvm)
+struct kvm *kvm_arch_create_vm(void)
 {
+	struct kvm *kvm;
 	int rc;
 	char debug_name[16];
 
 	rc = s390_enable_sie();
 	if (rc)
-		goto out_err;
+		goto out_nokvm;
+
+	rc = -ENOMEM;
+	kvm = kzalloc(sizeof(struct kvm), GFP_KERNEL);
+	if (!kvm)
+		goto out_nokvm;
 
 	kvm->arch.sca = (struct sca_block *) get_zeroed_page(GFP_KERNEL);
 	if (!kvm->arch.sca)
-		goto out_err;
+		goto out_nosca;
 
 	sprintf(debug_name, "kvm-%u", current->pid);
 
@@ -189,11 +195,13 @@ int kvm_arch_init_vm(struct kvm *kvm)
 	debug_register_view(kvm->arch.dbf, &debug_sprintf_view);
 	VM_EVENT(kvm, 3, "%s", "vm created");
 
-	return 0;
+	return kvm;
 out_nodbf:
 	free_page((unsigned long)(kvm->arch.sca));
-out_err:
-	return rc;
+out_nosca:
+	kfree(kvm);
+out_nokvm:
+	return ERR_PTR(rc);
 }
 
 void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu)
@@ -232,8 +240,11 @@ void kvm_arch_sync_events(struct kvm *kvm)
 void kvm_arch_destroy_vm(struct kvm *kvm)
 {
 	kvm_free_vcpus(kvm);
+	kvm_free_physmem(kvm);
 	free_page((unsigned long)(kvm->arch.sca));
 	debug_unregister(kvm->arch.dbf);
+	cleanup_srcu_struct(&kvm->srcu);
+	kfree(kvm);
 }
 
 /* Section: vcpu related */
@@ -721,7 +732,7 @@ static int __init kvm_s390_init(void)
 
 	/*
 	 * guests can ask for up to 255+1 double words, we need a full page
-	 * to hold the maximum amount of facilities. On the other hand, we
+	 * to hold the maximum amount of facilites. On the other hand, we
 	 * only set facilities that are known to work in KVM.
 	 */
 	facilities = (unsigned long long *) get_zeroed_page(GFP_KERNEL|GFP_DMA);
@@ -729,8 +740,8 @@ static int __init kvm_s390_init(void)
 		kvm_exit();
 		return -ENOMEM;
 	}
-	memcpy(facilities, S390_lowcore.stfle_fac_list, 16);
-	facilities[0] &= 0xff00fff3f47c0000ULL;
+	stfle(facilities, 1);
+	facilities[0] &= 0xff00fff3f0700000ULL;
 	return 0;
 }
 

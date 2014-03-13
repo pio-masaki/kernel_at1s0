@@ -529,34 +529,24 @@ seq_print_ip_sym(struct trace_seq *s, unsigned long ip, unsigned long sym_flags)
  * @entry: The trace entry field from the ring buffer
  *
  * Prints the generic fields of irqs off, in hard or softirq, preempt
- * count.
+ * count and lock depth.
  */
 int trace_print_lat_fmt(struct trace_seq *s, struct trace_entry *entry)
 {
-	char hardsoft_irq;
-	char need_resched;
-	char irqs_off;
-	int hardirq;
-	int softirq;
+	int hardirq, softirq;
 	int ret;
 
 	hardirq = entry->flags & TRACE_FLAG_HARDIRQ;
 	softirq = entry->flags & TRACE_FLAG_SOFTIRQ;
 
-	irqs_off =
-		(entry->flags & TRACE_FLAG_IRQS_OFF) ? 'd' :
-		(entry->flags & TRACE_FLAG_IRQS_NOSUPPORT) ? 'X' :
-		'.';
-	need_resched =
-		(entry->flags & TRACE_FLAG_NEED_RESCHED) ? 'N' : '.';
-	hardsoft_irq =
-		(hardirq && softirq) ? 'H' :
-		hardirq ? 'h' :
-		softirq ? 's' :
-		'.';
-
 	if (!trace_seq_printf(s, "%c%c%c",
-			      irqs_off, need_resched, hardsoft_irq))
+			      (entry->flags & TRACE_FLAG_IRQS_OFF) ? 'd' :
+				(entry->flags & TRACE_FLAG_IRQS_NOSUPPORT) ?
+				  'X' : '.',
+			      (entry->flags & TRACE_FLAG_NEED_RESCHED) ?
+				'N' : '.',
+			      (hardirq && softirq) ? 'H' :
+				hardirq ? 'h' : softirq ? 's' : '.'))
 		return 0;
 
 	if (entry->preempt_count)
@@ -564,7 +554,13 @@ int trace_print_lat_fmt(struct trace_seq *s, struct trace_entry *entry)
 	else
 		ret = trace_seq_putc(s, '.');
 
-	return ret;
+	if (!ret)
+		return 0;
+
+	if (entry->lock_depth < 0)
+		return trace_seq_putc(s, '.');
+
+	return trace_seq_printf(s, "%d", entry->lock_depth);
 }
 
 static int

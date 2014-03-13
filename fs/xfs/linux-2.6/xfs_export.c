@@ -70,16 +70,8 @@ xfs_fs_encode_fh(
 	else
 		fileid_type = FILEID_INO32_GEN_PARENT;
 
-	/*
-	 * If the the filesystem may contain 64bit inode numbers, we need
-	 * to use larger file handles that can represent them.
-	 *
-	 * While we only allocate inodes that do not fit into 32 bits any
-	 * large enough filesystem may contain them, thus the slightly
-	 * confusing looking conditional below.
-	 */
-	if (!(XFS_M(inode->i_sb)->m_flags & XFS_MOUNT_SMALL_INUMS) ||
-	    (XFS_M(inode->i_sb)->m_flags & XFS_MOUNT_32BITINODES))
+	/* filesystem may contain 64bit inode numbers */
+	if (!(XFS_M(inode->i_sb)->m_flags & XFS_MOUNT_SMALL_INUMS))
 		fileid_type |= XFS_FILEID_TYPE_64FLAG;
 
 	/*
@@ -89,10 +81,8 @@ xfs_fs_encode_fh(
 	 * seven combinations work.  The real answer is "don't use v2".
 	 */
 	len = xfs_fileid_length(fileid_type);
-	if (*max_len < len) {
-		*max_len = len;
+	if (*max_len < len)
 		return 255;
-	}
 	*max_len = len;
 
 	switch (fileid_type) {

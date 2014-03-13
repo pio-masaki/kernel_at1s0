@@ -17,6 +17,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 
+#include <pcmcia/cs.h>
 #include <pcmcia/ss.h>
 #include <pcmcia/cistpl.h>
 
@@ -274,7 +275,7 @@ static int __devinit xxs1500_pcmcia_probe(struct platform_device *pdev)
 	 * edge detector.
 	 */
 	irq = gpio_to_irq(GPIO_CDA);
-	irq_set_irq_type(irq, IRQ_TYPE_EDGE_BOTH);
+	set_irq_type(irq, IRQ_TYPE_EDGE_BOTH);
 	ret = request_irq(irq, cdirq, 0, "pcmcia_carddetect", sock);
 	if (ret) {
 		dev_err(&pdev->dev, "cannot setup cd irq\n");

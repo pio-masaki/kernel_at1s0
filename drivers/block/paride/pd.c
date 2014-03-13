@@ -153,11 +153,10 @@ enum {D_PRT, D_PRO, D_UNI, D_MOD, D_GEO, D_SBY, D_DLY, D_SLV};
 #include <linux/blkdev.h>
 #include <linux/blkpg.h>
 #include <linux/kernel.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 #include <linux/workqueue.h>
 
-static DEFINE_MUTEX(pd_mutex);
 static DEFINE_SPINLOCK(pd_lock);
 
 module_param(verbose, bool, 0);
@@ -737,14 +736,14 @@ static int pd_open(struct block_device *bdev, fmode_t mode)
 {
 	struct pd_unit *disk = bdev->bd_disk->private_data;
 
-	mutex_lock(&pd_mutex);
+	lock_kernel();
 	disk->access++;
 
 	if (disk->removable) {
 		pd_special_command(disk, pd_media_check);
 		pd_special_command(disk, pd_door_lock);
 	}
-	mutex_unlock(&pd_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -772,10 +771,10 @@ static int pd_ioctl(struct block_device *bdev, fmode_t mode,
 
 	switch (cmd) {
 	case CDROMEJECT:
-		mutex_lock(&pd_mutex);
+		lock_kernel();
 		if (disk->access == 1)
 			pd_special_command(disk, pd_eject);
-		mutex_unlock(&pd_mutex);
+		unlock_kernel();
 		return 0;
 	default:
 		return -EINVAL;
@@ -786,15 +785,15 @@ static int pd_release(struct gendisk *p, fmode_t mode)
 {
 	struct pd_unit *disk = p->private_data;
 
-	mutex_lock(&pd_mutex);
+	lock_kernel();
 	if (!--disk->access && disk->removable)
 		pd_special_command(disk, pd_door_unlock);
-	mutex_unlock(&pd_mutex);
+	unlock_kernel();
 
 	return 0;
 }
 
-static unsigned int pd_check_events(struct gendisk *p, unsigned int clearing)
+static int pd_check_media(struct gendisk *p)
 {
 	struct pd_unit *disk = p->private_data;
 	int r;
@@ -803,7 +802,7 @@ static unsigned int pd_check_events(struct gendisk *p, unsigned int clearing)
 	pd_special_command(disk, pd_media_check);
 	r = disk->changed;
 	disk->changed = 0;
-	return r ? DISK_EVENT_MEDIA_CHANGE : 0;
+	return r;
 }
 
 static int pd_revalidate(struct gendisk *p)
@@ -822,7 +821,7 @@ static const struct block_device_operations pd_fops = {
 	.release	= pd_release,
 	.ioctl		= pd_ioctl,
 	.getgeo		= pd_getgeo,
-	.check_events	= pd_check_events,
+	.media_changed	= pd_check_media,
 	.revalidate_disk= pd_revalidate
 };
 

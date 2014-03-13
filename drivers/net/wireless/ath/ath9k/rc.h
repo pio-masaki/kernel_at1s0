@@ -135,21 +135,20 @@ enum {
 
 /**
  * struct ath_rate_table - Rate Control table
- * @rate_cnt: total number of rates for the given wireless mode
- * @mcs_start: MCS rate index offset
- * @rate_flags: Rate Control flags
- * @phy: CCK/OFDM/HT20/HT40
+ * @valid: valid for use in rate control
+ * @valid_single_stream: valid for use in rate control for
+ * 	single stream operation
+ * @phy: CCK/OFDM
  * @ratekbps: rate in Kbits per second
  * @user_ratekbps: user rate in Kbits per second
  * @ratecode: rate that goes into HW descriptors
+ * @short_preamble: Mask for enabling short preamble in ratecode for CCK
  * @dot11rate: value that goes into supported
  * 	rates info element of MLME
  * @ctrl_rate: Index of next lower basic rate, used for duration computation
- * @cw40index: Index of rates having 40MHz channel width
- * @sgi_index: Index of rates having Short Guard Interval
- * @ht_index: high throughput rates having 40MHz channel width and
- * 	Short Guard Interval
+ * @max_4ms_framelen: maximum frame length(bytes) for tx duration
  * @probe_interval: interval for rate control to probe for other rates
+ * @rssi_reduce_interval: interval for rate control to reduce rssi
  * @initial_ratemax: initial ratemax value
  */
 struct ath_rate_table {
@@ -176,13 +175,6 @@ struct ath_rateset {
 	u8 rs_rates[ATH_RATE_MAX];
 };
 
-struct ath_rc_stats {
-	u32 success;
-	u32 retries;
-	u32 xretries;
-	u8 per;
-};
-
 /**
  * struct ath_rate_priv - Rate Control priv data
  * @state: RC state
@@ -195,6 +187,7 @@ struct ath_rc_stats {
  * @rate_max_phy: phy index for the max rate
  * @per: PER for every valid rate in %
  * @probe_interval: interval for ratectrl to probe for other rates
+ * @prev_data_rix: rate idx of last data frame
  * @ht_cap: HT capabilities
  * @neg_rates: Negotatied rates
  * @neg_ht_rates: Negotiated HT rates
@@ -213,13 +206,17 @@ struct ath_rate_priv {
 	u32 probe_time;
 	u32 per_down_time;
 	u32 probe_interval;
+	u32 prev_data_rix;
+	u32 tx_triglevel_max;
 	struct ath_rateset neg_rates;
 	struct ath_rateset neg_ht_rates;
-	const struct ath_rate_table *rate_table;
-
-	struct dentry *debugfs_rcstats;
-	struct ath_rc_stats rcstats[RATE_TABLE_SIZE];
+	struct ath_rate_softc *asc;
 };
+
+#define ATH_TX_INFO_FRAME_TYPE_INTERNAL	(1 << 0)
+#define ATH_TX_INFO_FRAME_TYPE_PAUSE	(1 << 1)
+#define ATH_TX_INFO_XRETRY		(1 << 3)
+#define ATH_TX_INFO_UNDERRUN		(1 << 4)
 
 enum ath9k_internal_frame_type {
 	ATH9K_IFT_NOT_INTERNAL,
@@ -227,18 +224,7 @@ enum ath9k_internal_frame_type {
 	ATH9K_IFT_UNPAUSE
 };
 
-#ifdef CONFIG_ATH9K_RATE_CONTROL
 int ath_rate_control_register(void);
 void ath_rate_control_unregister(void);
-#else
-static inline int ath_rate_control_register(void)
-{
-	return 0;
-}
-
-static inline void ath_rate_control_unregister(void)
-{
-}
-#endif
 
 #endif /* RC_H */

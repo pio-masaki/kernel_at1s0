@@ -231,17 +231,18 @@ static DEFINE_SPINLOCK(cpuset_buffer_lock);
  * users. If someone tries to mount the "cpuset" filesystem, we
  * silently switch it to mount "cgroup" instead
  */
-static struct dentry *cpuset_mount(struct file_system_type *fs_type,
-			 int flags, const char *unused_dev_name, void *data)
+static int cpuset_get_sb(struct file_system_type *fs_type,
+			 int flags, const char *unused_dev_name,
+			 void *data, struct vfsmount *mnt)
 {
 	struct file_system_type *cgroup_fs = get_fs_type("cgroup");
-	struct dentry *ret = ERR_PTR(-ENODEV);
+	int ret = -ENODEV;
 	if (cgroup_fs) {
 		char mountopts[] =
 			"cpuset,noprefix,"
 			"release_agent=/sbin/cpuset_release_agent";
-		ret = cgroup_fs->mount(cgroup_fs, flags,
-					   unused_dev_name, mountopts);
+		ret = cgroup_fs->get_sb(cgroup_fs, flags,
+					   unused_dev_name, mountopts, mnt);
 		put_filesystem(cgroup_fs);
 	}
 	return ret;
@@ -249,7 +250,7 @@ static struct dentry *cpuset_mount(struct file_system_type *fs_type,
 
 static struct file_system_type cpuset_fs_type = {
 	.name = "cpuset",
-	.mount = cpuset_mount,
+	.get_sb = cpuset_get_sb,
 };
 
 /*
@@ -1015,12 +1016,17 @@ static void cpuset_change_nodemask(struct task_struct *p,
 	struct cpuset *cs;
 	int migrate;
 	const nodemask_t *oldmem = scan->data;
-	static nodemask_t newmems;	/* protected by cgroup_mutex */
+	NODEMASK_ALLOC(nodemask_t, newmems, GFP_KERNEL);
+
+	if (!newmems)
+		return;
 
 	cs = cgroup_cs(scan->cg);
-	guarantee_online_mems(cs, &newmems);
+	guarantee_online_mems(cs, newmems);
 
-	cpuset_change_task_nodemask(p, &newmems);
+	cpuset_change_task_nodemask(p, newmems);
+
+	NODEMASK_FREE(newmems);
 
 	mm = get_task_mm(p);
 	if (!mm)
@@ -1398,7 +1404,7 @@ static int cpuset_can_attach(struct cgroup_subsys *ss, struct cgroup *cont,
 	if (tsk->flags & PF_THREAD_BOUND)
 		return -EINVAL;
 
-	ret = security_task_setscheduler(tsk);
+	ret = security_task_setscheduler(tsk, 0, NULL);
 	if (ret)
 		return ret;
 	if (threadgroup) {
@@ -1406,7 +1412,7 @@ static int cpuset_can_attach(struct cgroup_subsys *ss, struct cgroup *cont,
 
 		rcu_read_lock();
 		list_for_each_entry_rcu(c, &tsk->thread_group, thread_group) {
-			ret = security_task_setscheduler(c);
+			ret = security_task_setscheduler(c, 0, NULL);
 			if (ret) {
 				rcu_read_unlock();
 				return ret;
@@ -1440,35 +1446,44 @@ static void cpuset_attach(struct cgroup_subsys *ss, struct cgroup *cont,
 	struct mm_struct *mm;
 	struct cpuset *cs = cgroup_cs(cont);
 	struct cpuset *oldcs = cgroup_cs(oldcont);
-	static nodemask_t to;		/* protected by cgroup_mutex */
+	NODEMASK_ALLOC(nodemask_t, from, GFP_KERNEL);
+	NODEMASK_ALLOC(nodemask_t, to, GFP_KERNEL);
+
+	if (from == NULL || to == NULL)
+		goto alloc_fail;
 
 	if (cs == &top_cpuset) {
 		cpumask_copy(cpus_attach, cpu_possible_mask);
 	} else {
 		guarantee_online_cpus(cs, cpus_attach);
 	}
-	guarantee_online_mems(cs, &to);
+	guarantee_online_mems(cs, to);
 
 	/* do per-task migration stuff possibly for each in the threadgroup */
-	cpuset_attach_task(tsk, &to, cs);
+	cpuset_attach_task(tsk, to, cs);
 	if (threadgroup) {
 		struct task_struct *c;
 		rcu_read_lock();
 		list_for_each_entry_rcu(c, &tsk->thread_group, thread_group) {
-			cpuset_attach_task(c, &to, cs);
+			cpuset_attach_task(c, to, cs);
 		}
 		rcu_read_unlock();
 	}
 
 	/* change mm; only needs to be done once even if threadgroup */
-	to = cs->mems_allowed;
+	*from = oldcs->mems_allowed;
+	*to = cs->mems_allowed;
 	mm = get_task_mm(tsk);
 	if (mm) {
-		mpol_rebind_mm(mm, &to);
+		mpol_rebind_mm(mm, to);
 		if (is_memory_migrate(cs))
-			cpuset_migrate_mm(mm, &oldcs->mems_allowed, &to);
+			cpuset_migrate_mm(mm, from, to);
 		mmput(mm);
 	}
+
+alloc_fail:
+	NODEMASK_FREE(from);
+	NODEMASK_FREE(to);
 }
 
 /* The various types of files and directories in a cpuset file system */
@@ -1568,10 +1583,8 @@ static int cpuset_write_resmask(struct cgroup *cgrp, struct cftype *cft,
 		return -ENODEV;
 
 	trialcs = alloc_trial_cpuset(cs);
-	if (!trialcs) {
-		retval = -ENOMEM;
-		goto out;
-	}
+	if (!trialcs)
+		return -ENOMEM;
 
 	switch (cft->private) {
 	case FILE_CPULIST:
@@ -1586,7 +1599,6 @@ static int cpuset_write_resmask(struct cgroup *cgrp, struct cftype *cft,
 	}
 
 	free_trial_cpuset(trialcs);
-out:
 	cgroup_unlock();
 	return retval;
 }
@@ -1603,26 +1615,34 @@ out:
  * across a page fault.
  */
 
-static size_t cpuset_sprintf_cpulist(char *page, struct cpuset *cs)
+static int cpuset_sprintf_cpulist(char *page, struct cpuset *cs)
 {
-	size_t count;
+	int ret;
 
 	mutex_lock(&callback_mutex);
-	count = cpulist_scnprintf(page, PAGE_SIZE, cs->cpus_allowed);
+	ret = cpulist_scnprintf(page, PAGE_SIZE, cs->cpus_allowed);
 	mutex_unlock(&callback_mutex);
 
-	return count;
+	return ret;
 }
 
-static size_t cpuset_sprintf_memlist(char *page, struct cpuset *cs)
+static int cpuset_sprintf_memlist(char *page, struct cpuset *cs)
 {
-	size_t count;
+	NODEMASK_ALLOC(nodemask_t, mask, GFP_KERNEL);
+	int retval;
+
+	if (mask == NULL)
+		return -ENOMEM;
 
 	mutex_lock(&callback_mutex);
-	count = nodelist_scnprintf(page, PAGE_SIZE, cs->mems_allowed);
+	*mask = cs->mems_allowed;
 	mutex_unlock(&callback_mutex);
 
-	return count;
+	retval = nodelist_scnprintf(page, PAGE_SIZE, *mask);
+
+	NODEMASK_FREE(mask);
+
+	return retval;
 }
 
 static ssize_t cpuset_common_file_read(struct cgroup *cont,
@@ -1847,10 +1867,8 @@ static void cpuset_post_clone(struct cgroup_subsys *ss,
 	cs = cgroup_cs(cgroup);
 	parent_cs = cgroup_cs(parent);
 
-	mutex_lock(&callback_mutex);
 	cs->mems_allowed = parent_cs->mems_allowed;
 	cpumask_copy(cs->cpus_allowed, parent_cs->cpus_allowed);
-	mutex_unlock(&callback_mutex);
 	return;
 }
 
@@ -2053,7 +2071,10 @@ static void scan_for_empty_cpusets(struct cpuset *root)
 	struct cpuset *cp;	/* scans cpusets being updated */
 	struct cpuset *child;	/* scans child cpusets of cp */
 	struct cgroup *cont;
-	static nodemask_t oldmems;	/* protected by cgroup_mutex */
+	NODEMASK_ALLOC(nodemask_t, oldmems, GFP_KERNEL);
+
+	if (oldmems == NULL)
+		return;
 
 	list_add_tail((struct list_head *)&root->stack_list, &queue);
 
@@ -2070,7 +2091,7 @@ static void scan_for_empty_cpusets(struct cpuset *root)
 		    nodes_subset(cp->mems_allowed, node_states[N_HIGH_MEMORY]))
 			continue;
 
-		oldmems = cp->mems_allowed;
+		*oldmems = cp->mems_allowed;
 
 		/* Remove offline cpus and mems from this cpuset. */
 		mutex_lock(&callback_mutex);
@@ -2086,9 +2107,10 @@ static void scan_for_empty_cpusets(struct cpuset *root)
 			remove_tasks_in_empty_cpuset(cp);
 		else {
 			update_tasks_cpumask(cp, NULL);
-			update_tasks_nodemask(cp, &oldmems, NULL);
+			update_tasks_nodemask(cp, oldmems, NULL);
 		}
 	}
+	NODEMASK_FREE(oldmems);
 }
 
 /*
@@ -2130,16 +2152,19 @@ void cpuset_update_active_cpus(void)
 static int cpuset_track_online_nodes(struct notifier_block *self,
 				unsigned long action, void *arg)
 {
-	static nodemask_t oldmems;	/* protected by cgroup_mutex */
+	NODEMASK_ALLOC(nodemask_t, oldmems, GFP_KERNEL);
+
+	if (oldmems == NULL)
+		return NOTIFY_DONE;
 
 	cgroup_lock();
 	switch (action) {
 	case MEM_ONLINE:
-		oldmems = top_cpuset.mems_allowed;
+		*oldmems = top_cpuset.mems_allowed;
 		mutex_lock(&callback_mutex);
 		top_cpuset.mems_allowed = node_states[N_HIGH_MEMORY];
 		mutex_unlock(&callback_mutex);
-		update_tasks_nodemask(&top_cpuset, &oldmems, NULL);
+		update_tasks_nodemask(&top_cpuset, oldmems, NULL);
 		break;
 	case MEM_OFFLINE:
 		/*
@@ -2153,6 +2178,7 @@ static int cpuset_track_online_nodes(struct notifier_block *self,
 	}
 	cgroup_unlock();
 
+	NODEMASK_FREE(oldmems);
 	return NOTIFY_OK;
 }
 #endif

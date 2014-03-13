@@ -1,7 +1,7 @@
 /*
  * arch/arm/mach-tegra/board-antares.c
  *
- * Copyright (c) 2010-2011, NVIDIA Corporation.
+ * Copyright (c) 2010 - 2011, NVIDIA Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,7 +26,6 @@
 #include <linux/clk.h>
 #include <linux/serial_8250.h>
 #include <linux/i2c.h>
-#include <linux/i2c/panjit_ts.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
 #include <linux/i2c-tegra.h>
@@ -36,10 +35,9 @@
 #include <linux/gpio_switch.h>
 #include <linux/input.h>
 #include <linux/platform_data/tegra_usb.h>
+#include <linux/usb/android_composite.h>
 #include <linux/mfd/tps6586x.h>
 #include <linux/memblock.h>
-/*#include <linux/i2c/atmel_mxt_ts.h>*/
-#include <linux/tegra_uart.h>
 #include <linux/antares_dock.h>
 #include <linux/interrupt.h>
 
@@ -51,10 +49,6 @@
 #include <linux/i2c/atmel_maxtouch.h>
 #endif
 
-#ifdef CONFIG_SND_SOC_FM34
-#include <sound/fm34.h>
-#endif
-
 #include <sound/wm8903.h>
 
 #include <mach/clk.h>
@@ -64,12 +58,15 @@
 #include <mach/iomap.h>
 #include <mach/io.h>
 #include <mach/i2s.h>
-#include <mach/tegra_wm8903_pdata.h>
-#include <asm/setup.h>
-
+#include <mach/spdif.h>
+#include <mach/audio.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <mach/usb_phy.h>
+#include <mach/tegra_das.h>
+#include <asm/setup.h>
+
+#include <linux/usb/f_accessory.h>
 
 #include "board.h"
 #include "clock.h"
@@ -78,60 +75,79 @@
 #include "gpio-names.h"
 #include "fuse.h"
 #include "wakeups-t2.h"
-#include "pm.h"
+
+#ifdef CONFIG_USB_ANDROID_MASS_STORAGE
+static struct usb_mass_storage_platform_data tegra_usb_fsg_platform = {
+	.vendor = "NVIDIA",
+	.product = "Tegra 2",
+	.nluns = 1,
+};
+
+static struct platform_device tegra_usb_fsg_device = {
+	.name = "usb_mass_storage",
+	.id = -1,
+	.dev = {
+		.platform_data = &tegra_usb_fsg_platform,
+	},
+};
+#endif
+
+static struct plat_serial8250_port debug_uart_platform_data[] = {
+	{
+		.membase	= IO_ADDRESS(TEGRA_UARTD_BASE),
+		.mapbase	= TEGRA_UARTD_BASE,
+		.irq		= INT_UARTD,
+		.flags		= UPF_BOOT_AUTOCONF | UPF_FIXED_TYPE,
+		.type           = PORT_TEGRA,
+		.iotype		= UPIO_MEM,
+		.regshift	= 2,
+		.uartclk	= 216000000,
+	}, {
+		.flags		= 0,
+	}
+};
+
+static struct platform_device debug_uart = {
+	.name = "serial8250",
+	.id = PLAT8250_DEV_PLATFORM,
+	.dev = {
+		.platform_data = debug_uart_platform_data,
+	},
+};
+
+static struct tegra_audio_platform_data tegra_spdif_pdata = {
+	.dma_on = true,  /* use dma by default */
+	.spdif_clk_rate = 5644800,
+};
 
 static struct tegra_utmip_config utmi_phy_config[] = {
 	[0] = {
-			.hssync_start_delay = 9,
+			.hssync_start_delay = 0,
 			.idle_wait_delay = 17,
 			.elastic_limit = 16,
 			.term_range_adj = 6,
 			.xcvr_setup = 15,
-			.xcvr_setup_offset = 0,
-			.xcvr_use_fuses = 1,
 			.xcvr_lsfslew = 2,
 			.xcvr_lsrslew = 2,
 	},
 	[1] = {
-			.hssync_start_delay = 9,
+			.hssync_start_delay = 0,
 			.idle_wait_delay = 17,
 			.elastic_limit = 16,
 			.term_range_adj = 6,
 			.xcvr_setup = 8,
-			.xcvr_setup_offset = 0,
-			.xcvr_use_fuses = 1,
 			.xcvr_lsfslew = 2,
 			.xcvr_lsrslew = 2,
 	},
 };
 
-#ifdef CONFIG_TEGRA_ODM_DMIEEP
-struct tag_platform_data {
-    int             num_data;
-    unsigned char*  data;
-};
-
-static bool g_tag_data_ready = false;
-static unsigned char calibrate_data[60] = {0};
-
-static struct tag_platform_data antares_tag_platform_data = {
-	.data		= calibrate_data,
-	.num_data	= ARRAY_SIZE(calibrate_data),
-};
-
-static struct platform_device tegra_dmieep_device = {
-    .name = "dmieep",
-    .id = -1,
-    .dev = {
-		.platform_data  = &antares_tag_platform_data,
-    },
-};
-#endif
-
 static struct tegra_ulpi_config ulpi_phy_config = {
 	.reset_gpio = TEGRA_GPIO_PG2,
-	.clk = "cdev2",
+	.clk = "clk_dev2",
+	.inf_type = TEGRA_USB_LINK_ULPI,
 };
+
+#ifdef CONFIG_BCM4329_RFKILL
 
 static struct resource antares_bcm4329_rfkill_resources[] = {
 	{
@@ -149,73 +165,327 @@ static struct platform_device antares_bcm4329_rfkill_device = {
 	.resource       = antares_bcm4329_rfkill_resources,
 };
 
-static void __init antares_bt_rfkill(void)
+static noinline void __init antares_bt_rfkill(void)
 {
 	/*Add Clock Resource*/
 	clk_add_alias("bcm4329_32k_clk", antares_bcm4329_rfkill_device.name, \
 				"blink", NULL);
+
+	platform_device_register(&antares_bcm4329_rfkill_device);
+
 	return;
 }
+#else
+static inline void antares_bt_rfkill(void) { }
+#endif
 
-static struct resource antares_bluesleep_resources[] = {
-	[0] = {
-		.name = "gpio_host_wake",
-			.start  = TEGRA_GPIO_PU6,
-			.end    = TEGRA_GPIO_PU6,
-			.flags  = IORESOURCE_IO,
-	},
-	[1] = {
-		.name = "gpio_ext_wake",
-			.start  = TEGRA_GPIO_PU1,
-			.end    = TEGRA_GPIO_PU1,
-			.flags  = IORESOURCE_IO,
-	},
-	[2] = {
-		.name = "host_wake",
-			.start  = TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PU6),
-			.end    = TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PU6),
-			.flags  = IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHEDGE,
-	},
-};
-
-static struct platform_device antares_bluesleep_device = {
-	.name           = "bluesleep",
-	.id             = -1,
-	.num_resources  = ARRAY_SIZE(antares_bluesleep_resources),
-	.resource       = antares_bluesleep_resources,
-};
-
-static void __init antares_setup_bluesleep(void)
+#ifdef CONFIG_BT_BLUESLEEP
+static noinline void __init tegra_setup_bluesleep(void)
 {
-	platform_device_register(&antares_bluesleep_device);
+	struct platform_device *pdev = NULL;
+	struct resource *res;
+
+	pdev = platform_device_alloc("bluesleep", 0);
+	if (!pdev) {
+		pr_err("unable to allocate platform device for bluesleep");
+		return;
+	}
+
+	res = kzalloc(sizeof(struct resource) * 3, GFP_KERNEL);
+	if (!res) {
+		pr_err("unable to allocate resource for bluesleep\n");
+		goto err_free_dev;
+	}
+
+	res[0].name   = "gpio_host_wake";
+	res[0].start  = TEGRA_GPIO_PU6;
+	res[0].end    = TEGRA_GPIO_PU6;
+	res[0].flags  = IORESOURCE_IO;
+
+	res[1].name   = "gpio_ext_wake";
+	res[1].start  = TEGRA_GPIO_PU1;
+	res[1].end    = TEGRA_GPIO_PU1;
+	res[1].flags  = IORESOURCE_IO;
+
+	res[2].name   = "host_wake";
+	res[2].start  = gpio_to_irq(TEGRA_GPIO_PU6);
+	res[2].end    = gpio_to_irq(TEGRA_GPIO_PU6);
+	res[2].flags  = IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHEDGE;
+
+	if (platform_device_add_resources(pdev, res, 3)) {
+		pr_err("unable to add resources to bluesleep device\n");
+		goto err_free_res;
+	}
+
+	if (platform_device_add(pdev)) {
+		pr_err("unable to add bluesleep device\n");
+		goto err_free_res;
+	}
+
 	tegra_gpio_enable(TEGRA_GPIO_PU6);
 	tegra_gpio_enable(TEGRA_GPIO_PU1);
+
+	return;
+
+err_free_res:
+	kfree(res);
+err_free_dev:
+	platform_device_put(pdev);
 	return;
 }
+#else
+static inline void tegra_setup_bluesleep(void) { }
+#endif
+
+#ifdef CONFIG_ANTARES_WWAN_RFKILL
+static struct resource antares_wwan_rfkill_resources[] = {
+    {
+        .name      = "wwan_disable_gpio",
+        .start     = TEGRA_GPIO_PT4,
+        .end       = TEGRA_GPIO_PT4,
+        .flags     = IORESOURCE_IO,
+    },
+};
+
+static struct platform_device antares_wwan_rfkill_device = {
+    .name          = "antares_wwan_rfkill",
+    .id            = -1,
+    .num_resources = ARRAY_SIZE(antares_wwan_rfkill_resources),
+    .resource      = antares_wwan_rfkill_resources,
+};
+static noinline void __init antares_wwan_rfkill(void)
+{
+    platform_device_register(&antares_wwan_rfkill_device);
+
+    return;
+}
+#else
+static inline void antares_wwan_rfkill(void) {}
+#endif
+
+struct kobject *SCROPIO_PHY_STATUS;
+
+static ssize_t phy_status_show(struct kobject *kobj, struct kobj_attribute *attr,
+			  char *buf){
+	int ret;
+	ret= gpio_get_value(TEGRA_GPIO_PL2);
+	return sprintf(buf, "%d\n", ret);
+	
+}
+
+static struct kobj_attribute PHY_detect_attr = {	\
+	.attr	= {				\
+		.name = __stringify(status),	\
+		.mode = 0644,			\
+	},					\
+	.show	= phy_status_show,			\
+};
+
+
 
 static __initdata struct tegra_clk_init_table antares_clk_init_table[] = {
 	/* name		parent		rate		enabled */
+	{ "uartd",	"pll_p",	216000000,	true},
+	{ "uartc",	"pll_m",	600000000,	false},
 	{ "blink",	"clk_32k",	32768,		false},
 	{ "pll_p_out4",	"pll_p",	24000000,	true },
-	//{ "pwm",	"clk_32k",	32768,		false},
-	{ "pwm",        "clk_m",        12000000,       false},
-	{ "i2s1",	"pll_a_out0",	0,		false},
-	{ "i2s2",	"pll_a_out0",	0,		false},
-	{ "spdif_out",	"pll_a_out0",	0,		false},
+	/*{ "pwm",	"clk_32k",	32768,		false},*/
+	{ "pwm",	"clk_m",     12000000,	    false},
+	{ "pll_a",	NULL,		56448000,	false},
+	{ "pll_a_out0",	NULL,		11289600,	false},
+	{ "i2s1",	"pll_a_out0",	11289600,	false},
+	{ "i2s2",	"pll_a_out0",	11289600,	false},
+	{ "audio",	"pll_a_out0",	11289600,	false},
+	{ "audio_2x",	"audio",	22579200,	false},
+	{ "spdif_out",	"pll_a_out0",	5644800,	false},
+	{ "kbc",	"clk_32k",	32768,		true},
 	{ NULL,		NULL,		0,		0},
 };
 
+#define USB_MANUFACTURER_NAME		"TOSHIBA"
+#define USB_PRODUCT_NAME		"AT1S0"
+#define USB_PRODUCT_ID_MTP_ADB		0x7100
+#define USB_PRODUCT_ID_MTP		0x7102
+#define USB_PRODUCT_ID_RNDIS		0x7103
+#define USB_VENDOR_ID			0x0930
+
+#ifdef CONFIG_USB_ANDROID_MASS_STORAGE
+static char *usb_functions_mtp_ums[] = { "mtp", "usb_mass_storage" };
+static char *usb_functions_mtp_adb_ums[] = { "mtp", "adb", "usb_mass_storage" };
+#else
+static char *usb_functions_mtp_ums[] = { "mtp" };
+static char *usb_functions_mtp_adb_ums[] = { "mtp", "adb" };
+#endif
+#ifdef CONFIG_USB_ANDROID_ACCESSORY
+static char *usb_functions_accessory[] = { "accessory" };
+static char *usb_functions_accessory_adb[] = { "accessory", "adb" };
+#endif
+#ifdef CONFIG_USB_ANDROID_RNDIS
+static char *usb_functions_rndis[] = { "rndis" };
+static char *usb_functions_rndis_adb[] = { "rndis", "adb" };
+#endif
+static char *usb_functions_all[] = {
+#ifdef CONFIG_USB_ANDROID_RNDIS
+	"rndis",
+#endif
+#ifdef CONFIG_USB_ANDROID_ACCESSORY
+    "accessory",
+#endif
+	"mtp",
+	"adb",
+#ifdef CONFIG_USB_ANDROID_MASS_STORAGE
+	"usb_mass_storage"
+#endif
+};
+
+static struct android_usb_product usb_products[] = {
+	{
+		.product_id     = USB_PRODUCT_ID_MTP,
+		.num_functions  = ARRAY_SIZE(usb_functions_mtp_ums),
+		.functions      = usb_functions_mtp_ums,
+	},
+	{
+		.product_id     = USB_PRODUCT_ID_MTP_ADB,
+		.num_functions  = ARRAY_SIZE(usb_functions_mtp_adb_ums),
+		.functions      = usb_functions_mtp_adb_ums,
+	},
+#ifdef CONFIG_USB_ANDROID_ACCESSORY
+    {
+        .vendor_id      = USB_ACCESSORY_VENDOR_ID,
+        .product_id     = USB_ACCESSORY_PRODUCT_ID,
+        .num_functions  = ARRAY_SIZE(usb_functions_accessory),
+        .functions      = usb_functions_accessory,
+    },
+    {
+        .vendor_id      = USB_ACCESSORY_VENDOR_ID,
+        .product_id     = USB_ACCESSORY_PRODUCT_ID,
+        .num_functions  = ARRAY_SIZE(usb_functions_accessory_adb),
+        .functions      = usb_functions_accessory_adb,
+    },
+#endif
+#ifdef CONFIG_USB_ANDROID_RNDIS
+	{
+		.product_id     = USB_PRODUCT_ID_RNDIS,
+		.num_functions  = ARRAY_SIZE(usb_functions_rndis),
+		.functions      = usb_functions_rndis,
+	},
+	{
+		.product_id     = USB_PRODUCT_ID_RNDIS,
+		.num_functions  = ARRAY_SIZE(usb_functions_rndis_adb),
+		.functions      = usb_functions_rndis_adb,
+	},
+#endif
+};
+
+/* standard android USB platform data */
+static struct android_usb_platform_data andusb_plat = {
+	.vendor_id              = USB_VENDOR_ID,
+	.product_id             = USB_PRODUCT_ID_MTP_ADB,
+	.manufacturer_name      = USB_MANUFACTURER_NAME,
+	.product_name           = USB_PRODUCT_NAME,
+	.serial_number          = NULL,
+	.num_products = ARRAY_SIZE(usb_products),
+	.products = usb_products,
+	.num_functions = ARRAY_SIZE(usb_functions_all),
+	.functions = usb_functions_all,
+};
+
+static struct platform_device androidusb_device = {
+	.name   = "android_usb",
+	.id     = -1,
+	.dev    = {
+		.platform_data  = &andusb_plat,
+	},
+};
+
+#ifdef CONFIG_USB_ANDROID_RNDIS
+static struct usb_ether_platform_data rndis_pdata = {
+	.ethaddr = {0, 0, 0, 0, 0, 0},
+	.vendorID = USB_VENDOR_ID,
+	.vendorDescr = USB_MANUFACTURER_NAME,
+};
+
+static struct platform_device rndis_device = {
+	.name   = "rndis",
+	.id     = -1,
+	.dev    = {
+		.platform_data  = &rndis_pdata,
+	},
+};
+#endif
+
+static struct wm8903_platform_data wm8903_pdata = {
+	.irq_active_low = 0,
+	.micdet_cfg = 0x00,           /* enable mic bias current */
+	.micdet_delay = 0,
+	.gpio_base = WM8903_GPIO_BASE,
+	.gpio_cfg = {
+		(0x06<<WM8903_GP1_FN_SHIFT) | WM8903_GP1_LVL | WM8903_GP1_DB,
+		(0x06<<WM8903_GP1_FN_SHIFT) | WM8903_GP1_DIR | WM8903_GP1_IP_CFG,
+		0,                     /* as output pin */
+		WM8903_GPIO_NO_CONFIG,
+		WM8903_GPIO_NO_CONFIG,
+	},
+};
+
+static struct i2c_board_info __initdata antares_i2c_bus1_board_info[] = {
+	{
+		I2C_BOARD_INFO("wm8903", 0x1a),
+		.platform_data = &wm8903_pdata,
+	},
+};
+
+#ifdef CONFIG_SND_SOC_FM34
+static int fm34_pwr = TEGRA_GPIO_PU2;
+
+static const struct i2c_board_info antares_i2c_bus1_fm34_info[] = {
+	{
+		I2C_BOARD_INFO("fm34_i2c", 0x60),
+		.platform_data = &fm34_pwr,
+	},
+};
+
+static int __init antares_fm34_init(void)
+{
+	tegra_gpio_enable(fm34_pwr);
+
+	i2c_register_board_info(0, antares_i2c_bus1_fm34_info, 1);
+
+	return 0;
+}
+#endif
+
+#ifdef CONFIG_TEGRA_ODM_DMIEEP
+struct tag_platform_data {
+    int             num_data;
+    unsigned char*  data;
+};
+
+static unsigned char calibrate_data[60] = {0};
+
+static struct tag_platform_data antares_tag_platform_data = {
+	.data		= calibrate_data,
+	.num_data	= ARRAY_SIZE(calibrate_data),
+};
+
+static struct platform_device tegra_dmieep_device = {
+    .name = "dmieep",
+    .id = -1,
+    .dev = {
+		.platform_data  = &antares_tag_platform_data,
+    },
+};
+#endif
+
 static struct tegra_ulpi_config antares_ehci2_ulpi_phy_config = {
 	.reset_gpio = TEGRA_GPIO_PV1,
-	.clk = "cdev2",
+	.clk = "clk_dev2",
 };
 
 static struct tegra_ehci_platform_data antares_ehci2_ulpi_platform_data = {
 	.operating_mode = TEGRA_USB_HOST,
 	.power_down_on_bus_suspend = 1,
 	.phy_config = &antares_ehci2_ulpi_phy_config,
-	.phy_type = TEGRA_USB_PHY_TYPE_LINK_ULPI,
-	.default_enable = true,
 };
 
 static struct tegra_i2c_platform_data antares_i2c1_platform_data = {
@@ -223,9 +493,6 @@ static struct tegra_i2c_platform_data antares_i2c1_platform_data = {
 	.bus_count	= 1,
 	.bus_clk_rate	= { 400000, 0 },
 	.slave_addr = 0x00FC,
-	.scl_gpio		= {TEGRA_GPIO_PC4, 0},
-	.sda_gpio		= {TEGRA_GPIO_PC5, 0},
-	.arb_recovery = arb_lost_recovery,
 };
 
 static const struct tegra_pingroup_config i2c2_ddc = {
@@ -245,9 +512,6 @@ static struct tegra_i2c_platform_data antares_i2c2_platform_data = {
 	.bus_mux	= { &i2c2_ddc, &i2c2_gen2 },
 	.bus_mux_len	= { 1, 1 },
 	.slave_addr = 0x00FC,
-	.scl_gpio		= {0, TEGRA_GPIO_PT5},
-	.sda_gpio		= {0, TEGRA_GPIO_PT6},
-	.arb_recovery = arb_lost_recovery,
 };
 
 static struct tegra_i2c_platform_data antares_i2c3_platform_data = {
@@ -255,9 +519,6 @@ static struct tegra_i2c_platform_data antares_i2c3_platform_data = {
 	.bus_count	= 1,
 	.bus_clk_rate	= { 400000, 0 },
 	.slave_addr = 0x00FC,
-	.scl_gpio		= {TEGRA_GPIO_PBB2, 0},
-	.sda_gpio		= {TEGRA_GPIO_PBB3, 0},
-	.arb_recovery = arb_lost_recovery,
 };
 
 static struct tegra_i2c_platform_data antares_dvc_platform_data = {
@@ -265,36 +526,124 @@ static struct tegra_i2c_platform_data antares_dvc_platform_data = {
 	.bus_count	= 1,
 	.bus_clk_rate	= { 100000, 0 },
 	.is_dvc		= true,
-	.scl_gpio		= {TEGRA_GPIO_PZ6, 0},
-	.sda_gpio		= {TEGRA_GPIO_PZ7, 0},
-	.arb_recovery = arb_lost_recovery,
 };
 
-static struct wm8903_platform_data antares_wm8903_pdata = {
-	.irq_active_low = 0,
-	.micdet_cfg = 0,
-	.micdet_delay = 100,
-	.gpio_base = ANTARES_GPIO_WM8903(0),
-	.gpio_cfg = {
-		(WM8903_GPn_FN_DMIC_LR_CLK_OUTPUT << WM8903_GP1_FN_SHIFT) | WM8903_GP1_LVL | WM8903_GP1_DB,
-		(WM8903_GPn_FN_DMIC_LR_CLK_OUTPUT << WM8903_GP1_FN_SHIFT) | WM8903_GP1_DIR | WM8903_GP1_IP_CFG,
-		0,
-		WM8903_GPIO_NO_CONFIG,
-		WM8903_GPIO_NO_CONFIG,
+static struct tegra_audio_platform_data tegra_audio_pdata[] = {
+	/* For I2S1 */
+	[0] = {
+		.i2s_master	= true,
+		.dma_on		= true,  /* use dma by default */
+		.i2s_master_clk = 44100,
+		.i2s_clk_rate	= 11289600,
+		.dap_clk	= "clk_dev1",
+		.audio_sync_clk = "audio_2x",
+		.mode		= I2S_BIT_FORMAT_I2S,
+		.fifo_fmt	= I2S_FIFO_PACKED,
+		.bit_size	= I2S_BIT_SIZE_16,
+		.i2s_bus_width = 32,
+		.dsp_bus_width = 16,
 	},
-	.adc_digital_volume = 0xEF,
-	.adc_analogue_volume = 0x1B,
-	.dac_digital_volume = 0xBD,
-	.dac_headphone_volume = 0x39,
-	.dac_ext_hp_volume = 0x3A,
-	.dac_speaker_volume = 0x3A,
-
+	/* For I2S2 */
+	[1] = {
+		.i2s_master	= true,
+		.dma_on		= true,  /* use dma by default */
+		.i2s_master_clk = 8000,
+		.dsp_master_clk = 8000,
+		.i2s_clk_rate	= 2000000,
+		.dap_clk	= "clk_dev1",
+		.audio_sync_clk = "audio_2x",
+		.mode		= I2S_BIT_FORMAT_DSP,
+		.fifo_fmt	= I2S_FIFO_16_LSB,
+		.bit_size	= I2S_BIT_SIZE_16,
+		.i2s_bus_width = 32,
+		.dsp_bus_width = 16,
+	}
 };
 
-static struct i2c_board_info __initdata wm8903_board_info = {
-	I2C_BOARD_INFO("wm8903", 0x1a),
-	.platform_data = &antares_wm8903_pdata,
-	.irq = 0,
+static struct tegra_das_platform_data tegra_das_pdata = {
+	.dap_clk = "clk_dev1",
+	.tegra_dap_port_info_table = {
+		/* I2S1 <--> DAC1 <--> DAP1 <--> Hifi Codec */
+		[0] = {
+			.dac_port = tegra_das_port_i2s1,
+			.dap_port = tegra_das_port_dap1,
+			.codec_type = tegra_audio_codec_type_hifi,
+			.device_property = {
+				.num_channels = 2,
+				.bits_per_sample = 16,
+				.rate = 44100,
+				.dac_dap_data_comm_format =
+						dac_dap_data_format_all,
+			},
+		},
+		[1] = {
+			.dac_port = tegra_das_port_none,
+			.dap_port = tegra_das_port_none,
+			.codec_type = tegra_audio_codec_type_none,
+			.device_property = {
+				.num_channels = 0,
+				.bits_per_sample = 0,
+				.rate = 0,
+				.dac_dap_data_comm_format = 0,
+			},
+		},
+		[2] = {
+			.dac_port = tegra_das_port_none,
+			.dap_port = tegra_das_port_none,
+			.codec_type = tegra_audio_codec_type_none,
+			.device_property = {
+				.num_channels = 0,
+				.bits_per_sample = 0,
+				.rate = 0,
+				.dac_dap_data_comm_format = 0,
+			},
+		},
+		/* I2S2 <--> DAC2 <--> DAP4 <--> BT SCO Codec */
+		[3] = {
+			.dac_port = tegra_das_port_i2s2,
+			.dap_port = tegra_das_port_dap4,
+			.codec_type = tegra_audio_codec_type_bluetooth,
+			.device_property = {
+				.num_channels = 1,
+				.bits_per_sample = 16,
+				.rate = 8000,
+				.dac_dap_data_comm_format =
+					dac_dap_data_format_dsp,
+			},
+		},
+		[4] = {
+			.dac_port = tegra_das_port_none,
+			.dap_port = tegra_das_port_none,
+			.codec_type = tegra_audio_codec_type_none,
+			.device_property = {
+				.num_channels = 0,
+				.bits_per_sample = 0,
+				.rate = 0,
+				.dac_dap_data_comm_format = 0,
+			},
+		},
+	},
+
+	.tegra_das_con_table = {
+		[0] = {
+			.con_id = tegra_das_port_con_id_hifi,
+			.num_entries = 2,
+			.con_line = {
+				[0] = {tegra_das_port_i2s1, tegra_das_port_dap1, true},
+				[1] = {tegra_das_port_dap1, tegra_das_port_i2s1, false},
+			},
+		},
+		[1] = {
+			.con_id = tegra_das_port_con_id_bt_codec,
+			.num_entries = 4,
+			.con_line = {
+				[0] = {tegra_das_port_i2s2, tegra_das_port_dap4, true},
+				[1] = {tegra_das_port_dap4, tegra_das_port_i2s2, false},
+				[2] = {tegra_das_port_i2s1, tegra_das_port_dap1, true},
+				[3] = {tegra_das_port_dap1, tegra_das_port_i2s1, false},
+			},
+		},
+	}
 };
 
 static void antares_i2c_init(void)
@@ -304,12 +653,12 @@ static void antares_i2c_init(void)
 	tegra_i2c_device3.dev.platform_data = &antares_i2c3_platform_data;
 	tegra_i2c_device4.dev.platform_data = &antares_dvc_platform_data;
 
+	i2c_register_board_info(0, antares_i2c_bus1_board_info, 1);
+
 	platform_device_register(&tegra_i2c_device1);
 	platform_device_register(&tegra_i2c_device2);
 	platform_device_register(&tegra_i2c_device3);
 	platform_device_register(&tegra_i2c_device4);
-
-	i2c_register_board_info(0, &wm8903_board_info, 1);
 }
 
 #ifdef CONFIG_LEDS_GPIO
@@ -320,7 +669,6 @@ static struct gpio_led antares_leds[] = {
 		.gpio			= TEGRA_GPIO_PD5,
 		.active_low		= 0,
 		.default_state = LEDS_GPIO_DEFSTATE_OFF,
-		.retain_state_suspended = 1,
 	},
 };
 
@@ -346,81 +694,6 @@ static void antares_leds_init(void)
 }
 #endif
 
-static struct platform_device *antares_uart_devices[] __initdata = {
-	&tegra_uartb_device,
-	&tegra_uartc_device,
-	&tegra_uartd_device,
-};
-
-static struct uart_clk_parent uart_parent_clk[] = {
-	[0] = {.name = "pll_p"},
-	[1] = {.name = "pll_m"},
-	[2] = {.name = "clk_m"},
-};
-
-static struct tegra_uart_platform_data antares_uart_pdata;
-
-static void __init uart_debug_init(void)
-{
-	unsigned long rate;
-	struct clk *c;
-
-	/* UARTD is the debug port. */
-	pr_info("Selecting UARTD as the debug console\n");
-	antares_uart_devices[2] = &debug_uartd_device;
-	debug_uart_port_base = ((struct plat_serial8250_port *)(
-			debug_uartd_device.dev.platform_data))->mapbase;
-	debug_uart_clk = clk_get_sys("serial8250.0", "uartd");
-
-	/* Clock enable for the debug channel */
-	if (!IS_ERR_OR_NULL(debug_uart_clk)) {
-		rate = ((struct plat_serial8250_port *)(
-			debug_uartd_device.dev.platform_data))->uartclk;
-		pr_info("The debug console clock name is %s\n",
-						debug_uart_clk->name);
-		c = tegra_get_clock_by_name("pll_p");
-		if (IS_ERR_OR_NULL(c))
-			pr_err("Not getting the parent clock pll_p\n");
-		else
-			clk_set_parent(debug_uart_clk, c);
-
-		clk_enable(debug_uart_clk);
-		clk_set_rate(debug_uart_clk, rate);
-	} else {
-		pr_err("Not getting the clock %s for debug console\n",
-					debug_uart_clk->name);
-	}
-}
-
-static void __init antares_uart_init(void)
-{
-	int i;
-	struct clk *c;
-
-	for (i = 0; i < ARRAY_SIZE(uart_parent_clk); ++i) {
-		c = tegra_get_clock_by_name(uart_parent_clk[i].name);
-		if (IS_ERR_OR_NULL(c)) {
-			pr_err("Not able to get the clock for %s\n",
-						uart_parent_clk[i].name);
-			continue;
-		}
-		uart_parent_clk[i].parent_clk = c;
-		uart_parent_clk[i].fixed_clk_rate = clk_get_rate(c);
-	}
-	antares_uart_pdata.parent_clk_list = uart_parent_clk;
-	antares_uart_pdata.parent_clk_count = ARRAY_SIZE(uart_parent_clk);
-	tegra_uartb_device.dev.platform_data = &antares_uart_pdata;
-	tegra_uartc_device.dev.platform_data = &antares_uart_pdata;
-	tegra_uartd_device.dev.platform_data = &antares_uart_pdata;
-
-	/* Register low speed only if it is selected */
-	if (!is_tegra_debug_uartport_hs())
-		uart_debug_init();
-
-	platform_add_devices(antares_uart_devices,
-				ARRAY_SIZE(antares_uart_devices));
-}
-
 #ifdef CONFIG_KEYBOARD_GPIO
 #define GPIO_KEY(_id, _gpio, _iswake)		\
 	{					\
@@ -434,30 +707,29 @@ static void __init antares_uart_init(void)
 	}
 
 static struct gpio_keys_button antares_keys[] = {
-        [0] = GPIO_KEY(KEY_VOLUMEUP, PQ5, 0),
+	[0] = GPIO_KEY(KEY_VOLUMEUP, PQ5, 0),
 	[1] = GPIO_KEY(KEY_VOLUMEDOWN, PQ4, 0),
 	[2] = GPIO_KEY(KEY_POWER, PV2, 1),
-	
 };
 
 #define PMC_WAKE_STATUS 0x14
 
 static int antares_wakeup_key(void)
 {
-        int pending_wakeup_irq;
+    int pending_wakeup_irq;
 	unsigned long status =
 		readl(IO_ADDRESS(TEGRA_PMC_BASE) + PMC_WAKE_STATUS);
+    
+    writel(0xffffffff, IO_ADDRESS(TEGRA_PMC_BASE) + PMC_WAKE_STATUS);
+    pending_wakeup_irq = get_pending_wakeup_irq();
 
-	 writel(0xffffffff, IO_ADDRESS(TEGRA_PMC_BASE) + PMC_WAKE_STATUS);
-         pending_wakeup_irq = get_pending_wakeup_irq();
-
-         if ((status & TEGRA_WAKE_GPIO_PV2) ||
-            (pending_wakeup_irq == 362)) /* power button */
-            return KEY_POWER;
-         else if (status & TEGRA_WAKE_GPIO_PV3) /* AC adapter plug in/out */
-            return KEY_POWER;
-         else
-            return KEY_RESERVED;
+    if ((status & TEGRA_WAKE_GPIO_PV2) ||
+        (pending_wakeup_irq == 362)) /* power button */
+        return KEY_POWER;
+    else if (status & TEGRA_WAKE_GPIO_PV3) /* AC adapter plug in/out */
+        return KEY_POWER;
+    else
+        return KEY_RESERVED;
 }
 
 static struct gpio_keys_platform_data antares_keys_platform_data = {
@@ -495,7 +767,7 @@ static void antares_keys_init(void)
 	}
 
 static struct gpio_switch antares_switches[] = {
-	[0] = GPIO_SWITCH(SW_ROTATE_LOCK, PH2),
+	[0] = GPIO_SWITCH(SW_ORIENT_HOLD, PH2),
 };
 
 static struct gpio_sw_platform_data antares_sw_platform_data = {
@@ -514,6 +786,7 @@ static struct platform_device antares_switches_device = {
 static void antares_switches_init(void)
 {
 	int i;
+
 	for (i = 0; i < ARRAY_SIZE(antares_switches); i++)
 		tegra_gpio_enable(antares_switches[i].gpio);
 }
@@ -528,7 +801,6 @@ static struct dock_platform_data dock_on_platform_data = {
 		.irq		= TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PG2),
 		.gpio_num	= TEGRA_GPIO_PG2,
 };
-
 static struct platform_device tegra_dock_device =
 {
     .name = "tegra_dock",
@@ -537,26 +809,15 @@ static struct platform_device tegra_dock_device =
 		.platform_data = &dock_on_platform_data,
 	},
 };
-static struct tegra_wm8903_platform_data antares_audio_pdata = {
-	.gpio_spkr_en		= TEGRA_GPIO_SPKR_EN,
-	.gpio_hp_det		= TEGRA_GPIO_HP_DET,
-	.gpio_ext_mic_en	= TEGRA_GPIO_AMIC_EN,
-	.gpio_ext_mic_det	= TEGRA_GPIO_AMIC_DET,
-	.gpio_hp_mute		= -1,
-	.gpio_ext_hp_det	= TEGRA_GPIO_EXT_HP_DET,
-	.gpio_int_spkr_en       = TEGRA_GPIO_INT_SPKR_EN,
-};
-
-static struct platform_device antares_audio_device = {
-	.name	= "tegra-snd-wm8903",
-	.id	= 0,
-	.dev	= {
-		.platform_data  = &antares_audio_pdata,
-	},
-};
 
 static struct platform_device *antares_devices[] __initdata = {
-	&tegra_pmu_device,
+#ifdef CONFIG_USB_ANDROID_MASS_STORAGE
+	&tegra_usb_fsg_device,
+#endif
+	&androidusb_device,
+	&tegra_uartb_device,
+	&tegra_uartc_device,
+	&pmu_device,
 	&tegra_udc_device,
 	&tegra_ehci2_device,
 	&tegra_gart_device,
@@ -571,72 +832,31 @@ static struct platform_device *antares_devices[] __initdata = {
 	&antares_switches_device,
 #endif
 	&tegra_wdt_device,
-	&tegra_avp_device,
-	&tegra_camera,
 	&tegra_i2s_device1,
 	&tegra_i2s_device2,
 	&tegra_spdif_device,
+	&tegra_avp_device,
+	&tegra_camera,
 	&tegra_das_device,
 	&tegra_pwfm1_device,
 	&tegra_dock_device,
-	&spdif_dit_device,
-	&bluetooth_dit_device,
-	&antares_bcm4329_rfkill_device,
 #ifdef CONFIG_TEGRA_ODM_DMIEEP
-	&tegra_dmieep_device,
+    &tegra_dmieep_device,
 #endif
-	&tegra_pcm_device,
-	&antares_audio_device,
 };
 
-#ifdef CONFIG_TOUCHSCREEN_ATMEL_MXT
-static struct mxt_platform_data atmel_mxt_info = {
-	.x_line		= 27,
-	.y_line		= 42,
-	.x_size		= 768,
-	.y_size		= 1366,
-	.blen		= 0x20,
-	.threshold	= 0x3C,
-	.voltage	= 3300000,
-	.orient		= MXT_ROTATED_90,
-	.irqflags	= IRQF_TRIGGER_FALLING,
-};
-
-static struct i2c_board_info __initdata i2c_info[] = {
-	{
-	 I2C_BOARD_INFO("atmel_mxt_ts", 0x5A),
-	 .irq = TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PV6),
-	 .platform_data = &atmel_mxt_info,
-	 },
-};
-#endif
-/*static int __init antares_touch_init_atmel(void)
-{
-      tegra_gpio_enable(TEGRA_GPIO_PV6);
-      tegra_gpio_enable(TEGRA_GPIO_PQ7);
-
-      gpio_request(TEGRA_GPIO_PV6, "atmel-irq");
-      gpio_direction_input(TEGRA_GPIO_PV6);
-
-      gpio_request(TEGRA_GPIO_PQ7, "atmel-reset");
-      gpio_direction_output(TEGRA_GPIO_PQ7, 0);
-      msleep(1);
-      gpio_set_value(TEGRA_GPIO_PQ7, 1);
-      msleep(100);
-
-      i2c_register_board_info(0, antares_i2c_bus1_touch_info, 1); */
 
 #ifdef CONFIG_TOUCHSCREEN_PANJIT_I2C
 static struct panjit_i2c_ts_platform_data panjit_data = {
 	.gpio_reset = TEGRA_GPIO_PQ7,
 };
 
-static struct i2c_board_info __initdata antares_i2c_bus1_touch_info[] = {
+static const struct i2c_board_info antares_i2c_bus1_touch_info[] = {
 	{
-		I2C_BOARD_INFO("panjit_touch", 0x3),
-		.irq = TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PV6),
-		.platform_data = &panjit_data,
-	},
+	 I2C_BOARD_INFO("panjit_touch", 0x3),
+	 .irq = TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PV6),
+	 .platform_data = &panjit_data,
+	 },
 };
 
 static int __init antares_touch_init_panjit(void)
@@ -645,10 +865,10 @@ static int __init antares_touch_init_panjit(void)
 
 	tegra_gpio_enable(TEGRA_GPIO_PQ7);
 	i2c_register_board_info(0, antares_i2c_bus1_touch_info, 1);
-#endif
-/*	return 0;
-} */
 
+	return 0;
+}
+#endif
 
 #ifdef CONFIG_TOUCHSCREEN_ATMEL_MT_T9
 /* Atmel MaxTouch touchscreen              Driver data */
@@ -668,35 +888,38 @@ static u8 valid_interrupt(void)
 }
 
 static struct mxt_platform_data Atmel_mxt_info = {
-/* Maximum number of simultaneous touches to report. */
-       .numtouch = 10,
-// TODO: no need for any hw-specific things at init/exit?
-       .init_platform_hw = NULL,
-       .exit_platform_hw = NULL,
-       .max_x = 1279,
-       .max_y = 799,
-       .valid_interrupt = &valid_interrupt,
-       .read_chg = &read_chg,
+	/* Maximum number of simultaneous touches to report. */
+	.numtouch = NUM_TOUCH,
+	// TODO: no need for any hw-specific things at init/exit?
+	.init_platform_hw = NULL,
+	.exit_platform_hw = NULL,
+	.max_x = 4095,
+	.max_y = 4095,
+	.valid_interrupt = &valid_interrupt,
+	.read_chg = &read_chg,
 };
 
 static struct i2c_board_info __initdata i2c_info[] = {
-{
-     I2C_BOARD_INFO("maXTouch", MXT_I2C_ADDRESS),
-     .irq = TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PV6),
-     .platform_data = &Atmel_mxt_info,
-   },
+	{
+	 I2C_BOARD_INFO("maXTouch", MXT_I2C_ADDRESS),
+	 .irq = TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PV6),
+	 .platform_data = &Atmel_mxt_info,
+	 },
 };
 
 static int __init antares_touch_init_atmel(void)
 {
 	tegra_gpio_enable(TEGRA_GPIO_PV6);
+#if 0
 	tegra_gpio_enable(TEGRA_GPIO_PQ7);
-
-	gpio_set_value(TEGRA_GPIO_PQ7, 0);
-	msleep(1);
-	gpio_set_value(TEGRA_GPIO_PQ7, 1);
-	msleep(100);
-
+	printk(KERN_INFO "antares_touch_init_atmel\n");
+	gpio_request(TEGRA_GPIO_PQ7, "touch_reset");
+	gpio_direction_output(TEGRA_GPIO_PQ7, 0);
+	mdelay(1);
+	gpio_request(TEGRA_GPIO_PQ7, "touch_reset");
+	gpio_direction_output(TEGRA_GPIO_PQ7, 1);
+	mdelay(100);
+#endif 
 	i2c_register_board_info(0, i2c_info, 1);
 
 	return 0;
@@ -724,21 +947,16 @@ static struct tegra_ehci_platform_data tegra_ehci_pdata[] = {
 			.phy_config = &utmi_phy_config[0],
 			.operating_mode = TEGRA_USB_HOST,
 			.power_down_on_bus_suspend = 1,
-			.default_enable = true,
 	},
 	[1] = {
 			.phy_config = &ulpi_phy_config,
 			.operating_mode = TEGRA_USB_HOST,
 			.power_down_on_bus_suspend = 1,
-			.phy_type = TEGRA_USB_PHY_TYPE_LINK_ULPI,
-			.default_enable = true,
 	},
 	[2] = {
 			.phy_config = &utmi_phy_config[1],
 			.operating_mode = TEGRA_USB_HOST,
 			.power_down_on_bus_suspend = 1,
-			.hotplug = 1,
-			.default_enable = true,
 	},
 };
 
@@ -760,9 +978,65 @@ static int __init antares_touch_init_egalax(void)
 }
 #endif
 
+
+
+static void antares_usb_hub_ovcur_config(void)
+{
+    tegra_gpio_enable(TEGRA_GPIO_PU3);
+    gpio_request(TEGRA_GPIO_PU3, "usb_hub_ovcur");
+    gpio_direction_input(TEGRA_GPIO_PU3);
+}
+
+static struct platform_device *tegra_usb_otg_host_register(void)
+{
+	struct platform_device *pdev;
+	void *platform_data;
+	int val;
+
+	pdev = platform_device_alloc(tegra_ehci1_device.name, tegra_ehci1_device.id);
+	if (!pdev)
+		return NULL;
+
+	val = platform_device_add_resources(pdev, tegra_ehci1_device.resource,
+		tegra_ehci1_device.num_resources);
+	if (val)
+		goto error;
+
+	pdev->dev.dma_mask =  tegra_ehci1_device.dev.dma_mask;
+	pdev->dev.coherent_dma_mask = tegra_ehci1_device.dev.coherent_dma_mask;
+
+	platform_data = kmalloc(sizeof(struct tegra_ehci_platform_data), GFP_KERNEL);
+	if (!platform_data)
+		goto error;
+
+	memcpy(platform_data, &tegra_ehci_pdata[0],
+				sizeof(struct tegra_ehci_platform_data));
+	pdev->dev.platform_data = platform_data;
+
+	val = platform_device_add(pdev);
+	if (val)
+		goto error_add;
+
+	return pdev;
+
+error_add:
+	kfree(platform_data);
+error:
+	pr_err("%s: failed to add the host contoller device\n", __func__);
+	platform_device_put(pdev);
+	return NULL;
+}
+
+static void tegra_usb_otg_host_unregister(struct platform_device *pdev)
+{
+	kfree(pdev->dev.platform_data);
+	pdev->dev.platform_data = NULL;
+	platform_device_unregister(pdev);
+}
+
 static struct tegra_otg_platform_data tegra_otg_pdata = {
-	.ehci_device = &tegra_ehci1_device,
-	.ehci_pdata = &tegra_ehci_pdata[0],
+	.host_register = &tegra_usb_otg_host_register,
+	.host_unregister = &tegra_usb_otg_host_unregister,
 };
 
 static int __init antares_gps_init(void)
@@ -779,14 +1053,16 @@ static int __init antares_gps_init(void)
 
 static void antares_power_off(void)
 {
-        int ret;
-        int retry = 10;
-        while(retry--){
-                ret = tps6586x_power_off();
-                if (ret)
-                        pr_err("antares: failed to power off\n");
-        }
-        while(1);
+	int ret;
+    int retry = 10;
+
+    while (retry--) {
+        ret = tps6586x_power_off();
+        if (ret)
+            pr_err("antares: failed to power off\n");
+    }
+
+	while(1);
 }
 
 static void __init antares_power_off_init(void)
@@ -794,86 +1070,66 @@ static void __init antares_power_off_init(void)
 	pm_power_off = antares_power_off;
 }
 
+#define SERIAL_NUMBER_LENGTH 20
+static char usb_serial_num[SERIAL_NUMBER_LENGTH];
 static void antares_usb_init(void)
 {
+	char *src = NULL;
+	int i;
+
+	antares_usb_hub_ovcur_config();
+
 	tegra_usb_phy_init(tegra_usb_phy_pdata, ARRAY_SIZE(tegra_usb_phy_pdata));
-	/* OTG should be the first to be registered */
+
 	tegra_otg_device.dev.platform_data = &tegra_otg_pdata;
 	platform_device_register(&tegra_otg_device);
 
-	tegra_ehci3_device.dev.platform_data=&tegra_ehci_pdata[2];
-	platform_device_register(&tegra_ehci3_device);
-}
-#ifdef CONFIG_SND_SOC_FM34
-const static u16 fm34_property[][2] = {
-	{0x22C8, 0x0026},
-	{0x22D2, 0x8A94},
-	{0x22E3, 0x50C2},
-	{0x22EE, 0x0000},
-	{0x22F2, 0x0040},
-	{0x22F6, 0x0002},
-	{0x22F8, 0x8005},
-	{0x22F9, 0x085F},
-	{0x22FA, 0x2483},
-	{0x2301, 0x0002},
-	{0x2303, 0x0021},
-	{0x2305, 0x0004},
-	{0x2307, 0xF8F8},       // Entry MIC in Gain
-	{0x2309, 0x0800},
-	{0x230C, 0x1000},       // Leave MIC In Gain
-	{0x230D, 0x0100},       // Speaker Out Gain
-	{0x2310, 0x1880},
-	{0x2325, 0x5000},
-	{0x232F, 0x0080},
-	{0x2332, 0x0200},
-	{0x2333, 0x0020},
-	{0x2339, 0x0010},
-	{0x2357, 0x0100},
-	{0x2391, 0x4000},
-	{0x2392, 0x4000},
-	{0x2393, 0x4000},
-	{0x2394, 0x4000},
-	{0x2395, 0x4000},
-	{0x23CF, 0x0050},
-	{0x23D5, 0x4B00},
-	{0x23D7, 0x002A},
-	{0x23E0, 0x4000},
-	{0x23E1, 0x4000},
-	{0x23E2, 0x4000},
-	{0x23E3, 0x4000},
-	{0x23E4, 0x4000},
-	{0x3FD2, 0x0032},
-	{0x22FB, 0x0000}
-};
+	//tegra_ehci3_device.dev.platform_data=&tegra_ehci_pdata[2];
+	//platform_device_register(&tegra_ehci3_device);
 
-static struct fm34_conf fm34_conf = {
-        .pwdn = TEGRA_GPIO_PU2,
-        .rst = -1,
-        .bp = -1,
-        .cprop = sizeof(fm34_property)/sizeof(u16)/2,
-        .pprop = (u16 *)fm34_property,
-};
+#ifdef CONFIG_USB_ANDROID_RNDIS
+	src = usb_serial_num;
 
-static const struct i2c_board_info antares_fm34_board_info[] = {
-	{
-		I2C_BOARD_INFO("fm34_i2c", 0x60),
-		.platform_data = &fm34_conf,
-	},
-};
-
-static int __init antares_fm34_init(void)
-{
-        tegra_gpio_enable(fm34_conf.pwdn);
-        if(fm34_conf.bp != -1)
-                tegra_gpio_enable(fm34_conf.bp);
-        if(fm34_conf.rst != -1)
-                tegra_gpio_enable(fm34_conf.rst);
-
-        i2c_register_board_info(0, antares_fm34_board_info, 1);
-
-        return 0;
-}
+	/* create a fake MAC address from our serial number.
+	 * first byte is 0x02 to signify locally administered.
+	 */
+	rndis_pdata.ethaddr[0] = 0x02;
+	for (i = 0; *src; i++) {
+		/* XOR the USB serial across the remaining bytes */
+		rndis_pdata.ethaddr[i % (ETH_ALEN - 1) + 1] ^= *src++;
+	}
+	platform_device_register(&rndis_device);
 #endif
+}
+
+
+static void usb_phy_detect_init(void){
+	int ret;
+	tegra_gpio_enable(TEGRA_GPIO_PL2);
+    ret= gpio_get_value(TEGRA_GPIO_PL2);/* TEGRA_GPIO_PL2:WWAN PHY detect pin */
+	printk("%s: USB phy detect pin value =%d\n",__func__, ret);
+
+	SCROPIO_PHY_STATUS = kobject_create_and_add("usb_phy_status", kernel_kobj);
+	if (!SCROPIO_PHY_STATUS)
+		printk("%s:[Waring] USB_PHY_STATUS create fail\n", __func__);
+	else{ 
+		ret = sysfs_create_file(SCROPIO_PHY_STATUS, &PHY_detect_attr.attr);
+	    if (ret != 0)
+			printk("sysfs_create_file return value = %d\n", ret);
+	}	
+	
+}
+
+static int is_usb_phy_exist (void){
+	
+	/* 		
+	 *	PHY detect pin define.
+	 *  0: USB PHY does not exist.
+	 *  1: USB PHY exist.
+	 */
+	return gpio_get_value(TEGRA_GPIO_PL2);    
+}	
+
 static void __init tegra_antares_init(void)
 {
 #if defined(CONFIG_TOUCHSCREEN_PANJIT_I2C) || \
@@ -881,22 +1137,34 @@ static void __init tegra_antares_init(void)
 	struct board_info BoardInfo;
 #endif
 
+	tegra_common_init();
 	tegra_clk_init_from_table(antares_clk_init_table);
 	antares_pinmux_init();
 	antares_i2c_init();
-	antares_uart_init();
+	snprintf(usb_serial_num, sizeof(usb_serial_num), "%llx", tegra_chip_uid());
+	andusb_plat.serial_number = kstrdup(usb_serial_num, GFP_KERNEL);
+	tegra_i2s_device1.dev.platform_data = &tegra_audio_pdata[0];
+	tegra_i2s_device2.dev.platform_data = &tegra_audio_pdata[1];
+	tegra_spdif_device.dev.platform_data = &tegra_spdif_pdata;
+	if (is_tegra_debug_uartport_hs() == true)
+		platform_device_register(&tegra_uartd_device);
+	else
+		platform_device_register(&debug_uart);
+	tegra_das_device.dev.platform_data = &tegra_das_pdata;
+		
+	usb_phy_detect_init();
+	if (is_usb_phy_exist())
 	tegra_ehci2_device.dev.platform_data
 		= &antares_ehci2_ulpi_platform_data;
 	platform_add_devices(antares_devices, ARRAY_SIZE(antares_devices));
-	tegra_ram_console_debug_init();
 
 #ifdef CONFIG_SND_SOC_FM34
 	antares_fm34_init();
 #endif
+
 	antares_sdhci_init();
 	antares_charge_init();
 	antares_regulator_init();
-	antares_charger_init();
     antares_ec_init();
 
 #if defined(CONFIG_TOUCHSCREEN_PANJIT_I2C) || \
@@ -908,42 +1176,43 @@ static void __init tegra_antares_init(void)
 	if (BoardInfo.sku) {
 		pr_info("Initializing Atmel touch driver\n");
 		antares_touch_init_atmel();
-	/*} else {
+	} else {
 		pr_info("Initializing Panjit touch driver\n");
-		antares_touch_init_panjit(); */
+		//antares_touch_init_panjit();
 	}
 #elif defined(CONFIG_TOUCHSCREEN_EGALAX_I2C)
 	pr_info("Initializing eGalax touch driver\n");
 	antares_touch_init_egalax();
 #endif
-
 #ifdef CONFIG_LEDS_GPIO
 	antares_leds_init();
 #endif
-
 #ifdef CONFIG_KEYBOARD_GPIO
 	antares_keys_init();
 #endif
 #ifdef CONFIG_INPUT_GPIO_SWITCH
 	antares_switches_init();
 #endif
+#ifdef CONFIG_KEYBOARD_TEGRA
+	antares_kbc_init();
+#endif
+
+	antares_wired_jack_init();
 	antares_usb_init();
 	antares_gps_init();
 	antares_panel_init();
 	antares_sensors_init();
 	antares_bt_rfkill();
+    antares_wwan_rfkill();
 	antares_power_off_init();
 	antares_emc_init();
-
-	antares_setup_bluesleep();
-	tegra_release_bootloader_fb();
+#ifdef CONFIG_BT_BLUESLEEP
+	tegra_setup_bluesleep();
+#endif
 }
 
 int __init tegra_antares_protected_aperture_init(void)
 {
-	if (!machine_is_ventana())
-		return 0;
-
 	tegra_protected_aperture_init(tegra_grhost_aperture);
 	return 0;
 }
@@ -954,18 +1223,18 @@ void __init tegra_antares_reserve(void)
 	if (memblock_reserve(0x0, 4096) < 0)
 		pr_warn("Cannot reserve first 4K of memory for safety\n");
 
-	tegra_reserve(SZ_256M, SZ_8M + SZ_1M, SZ_16M);
-	tegra_ram_console_debug_reserve(SZ_1M);
+	tegra_reserve(SZ_256M, SZ_8M, SZ_16M);
 }
 
 MACHINE_START(ANTARES, "antares")
 	.boot_params    = 0x00000100,
+	.phys_io        = IO_APB_PHYS,
+	.io_pg_offst    = ((IO_APB_VIRT) >> 18) & 0xfffc,
+	.init_irq       = tegra_init_irq,
+	.init_machine   = tegra_antares_init,
 	.map_io         = tegra_map_common_io,
 	.reserve        = tegra_antares_reserve,
-	.init_early	= tegra_init_early,
-	.init_irq	= tegra_init_irq,
 	.timer          = &tegra_timer,
-	.init_machine	= tegra_antares_init,
 MACHINE_END
 
 /* NVidia bootloader tags */
@@ -988,33 +1257,13 @@ static int __init parse_tegra_antares_tag(const struct tag *tag)
 
     data_size = *(int *)addr;
 
-    if(data_size == 60){
+    if(data_size == 60)
         memcpy(calibrate_data, addr, data_size);
-        g_tag_data_ready = true;
-	}
     else
         pr_info("The tag data size is wrong(%d)\n", data_size);
 
 	return 0;
 }
 __tagtable(ATAG_ANTARES, parse_tegra_antares_tag);
-
-void antares_guery_ram_normal_mode(bool *enable)
-{
-    char str[5];
-
-    *enable = false;
-    if(g_tag_data_ready)
-    {
-        // About the offset, please refer dmi_pri.h to find the detail.
-        //printk(KERN_INFO "*** [antares_guery_ram_normal_mode] data=%x%x%x%x\n", calibrate_data[24], calibrate_data[25], calibrate_data[26], calibrate_data[27]);
-        memset(str, 0x00, 5);
-        memcpy(str, &calibrate_data[24], 4);
-        if(str[0]=='b' && str[1]=='e' && str[2]=='e' && str[3]=='f')
-            *enable = true;
-        else
-          printk("Unknown Hynix memory tag: %c%c%c%c\n", str[0], str[1], str[2], str[3]);
-    }
-}
-EXPORT_SYMBOL(antares_guery_ram_normal_mode);
 #endif
+

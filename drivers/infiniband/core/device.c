@@ -38,6 +38,7 @@
 #include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/mutex.h>
+#include <linux/workqueue.h>
 
 #include "core_priv.h"
 
@@ -50,9 +51,6 @@ struct ib_client_data {
 	struct ib_client *client;
 	void *            data;
 };
-
-struct workqueue_struct *ib_wq;
-EXPORT_SYMBOL_GPL(ib_wq);
 
 static LIST_HEAD(device_list);
 static LIST_HEAD(client_list);
@@ -720,10 +718,6 @@ static int __init ib_core_init(void)
 {
 	int ret;
 
-	ib_wq = alloc_workqueue("infiniband", 0, 0);
-	if (!ib_wq)
-		return -ENOMEM;
-
 	ret = ib_sysfs_setup();
 	if (ret)
 		printk(KERN_WARNING "Couldn't create InfiniBand device class\n");
@@ -732,7 +726,6 @@ static int __init ib_core_init(void)
 	if (ret) {
 		printk(KERN_WARNING "Couldn't set up InfiniBand P_Key/GID cache\n");
 		ib_sysfs_cleanup();
-		destroy_workqueue(ib_wq);
 	}
 
 	return ret;
@@ -743,7 +736,7 @@ static void __exit ib_core_cleanup(void)
 	ib_cache_cleanup();
 	ib_sysfs_cleanup();
 	/* Make sure that any pending umem accounting work is done. */
-	destroy_workqueue(ib_wq);
+	flush_scheduled_work();
 }
 
 module_init(ib_core_init);

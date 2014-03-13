@@ -284,7 +284,7 @@ int __init pcic_probe(void)
 	struct linux_prom_registers regs[PROMREG_MAX];
 	struct linux_pbm_info* pbm;
 	char namebuf[64];
-	phandle node;
+	int node;
 	int err;
 
 	if (pcic0_up) {
@@ -440,7 +440,7 @@ static int __devinit pdev_to_pnode(struct linux_pbm_info *pbm,
 {
 	struct linux_prom_pci_registers regs[PROMREG_MAX];
 	int err;
-	phandle node = prom_getchild(pbm->prom_node);
+	int node = prom_getchild(pbm->prom_node);
 
 	while(node) {
 		err = prom_getproperty(node, "reg", 
@@ -700,8 +700,10 @@ static void pcic_clear_clock_irq(void)
 
 static irqreturn_t pcic_timer_handler (int irq, void *h)
 {
+	write_seqlock(&xtime_lock);	/* Dummy, to show that we remember */
 	pcic_clear_clock_irq();
-	xtime_update(1);
+	do_timer(1);
+	write_sequnlock(&xtime_lock);
 #ifndef CONFIG_SMP
 	update_process_times(user_mode(get_irq_regs()));
 #endif

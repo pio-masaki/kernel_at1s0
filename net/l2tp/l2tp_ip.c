@@ -65,7 +65,9 @@ static struct sock *__l2tp_ip_bind_lookup(struct net *net, __be32 laddr, int dif
 			continue;
 
 		if ((l2tp->conn_id == tunnel_id) &&
-		    net_eq(sock_net(sk), net) &&
+#ifdef CONFIG_NET_NS
+		    (sk->sk_net == net) &&
+#endif
 		    !(inet->inet_rcv_saddr && inet->inet_rcv_saddr != laddr) &&
 		    !(sk->sk_bound_dev_if && sk->sk_bound_dev_if != dif))
 			goto found;
@@ -320,12 +322,11 @@ static int l2tp_ip_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len
 	if (ipv4_is_multicast(lsa->l2tp_addr.s_addr))
 		goto out;
 
-	rt = ip_route_connect(lsa->l2tp_addr.s_addr, saddr,
+	rc = ip_route_connect(&rt, lsa->l2tp_addr.s_addr, saddr,
 			      RT_CONN_FLAGS(sk), oif,
 			      IPPROTO_L2TP,
-			      0, 0, sk, true);
-	if (IS_ERR(rt)) {
-		rc = PTR_ERR(rt);
+			      0, 0, sk, 1);
+	if (rc) {
 		if (rc == -ENETUNREACH)
 			IP_INC_STATS_BH(&init_net, IPSTATS_MIB_OUTNOROUTES);
 		goto out;
@@ -475,17 +476,26 @@ static int l2tp_ip_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *m
 		if (opt && opt->srr)
 			daddr = opt->faddr;
 
-		/* If this fails, retransmit mechanism of transport layer will
-		 * keep trying until route appears or the connection times
-		 * itself out.
-		 */
-		rt = ip_route_output_ports(sock_net(sk), sk,
-					   daddr, inet->inet_saddr,
-					   inet->inet_dport, inet->inet_sport,
-					   sk->sk_protocol, RT_CONN_FLAGS(sk),
-					   sk->sk_bound_dev_if);
-		if (IS_ERR(rt))
-			goto no_route;
+		{
+			struct flowi fl = { .oif = sk->sk_bound_dev_if,
+					    .nl_u = { .ip4_u = {
+							.daddr = daddr,
+							.saddr = inet->inet_saddr,
+							.tos = RT_CONN_FLAGS(sk) } },
+					    .proto = sk->sk_protocol,
+					    .flags = inet_sk_flowi_flags(sk),
+					    .uli_u = { .ports = {
+							 .sport = inet->inet_sport,
+							 .dport = inet->inet_dport } } };
+
+			/* If this fails, retransmit mechanism of transport layer will
+			 * keep trying until route appears or the connection times
+			 * itself out.
+			 */
+			security_sk_classify_flow(sk, &fl);
+			if (ip_route_output_flow(sock_net(sk), &rt, &fl, sk, 0))
+				goto no_route;
+		}
 		sk_setup_caps(sk, &rt->dst);
 	}
 	skb_dst_set(skb, dst_clone(&rt->dst));
@@ -568,7 +578,7 @@ out:
 	return copied;
 }
 
-static struct proto l2tp_ip_prot = {
+struct proto l2tp_ip_prot = {
 	.name		   = "L2TP/IP",
 	.owner		   = THIS_MODULE,
 	.init		   = l2tp_ip_open,
@@ -667,7 +677,7 @@ MODULE_AUTHOR("James Chapman <jchapman@katalix.com>");
 MODULE_DESCRIPTION("L2TP over IP");
 MODULE_VERSION("1.0");
 
-/* Use the value of SOCK_DGRAM (2) directory, because __stringify doesn't like
+/* Use the value of SOCK_DGRAM (2) directory, because __stringify does't like
  * enums
  */
 MODULE_ALIAS_NET_PF_PROTO_TYPE(PF_INET, 2, IPPROTO_L2TP);

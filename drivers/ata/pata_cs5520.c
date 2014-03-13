@@ -29,7 +29,7 @@
  * General Public License for more details.
  *
  * Documentation:
- *	Not publicly available.
+ *	Not publically available.
  */
 #include <linux/kernel.h>
 #include <linux/module.h>

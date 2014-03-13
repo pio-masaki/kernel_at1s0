@@ -659,7 +659,7 @@ static int egalax_i2c_thread(void *pdata)
 				input_report_abs(touch->input_dev,
 						ABS_MT_TRACKING_ID, i);
 				input_report_abs(touch->input_dev,
-						ABS_MT_PRESSURE, touch->Pressure[i]);
+						ABS_MT_TOUCH_MAJOR, touch->Pressure[i]);
 				input_report_abs(touch->input_dev,
 						ABS_MT_POSITION_X, x[i]);
 				input_report_abs(touch->input_dev,
@@ -816,9 +816,7 @@ static int __devinit egalax_i2c_probe(struct i2c_client *client, const struct i2
                          touch->MinX, touch->MaxX, 0, 0);
     input_set_abs_params(touch->input_dev, ABS_MT_POSITION_Y,
                          touch->MinY, touch->MaxY, 0, 0);
-    input_set_abs_params(touch->input_dev, ABS_MT_PRESSURE,
-                         0, 1, 0, 0);
-	input_set_abs_params(touch->input_dev, ABS_MT_TRACKING_ID,
+    input_set_abs_params(touch->input_dev, ABS_MT_TOUCH_MAJOR,
                          0, SUPPORTED_FINGERS, 0, 0);
 
 	#if SUPPORT_USER_LEVEL

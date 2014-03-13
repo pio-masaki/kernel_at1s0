@@ -155,8 +155,7 @@ static void cmtp_send_interopmsg(struct cmtp_session *session,
 
 	BT_DBG("session %p subcmd 0x%02x appl %d msgnum %d", session, subcmd, appl, msgnum);
 
-	skb = alloc_skb(CAPI_MSG_BASELEN + 6 + len, GFP_ATOMIC);
-	if (!skb) {
+	if (!(skb = alloc_skb(CAPI_MSG_BASELEN + 6 + len, GFP_ATOMIC))) {
 		BT_ERR("Can't allocate memory for interoperability packet");
 		return;
 	}

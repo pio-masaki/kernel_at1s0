@@ -43,7 +43,6 @@ struct sh_dmae_device {
 	struct dma_device common;
 	struct sh_dmae_chan *chan[SH_DMAC_MAX_CHANNELS];
 	struct sh_dmae_pdata *pdata;
-	struct list_head node;
 	u32 __iomem *chan_reg;
 	u16 __iomem *dmars;
 };

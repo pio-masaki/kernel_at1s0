@@ -136,7 +136,7 @@ SECTIONS
 
 	. = ALIGN(16);
 	INIT_DATA_SECTION(16)
-	PERCPU(32, PAGE_SIZE)
+	PERCPU(4)
 
 	.exit.data :
 	{
@@ -176,7 +176,6 @@ SECTIONS
 	{
 		. = ALIGN(4);
 		__stext_l1 = .;
-		*(.l1.text.head)
 		*(.l1.text)
 #ifdef CONFIG_SCHEDULE_L1
 		SCHED_TEXT

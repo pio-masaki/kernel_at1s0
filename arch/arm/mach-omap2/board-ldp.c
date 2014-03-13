@@ -27,7 +27,6 @@
 #include <linux/i2c/twl.h>
 #include <linux/io.h>
 #include <linux/smsc911x.h>
-#include <linux/mmc/host.h>
 
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
@@ -42,12 +41,11 @@
 #include <mach/board-zoom.h>
 
 #include <asm/delay.h>
+#include <plat/control.h>
 #include <plat/usb.h>
 
-#include "board-flash.h"
 #include "mux.h"
 #include "hsmmc.h"
-#include "control.h"
 
 #define LDP_SMSC911X_CS		1
 #define LDP_SMSC911X_GPIO	152
@@ -84,7 +82,7 @@ static struct platform_device ldp_smsc911x_device = {
 	},
 };
 
-static uint32_t board_keymap[] = {
+static int board_keymap[] = {
 	KEY(0, 0, KEY_1),
 	KEY(1, 0, KEY_2),
 	KEY(2, 0, KEY_3),
@@ -288,10 +286,14 @@ static struct omap_board_config_kernel ldp_config[] __initdata = {
 	{ OMAP_TAG_LCD,		&ldp_lcd_config },
 };
 
-static void __init omap_ldp_init_early(void)
+static void __init omap_ldp_init_irq(void)
 {
-	omap2_init_common_infrastructure();
-	omap2_init_common_devices(NULL, NULL);
+	omap_board_config = ldp_config;
+	omap_board_config_size = ARRAY_SIZE(ldp_config);
+	omap2_init_common_hw(NULL, NULL);
+	omap_init_irq();
+	omap_gpio_init();
+	ldp_init_smsc911x();
 }
 
 static struct twl4030_usb_data ldp_usb_data = {
@@ -327,26 +329,6 @@ static struct regulator_init_data ldp_vmmc1 = {
 	.consumer_supplies	= &ldp_vmmc1_supply,
 };
 
-/* ads7846 on SPI */
-static struct regulator_consumer_supply ldp_vaux1_supplies[] = {
-	REGULATOR_SUPPLY("vcc", "spi1.0"),
-};
-
-/* VAUX1 */
-static struct regulator_init_data ldp_vaux1 = {
-	.constraints = {
-		.min_uV			= 3000000,
-		.max_uV			= 3000000,
-		.apply_uV		= true,
-		.valid_modes_mask	= REGULATOR_MODE_NORMAL
-					| REGULATOR_MODE_STANDBY,
-		.valid_ops_mask		= REGULATOR_CHANGE_MODE
-					| REGULATOR_CHANGE_STATUS,
-	},
-	.num_consumer_supplies		= ARRAY_SIZE(ldp_vaux1_supplies),
-	.consumer_supplies		= ldp_vaux1_supplies,
-};
-
 static struct twl4030_platform_data ldp_twldata = {
 	.irq_base	= TWL4030_IRQ_BASE,
 	.irq_end	= TWL4030_IRQ_END,
@@ -355,7 +337,6 @@ static struct twl4030_platform_data ldp_twldata = {
 	.madc		= &ldp_madc_data,
 	.usb		= &ldp_usb_data,
 	.vmmc1		= &ldp_vmmc1,
-	.vaux1		= &ldp_vaux1,
 	.gpio		= &ldp_gpio_data,
 	.keypad		= &ldp_kp_twl4030_data,
 };
@@ -381,7 +362,7 @@ static int __init omap_i2c_init(void)
 static struct omap2_hsmmc_info mmc[] __initdata = {
 	{
 		.mmc		= 1,
-		.caps		= MMC_CAP_4_BIT_DATA,
+		.wires		= 4,
 		.gpio_cd	= -EINVAL,
 		.gpio_wp	= -EINVAL,
 	},
@@ -398,6 +379,8 @@ static struct platform_device *ldp_devices[] __initdata = {
 static struct omap_board_mux board_mux[] __initdata = {
 	{ .reg_offset = OMAP_MUX_TERMINATOR },
 };
+#else
+#define board_mux	NULL
 #endif
 
 static struct omap_musb_board_data musb_board_data = {
@@ -441,9 +424,6 @@ static struct mtd_partition ldp_nand_partitions[] = {
 static void __init omap_ldp_init(void)
 {
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
-	omap_board_config = ldp_config;
-	omap_board_config_size = ARRAY_SIZE(ldp_config);
-	ldp_init_smsc911x();
 	omap_i2c_init();
 	platform_add_devices(ldp_devices, ARRAY_SIZE(ldp_devices));
 	ts_gpio = 54;
@@ -454,7 +434,7 @@ static void __init omap_ldp_init(void)
 	omap_serial_init();
 	usb_musb_init(&musb_board_data);
 	board_nand_init(ldp_nand_partitions,
-		ARRAY_SIZE(ldp_nand_partitions), ZOOM_NAND_CS, 0);
+		ARRAY_SIZE(ldp_nand_partitions), ZOOM_NAND_CS);
 
 	omap2_hsmmc_init(mmc);
 	/* link regulators to MMC adapters */
@@ -462,11 +442,12 @@ static void __init omap_ldp_init(void)
 }
 
 MACHINE_START(OMAP_LDP, "OMAP LDP board")
+	.phys_io	= 0x48000000,
+	.io_pg_offst	= ((0xfa000000) >> 18) & 0xfffc,
 	.boot_params	= 0x80000100,
-	.reserve	= omap_reserve,
 	.map_io		= omap3_map_io,
-	.init_early	= omap_ldp_init_early,
-	.init_irq	= omap_init_irq,
+	.reserve	= omap_reserve,
+	.init_irq	= omap_ldp_init_irq,
 	.init_machine	= omap_ldp_init,
 	.timer		= &omap_timer,
 MACHINE_END

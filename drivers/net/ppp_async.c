@@ -32,7 +32,6 @@
 #include <linux/init.h>
 #include <linux/jiffies.h>
 #include <linux/slab.h>
-#include <asm/unaligned.h>
 #include <asm/uaccess.h>
 #include <asm/string.h>
 
@@ -101,7 +100,7 @@ static int ppp_async_send(struct ppp_channel *chan, struct sk_buff *skb);
 static int ppp_async_push(struct asyncppp *ap);
 static void ppp_async_flush_output(struct asyncppp *ap);
 static void ppp_async_input(struct asyncppp *ap, const unsigned char *buf,
-			    char *flags, int count);
+			    char *flags, int count, struct sk_buff *skbuf);
 static int ppp_async_ioctl(struct ppp_channel *chan, unsigned int cmd,
 			   unsigned long arg);
 static void ppp_async_process(unsigned long arg);
@@ -185,7 +184,7 @@ ppp_asynctty_open(struct tty_struct *tty)
 	tasklet_init(&ap->tsk, ppp_async_process, (unsigned long) ap);
 
 	atomic_set(&ap->refcnt, 1);
-	sema_init(&ap->dead_sem, 0);
+	init_MUTEX_LOCKED(&ap->dead_sem);
 
 	ap->chan.private = ap;
 	ap->chan.ops = &async_ops;
@@ -345,12 +344,18 @@ ppp_asynctty_receive(struct tty_struct *tty, const unsigned char *buf,
 		  char *cflags, int count)
 {
 	struct asyncppp *ap = ap_get(tty);
+	struct sk_buff *skb;
 	unsigned long flags;
 
 	if (!ap)
 		return;
+
+	skb = __dev_alloc_skb(ap->mru + PPP_HDRLEN + 2, GFP_KERNEL);
+	if (!skb)
+		return;
+
 	spin_lock_irqsave(&ap->recv_lock, flags);
-	ppp_async_input(ap, buf, cflags, count);
+	ppp_async_input(ap, buf, cflags, count, skb);
 	spin_unlock_irqrestore(&ap->recv_lock, flags);
 	if (!skb_queue_empty(&ap->rqueue))
 		tasklet_schedule(&ap->tsk);
@@ -543,7 +548,7 @@ ppp_async_encode(struct asyncppp *ap)
 	data = ap->tpkt->data;
 	count = ap->tpkt->len;
 	fcs = ap->tfcs;
-	proto = get_unaligned_be16(data);
+	proto = (data[0] << 8) + data[1];
 
 	/*
 	 * LCP packets with code values between 1 (configure-reqest)
@@ -832,7 +837,7 @@ process_input_packet(struct asyncppp *ap)
 
 static void
 ppp_async_input(struct asyncppp *ap, const unsigned char *buf,
-		char *flags, int count)
+		char *flags, int count, struct sk_buff *skbuf)
 {
 	struct sk_buff *skb;
 	int c, i, j, n, s, f;
@@ -874,9 +879,14 @@ ppp_async_input(struct asyncppp *ap, const unsigned char *buf,
 			/* stuff the chars in the skb */
 			skb = ap->rpkt;
 			if (!skb) {
-				skb = dev_alloc_skb(ap->mru + PPP_HDRLEN + 2);
-				if (!skb)
-					goto nomem;
+				if (skbuf) {
+					skb = skbuf;
+					skbuf = NULL;
+				} else {
+					skb = dev_alloc_skb(ap->mru + PPP_HDRLEN + 2);
+					if (!skb)
+						goto nomem;
+				}
  				ap->rpkt = skb;
  			}
  			if (skb->len == 0) {
@@ -926,11 +936,13 @@ ppp_async_input(struct asyncppp *ap, const unsigned char *buf,
 			flags += n;
 		count -= n;
 	}
+	kfree(skbuf);
 	return;
 
  nomem:
 	printk(KERN_ERR "PPPasync: no memory (input pkt)\n");
 	ap->state |= SC_TOSS;
+	kfree(skbuf);
 }
 
 /*
@@ -964,7 +976,7 @@ static void async_lcp_peek(struct asyncppp *ap, unsigned char *data,
 	code = data[0];
 	if (code != CONFACK && code != CONFREQ)
 		return;
-	dlen = get_unaligned_be16(data + 2);
+	dlen = (data[2] << 8) + data[3];
 	if (len < dlen)
 		return;		/* packet got truncated or length is bogus */
 
@@ -998,14 +1010,15 @@ static void async_lcp_peek(struct asyncppp *ap, unsigned char *data,
 	while (dlen >= 2 && dlen >= data[1] && data[1] >= 2) {
 		switch (data[0]) {
 		case LCP_MRU:
-			val = get_unaligned_be16(data + 2);
+			val = (data[2] << 8) + data[3];
 			if (inbound)
 				ap->mru = val;
 			else
 				ap->chan.mtu = val;
 			break;
 		case LCP_ASYNCMAP:
-			val = get_unaligned_be32(data + 2);
+			val = (data[2] << 24) + (data[3] << 16)
+				+ (data[4] << 8) + data[5];
 			if (inbound)
 				ap->raccm = val;
 			else

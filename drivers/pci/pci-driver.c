@@ -338,7 +338,7 @@ static int pci_call_probe(struct pci_driver *drv, struct pci_dev *dev,
 }
 
 /**
- * __pci_device_probe - check if a driver wants to claim a specific PCI device
+ * __pci_device_probe()
  * @drv: driver to call to check if it wants the PCI device
  * @pci_dev: PCI device being probed
  * 
@@ -431,7 +431,7 @@ static void pci_device_shutdown(struct device *dev)
 	pci_msix_shutdown(pci_dev);
 }
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_OPS
 
 /* Auxiliary functions used for system resume and run-time resume. */
 
@@ -449,8 +449,7 @@ static int pci_restore_standard_config(struct pci_dev *pci_dev)
 			return error;
 	}
 
-	pci_restore_state(pci_dev);
-	return 0;
+	return pci_restore_state(pci_dev);
 }
 
 static void pci_pm_default_resume_early(struct pci_dev *pci_dev)
@@ -624,7 +623,7 @@ static int pci_pm_prepare(struct device *dev)
 	 * system from the sleep state, we'll have to prevent it from signaling
 	 * wake-up.
 	 */
-	pm_runtime_get_sync(dev);
+	pm_runtime_resume(dev);
 
 	if (drv && drv->pm && drv->pm->prepare)
 		error = drv->pm->prepare(dev);
@@ -638,8 +637,6 @@ static void pci_pm_complete(struct device *dev)
 
 	if (drv && drv->pm && drv->pm->complete)
 		drv->pm->complete(dev);
-
-	pm_runtime_put_sync(dev);
 }
 
 #else /* !CONFIG_PM_SLEEP */
@@ -783,7 +780,7 @@ static int pci_pm_resume(struct device *dev)
 
 #endif /* !CONFIG_SUSPEND */
 
-#ifdef CONFIG_HIBERNATE_CALLBACKS
+#ifdef CONFIG_HIBERNATION
 
 static int pci_pm_freeze(struct device *dev)
 {
@@ -972,7 +969,7 @@ static int pci_pm_restore(struct device *dev)
 	return error;
 }
 
-#else /* !CONFIG_HIBERNATE_CALLBACKS */
+#else /* !CONFIG_HIBERNATION */
 
 #define pci_pm_freeze		NULL
 #define pci_pm_freeze_noirq	NULL
@@ -983,7 +980,7 @@ static int pci_pm_restore(struct device *dev)
 #define pci_pm_restore		NULL
 #define pci_pm_restore_noirq	NULL
 
-#endif /* !CONFIG_HIBERNATE_CALLBACKS */
+#endif /* !CONFIG_HIBERNATION */
 
 #ifdef CONFIG_PM_RUNTIME
 
@@ -1061,7 +1058,7 @@ static int pci_pm_runtime_idle(struct device *dev)
 
 #endif /* !CONFIG_PM_RUNTIME */
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_OPS
 
 const struct dev_pm_ops pci_dev_pm_ops = {
 	.prepare = pci_pm_prepare,

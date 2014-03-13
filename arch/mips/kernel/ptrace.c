@@ -255,13 +255,9 @@ int ptrace_set_watch_regs(struct task_struct *child,
 	return 0;
 }
 
-long arch_ptrace(struct task_struct *child, long request,
-		 unsigned long addr, unsigned long data)
+long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 {
 	int ret;
-	void __user *addrp = (void __user *) addr;
-	void __user *datavp = (void __user *) data;
-	unsigned long __user *datalp = (void __user *) data;
 
 	switch (request) {
 	/* when I and D space are separate, these will need to be fixed. */
@@ -390,7 +386,7 @@ long arch_ptrace(struct task_struct *child, long request,
 			ret = -EIO;
 			goto out;
 		}
-		ret = put_user(tmp, datalp);
+		ret = put_user(tmp, (unsigned long __user *) data);
 		break;
 	}
 
@@ -482,31 +478,34 @@ long arch_ptrace(struct task_struct *child, long request,
 		}
 
 	case PTRACE_GETREGS:
-		ret = ptrace_getregs(child, datavp);
+		ret = ptrace_getregs(child, (__s64 __user *) data);
 		break;
 
 	case PTRACE_SETREGS:
-		ret = ptrace_setregs(child, datavp);
+		ret = ptrace_setregs(child, (__s64 __user *) data);
 		break;
 
 	case PTRACE_GETFPREGS:
-		ret = ptrace_getfpregs(child, datavp);
+		ret = ptrace_getfpregs(child, (__u32 __user *) data);
 		break;
 
 	case PTRACE_SETFPREGS:
-		ret = ptrace_setfpregs(child, datavp);
+		ret = ptrace_setfpregs(child, (__u32 __user *) data);
 		break;
 
 	case PTRACE_GET_THREAD_AREA:
-		ret = put_user(task_thread_info(child)->tp_value, datalp);
+		ret = put_user(task_thread_info(child)->tp_value,
+				(unsigned long __user *) data);
 		break;
 
 	case PTRACE_GET_WATCH_REGS:
-		ret = ptrace_get_watch_regs(child, addrp);
+		ret = ptrace_get_watch_regs(child,
+					(struct pt_watch_regs __user *) addr);
 		break;
 
 	case PTRACE_SET_WATCH_REGS:
-		ret = ptrace_set_watch_regs(child, addrp);
+		ret = ptrace_set_watch_regs(child,
+					(struct pt_watch_regs __user *) addr);
 		break;
 
 	default:
@@ -540,8 +539,8 @@ asmlinkage void do_syscall_trace(struct pt_regs *regs, int entryexit)
 		secure_computing(regs->regs[2]);
 
 	if (unlikely(current->audit_context) && entryexit)
-		audit_syscall_exit(AUDITSC_RESULT(regs->regs[7]),
-		                   -regs->regs[2]);
+		audit_syscall_exit(AUDITSC_RESULT(regs->regs[2]),
+		                   regs->regs[2]);
 
 	if (!(current->ptrace & PT_PTRACED))
 		goto out;

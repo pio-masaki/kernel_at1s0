@@ -125,7 +125,7 @@ int fsl_pq_mdio_write(struct mii_bus *bus, int mii_id, int regnum, u16 value)
 	struct fsl_pq_mdio __iomem *regs = fsl_pq_mdio_get_regs(bus);
 
 	/* Write to the local MII regs */
-	return fsl_pq_local_mdio_write(regs, mii_id, regnum, value);
+	return(fsl_pq_local_mdio_write(regs, mii_id, regnum, value));
 }
 
 /*
@@ -137,7 +137,7 @@ int fsl_pq_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
 	struct fsl_pq_mdio __iomem *regs = fsl_pq_mdio_get_regs(bus);
 
 	/* Read the local MII regs */
-	return fsl_pq_local_mdio_read(regs, mii_id, regnum);
+	return(fsl_pq_local_mdio_read(regs, mii_id, regnum));
 }
 
 /* Reset the MIIM registers, and wait for the bus to free */
@@ -265,7 +265,8 @@ static int get_ucc_id_for_range(u64 start, u64 end, u32 *ucc_id)
 #endif
 
 
-static int fsl_pq_mdio_probe(struct platform_device *ofdev)
+static int fsl_pq_mdio_probe(struct platform_device *ofdev,
+		const struct of_device_id *match)
 {
 	struct device_node *np = ofdev->dev.of_node;
 	struct device_node *tbi;
@@ -470,7 +471,7 @@ static struct of_device_id fsl_pq_mdio_match[] = {
 };
 MODULE_DEVICE_TABLE(of, fsl_pq_mdio_match);
 
-static struct platform_driver fsl_pq_mdio_driver = {
+static struct of_platform_driver fsl_pq_mdio_driver = {
 	.driver = {
 		.name = "fsl-pq_mdio",
 		.owner = THIS_MODULE,
@@ -482,13 +483,13 @@ static struct platform_driver fsl_pq_mdio_driver = {
 
 int __init fsl_pq_mdio_init(void)
 {
-	return platform_driver_register(&fsl_pq_mdio_driver);
+	return of_register_platform_driver(&fsl_pq_mdio_driver);
 }
 module_init(fsl_pq_mdio_init);
 
 void fsl_pq_mdio_exit(void)
 {
-	platform_driver_unregister(&fsl_pq_mdio_driver);
+	of_unregister_platform_driver(&fsl_pq_mdio_driver);
 }
 module_exit(fsl_pq_mdio_exit);
 MODULE_LICENSE("GPL");

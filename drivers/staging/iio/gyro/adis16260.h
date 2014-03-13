@@ -1,6 +1,5 @@
 #ifndef SPI_ADIS16260_H_
 #define SPI_ADIS16260_H_
-#include "adis16260_platform_data.h"
 
 #define ADIS16260_STARTUP_DELAY	220 /* ms */
 
@@ -91,9 +90,8 @@
  * @indio_dev:		industrial I/O device structure
  * @trig:		data ready trigger registered with iio
  * @tx:			transmit buffer
- * @rx:			receive buffer
+ * @rx:			recieve buffer
  * @buf_lock:		mutex to protect tx and rx
- * @negate:		negate the scale parameter
  **/
 struct adis16260_state {
 	struct spi_device		*us;
@@ -104,7 +102,6 @@ struct adis16260_state {
 	u8				*tx;
 	u8				*rx;
 	struct mutex			buf_lock;
-	unsigned			negate:1;
 };
 
 int adis16260_set_irq(struct device *dev, bool enable);

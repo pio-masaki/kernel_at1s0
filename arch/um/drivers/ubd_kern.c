@@ -33,7 +33,7 @@
 #include "linux/mm.h"
 #include "linux/slab.h"
 #include "linux/vmalloc.h"
-#include "linux/mutex.h"
+#include "linux/smp_lock.h"
 #include "linux/blkpg.h"
 #include "linux/genhd.h"
 #include "linux/spinlock.h"
@@ -100,7 +100,6 @@ static inline void ubd_set_bit(__u64 bit, unsigned char *data)
 #define DRIVER_NAME "uml-blkdev"
 
 static DEFINE_MUTEX(ubd_lock);
-static DEFINE_MUTEX(ubd_mutex); /* replaces BKL, might not be needed */
 
 static int ubd_open(struct block_device *bdev, fmode_t mode);
 static int ubd_release(struct gendisk *disk, fmode_t mode);
@@ -185,7 +184,7 @@ struct ubd {
 	.no_cow =               0, \
 	.shared =		0, \
 	.cow =			DEFAULT_COW, \
-	.lock =			__SPIN_LOCK_UNLOCKED(ubd_devs.lock), \
+	.lock =			SPIN_LOCK_UNLOCKED,	\
 	.request =		NULL, \
 	.start_sg =		0, \
 	.end_sg =		0, \
@@ -1102,7 +1101,7 @@ static int ubd_open(struct block_device *bdev, fmode_t mode)
 	struct ubd *ubd_dev = disk->private_data;
 	int err = 0;
 
-	mutex_lock(&ubd_mutex);
+	lock_kernel();
 	if(ubd_dev->count == 0){
 		err = ubd_open_dev(ubd_dev);
 		if(err){
@@ -1121,7 +1120,7 @@ static int ubd_open(struct block_device *bdev, fmode_t mode)
 	        err = -EROFS;
 	}*/
 out:
-	mutex_unlock(&ubd_mutex);
+	unlock_kernel();
 	return err;
 }
 
@@ -1129,10 +1128,10 @@ static int ubd_release(struct gendisk *disk, fmode_t mode)
 {
 	struct ubd *ubd_dev = disk->private_data;
 
-	mutex_lock(&ubd_mutex);
+	lock_kernel();
 	if(--ubd_dev->count == 0)
 		ubd_close_dev(ubd_dev);
-	mutex_unlock(&ubd_mutex);
+	unlock_kernel();
 	return 0;
 }
 

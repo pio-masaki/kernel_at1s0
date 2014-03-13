@@ -22,13 +22,13 @@
 #include <linux/i2c.h>
 #include <linux/irq.h>
 
+#include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/time.h>
 #include <asm/memory.h>
 #include <asm/mach/map.h>
 #include <mach/common.h>
-#include <mach/board-mx31ads.h>
 #include <mach/iomux-mx3.h>
 
 #ifdef CONFIG_MACH_MX31ADS_WM1133_EV1
@@ -39,6 +39,10 @@
 
 #include "devices-imx31.h"
 #include "devices.h"
+
+/* Base address of PBC controller */
+#define PBC_BASE_ADDRESS        MX31_CS4_BASE_ADDR_VIRT
+/* Offsets for the PBC Controller register */
 
 /* PBC Board interrupt status register */
 #define PBC_INTSTATUS           0x000016
@@ -63,14 +67,19 @@
 #define PBC_INTMASK_CLEAR_REG	(PBC_INTMASK_CLEAR + PBC_BASE_ADDRESS)
 #define EXPIO_PARENT_INT	IOMUX_TO_IRQ(MX31_PIN_GPIO1_4)
 
+#define MXC_EXP_IO_BASE		(MXC_BOARD_IRQ_START)
 #define MXC_IRQ_TO_EXPIO(irq)	((irq) - MXC_EXP_IO_BASE)
 
 #define EXPIO_INT_XUART_INTA	(MXC_EXP_IO_BASE + 10)
 #define EXPIO_INT_XUART_INTB	(MXC_EXP_IO_BASE + 11)
 
 #define MXC_MAX_EXP_IO_LINES	16
-
 /*
+ * This file contains the board-specific initialization routines.
+ */
+
+#if defined(CONFIG_SERIAL_8250) || defined(CONFIG_SERIAL_8250_MODULE)
+/*!
  * The serial port definition structure.
  */
 static struct plat_serial8250_port serial_platform_data[] = {
@@ -106,7 +115,14 @@ static int __init mxc_init_extuart(void)
 {
 	return platform_device_register(&serial_device);
 }
+#else
+static inline int mxc_init_extuart(void)
+{
+	return 0;
+}
+#endif
 
+#if defined(CONFIG_SERIAL_IMX) || defined(CONFIG_SERIAL_IMX_MODULE)
 static const struct imxuart_platform_data uart_pdata __initconst = {
 	.flags = IMXUART_HAVE_RTSCTS,
 };
@@ -123,6 +139,11 @@ static inline void mxc_init_imx_uart(void)
 	mxc_iomux_setup_multiple_pins(uart_pins, ARRAY_SIZE(uart_pins), "uart-0");
 	imx31_add_imx_uart0(&uart_pdata);
 }
+#else /* !SERIAL_IMX */
+static inline void mxc_init_imx_uart(void)
+{
+}
+#endif /* !SERIAL_IMX */
 
 static void mx31ads_expio_irq_handler(u32 irq, struct irq_desc *desc)
 {
@@ -144,11 +165,11 @@ static void mx31ads_expio_irq_handler(u32 irq, struct irq_desc *desc)
 
 /*
  * Disable an expio pin's interrupt by setting the bit in the imr.
- * @param d	an expio virtual irq description
+ * @param irq           an expio virtual irq number
  */
-static void expio_mask_irq(struct irq_data *d)
+static void expio_mask_irq(u32 irq)
 {
-	u32 expio = MXC_IRQ_TO_EXPIO(d->irq);
+	u32 expio = MXC_IRQ_TO_EXPIO(irq);
 	/* mask the interrupt */
 	__raw_writew(1 << expio, PBC_INTMASK_CLEAR_REG);
 	__raw_readw(PBC_INTMASK_CLEAR_REG);
@@ -156,31 +177,31 @@ static void expio_mask_irq(struct irq_data *d)
 
 /*
  * Acknowledge an expanded io pin's interrupt by clearing the bit in the isr.
- * @param d	an expio virtual irq description
+ * @param irq           an expanded io virtual irq number
  */
-static void expio_ack_irq(struct irq_data *d)
+static void expio_ack_irq(u32 irq)
 {
-	u32 expio = MXC_IRQ_TO_EXPIO(d->irq);
+	u32 expio = MXC_IRQ_TO_EXPIO(irq);
 	/* clear the interrupt status */
 	__raw_writew(1 << expio, PBC_INTSTATUS_REG);
 }
 
 /*
  * Enable a expio pin's interrupt by clearing the bit in the imr.
- * @param d	an expio virtual irq description
+ * @param irq           a expio virtual irq number
  */
-static void expio_unmask_irq(struct irq_data *d)
+static void expio_unmask_irq(u32 irq)
 {
-	u32 expio = MXC_IRQ_TO_EXPIO(d->irq);
+	u32 expio = MXC_IRQ_TO_EXPIO(irq);
 	/* unmask the interrupt */
 	__raw_writew(1 << expio, PBC_INTMASK_SET_REG);
 }
 
 static struct irq_chip expio_irq_chip = {
 	.name = "EXPIO(CPLD)",
-	.irq_ack = expio_ack_irq,
-	.irq_mask = expio_mask_irq,
-	.irq_unmask = expio_unmask_irq,
+	.ack = expio_ack_irq,
+	.mask = expio_mask_irq,
+	.unmask = expio_unmask_irq,
 };
 
 static void __init mx31ads_init_expio(void)
@@ -199,11 +220,12 @@ static void __init mx31ads_init_expio(void)
 	__raw_writew(0xFFFF, PBC_INTSTATUS_REG);
 	for (i = MXC_EXP_IO_BASE; i < (MXC_EXP_IO_BASE + MXC_MAX_EXP_IO_LINES);
 	     i++) {
-		irq_set_chip_and_handler(i, &expio_irq_chip, handle_level_irq);
+		set_irq_chip(i, &expio_irq_chip);
+		set_irq_handler(i, handle_level_irq);
 		set_irq_flags(i, IRQF_VALID);
 	}
-	irq_set_irq_type(EXPIO_PARENT_INT, IRQ_TYPE_LEVEL_HIGH);
-	irq_set_chained_handler(EXPIO_PARENT_INT, mx31ads_expio_irq_handler);
+	set_irq_type(EXPIO_PARENT_INT, IRQ_TYPE_LEVEL_HIGH);
+	set_irq_chained_handler(EXPIO_PARENT_INT, mx31ads_expio_irq_handler);
 }
 
 #ifdef CONFIG_MACH_MX31ADS_WM1133_EV1
@@ -459,6 +481,7 @@ static struct wm8350_platform_data __initdata mx31_wm8350_pdata = {
 };
 #endif
 
+#if defined(CONFIG_I2C_IMX) || defined(CONFIG_I2C_IMX_MODULE)
 static struct i2c_board_info __initdata mx31ads_i2c1_devices[] = {
 #ifdef CONFIG_MACH_MX31ADS_WM1133_EV1
 	{
@@ -479,6 +502,11 @@ static void mxc_init_i2c(void)
 
 	imx31_add_imx_i2c1(NULL);
 }
+#else
+static void mxc_init_i2c(void)
+{
+}
+#endif
 
 static unsigned int ssi_pins[] = {
 	MX31_PIN_SFS5__SFS5,
@@ -489,11 +517,13 @@ static unsigned int ssi_pins[] = {
 
 static void mxc_init_audio(void)
 {
-	imx31_add_imx_ssi(0, NULL);
+	mxc_register_device(&imx_ssi_device0, NULL);
 	mxc_iomux_setup_multiple_pins(ssi_pins, ARRAY_SIZE(ssi_pins), "ssi");
 }
 
-/* static mappings */
+/*!
+ * This structure defines static mappings for the i.MX31ADS board.
+ */
 static struct map_desc mx31ads_io_desc[] __initdata = {
 	{
 		.virtual	= MX31_CS4_BASE_ADDR_VIRT,
@@ -503,6 +533,9 @@ static struct map_desc mx31ads_io_desc[] __initdata = {
 	},
 };
 
+/*!
+ * Set up static virtual mappings.
+ */
 static void __init mx31ads_map_io(void)
 {
 	mx31_map_io();
@@ -515,7 +548,10 @@ static void __init mx31ads_init_irq(void)
 	mx31ads_init_expio();
 }
 
-static void __init mx31ads_init(void)
+/*!
+ * Board specific initialization.
+ */
+static void __init mxc_board_init(void)
 {
 	mxc_init_extuart();
 	mxc_init_imx_uart();
@@ -532,12 +568,17 @@ static struct sys_timer mx31ads_timer = {
 	.init	= mx31ads_timer_init,
 };
 
+/*
+ * The following uses standard kernel macros defined in arch.h in order to
+ * initialize __mach_desc_MX31ADS data structure.
+ */
 MACHINE_START(MX31ADS, "Freescale MX31ADS")
 	/* Maintainer: Freescale Semiconductor, Inc. */
-	.boot_params = MX3x_PHYS_OFFSET + 0x100,
-	.map_io = mx31ads_map_io,
-	.init_early = imx31_init_early,
-	.init_irq = mx31ads_init_irq,
-	.timer = &mx31ads_timer,
-	.init_machine = mx31ads_init,
+	.phys_io	= MX31_AIPS1_BASE_ADDR,
+	.io_pg_offst	= (MX31_AIPS1_BASE_ADDR_VIRT >> 18) & 0xfffc,
+	.boot_params    = MX3x_PHYS_OFFSET + 0x100,
+	.map_io         = mx31ads_map_io,
+	.init_irq       = mx31ads_init_irq,
+	.init_machine   = mxc_board_init,
+	.timer          = &mx31ads_timer,
 MACHINE_END

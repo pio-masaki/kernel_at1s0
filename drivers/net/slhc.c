@@ -688,7 +688,17 @@ slhc_toss(struct slcompress *comp)
 	return 0;
 }
 
+
+/* VJ header compression */
+EXPORT_SYMBOL(slhc_init);
+EXPORT_SYMBOL(slhc_free);
+EXPORT_SYMBOL(slhc_remember);
+EXPORT_SYMBOL(slhc_compress);
+EXPORT_SYMBOL(slhc_uncompress);
+EXPORT_SYMBOL(slhc_toss);
+
 #else /* CONFIG_INET */
+
 
 int
 slhc_toss(struct slcompress *comp)
@@ -728,10 +738,6 @@ slhc_init(int rslots, int tslots)
   printk(KERN_DEBUG "Called IP function on non IP-system: slhc_init");
   return NULL;
 }
-
-#endif /* CONFIG_INET */
-
-/* VJ header compression */
 EXPORT_SYMBOL(slhc_init);
 EXPORT_SYMBOL(slhc_free);
 EXPORT_SYMBOL(slhc_remember);
@@ -739,4 +745,5 @@ EXPORT_SYMBOL(slhc_compress);
 EXPORT_SYMBOL(slhc_uncompress);
 EXPORT_SYMBOL(slhc_toss);
 
+#endif /* CONFIG_INET */
 MODULE_LICENSE("Dual BSD/GPL");

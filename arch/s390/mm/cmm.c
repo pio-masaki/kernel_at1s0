@@ -23,10 +23,7 @@
 #include <asm/pgalloc.h>
 #include <asm/diag.h>
 
-#ifdef CONFIG_CMM_IUCV
-static char *cmm_default_sender = "VMRMSVM";
-#endif
-static char *sender;
+static char *sender = "VMRMSVM";
 module_param(sender, charp, 0400);
 MODULE_PARM_DESC(sender,
 		 "Guest name that may send SMSG messages (default VMRMSVM)");
@@ -91,7 +88,7 @@ static long cmm_alloc_pages(long nr, long *counter,
 			} else
 				free_page((unsigned long) npa);
 		}
-		diag10_range(addr >> PAGE_SHIFT, 1);
+		diag10(addr);
 		pa->pages[pa->index++] = addr;
 		(*counter)++;
 		spin_unlock(&cmm_lock);
@@ -443,8 +440,6 @@ static int __init cmm_init(void)
 		int len = strlen(sender);
 		while (len--)
 			sender[len] = toupper(sender[len]);
-	} else {
-		sender = cmm_default_sender;
 	}
 
 	rc = smsg_register_callback(SMSG_PREFIX, cmm_smsg_target);

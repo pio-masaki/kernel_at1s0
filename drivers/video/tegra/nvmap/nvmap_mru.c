@@ -1,9 +1,9 @@
 /*
- * drivers/video/tegra/nvmap/nvmap_mru.c
+ * drivers/video/tegra/nvmap_mru.c
  *
  * IOVMM virtualization support for nvmap
  *
- * Copyright (c) 2009-2011, NVIDIA Corporation.
+ * Copyright (c) 2009-2010, NVIDIA Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -110,17 +110,12 @@ struct tegra_iovmm_area *nvmap_handle_iovmm_locked(struct nvmap_client *c,
 		return h->pgalloc.area;
 	}
 
-	vm = tegra_iovmm_create_vm(c->share->iovmm, NULL,
-			h->size, h->align, prot,
-			h->pgalloc.iovm_addr);
+	vm = tegra_iovmm_create_vm(c->share->iovmm, NULL, h->size, prot);
 
 	if (vm) {
 		INIT_LIST_HEAD(&h->pgalloc.mru_list);
 		return vm;
 	}
-	/* if client is looking for specific iovm address, return from here. */
-	if ((vm == NULL) && (h->pgalloc.iovm_addr != 0))
-		return NULL;
 	/* attempt to re-use the most recently unpinned IOVMM area in the
 	 * same size bin as the current handle. If that fails, iteratively
 	 * evict handles (starting from the current bin) until an allocation
@@ -155,8 +150,7 @@ struct tegra_iovmm_area *nvmap_handle_iovmm_locked(struct nvmap_client *c,
 			tegra_iovmm_free_vm(evict->pgalloc.area);
 			evict->pgalloc.area = NULL;
 			vm = tegra_iovmm_create_vm(c->share->iovmm,
-					NULL, h->size, h->align,
-					prot, h->pgalloc.iovm_addr);
+						   NULL, h->size, prot);
 		}
 	}
 	return vm;
@@ -174,7 +168,7 @@ int nvmap_mru_init(struct nvmap_share *share)
 	if (!share->mru_lists)
 		return -ENOMEM;
 
-	for (i = 0; i < share->nr_mru; i++)
+	for (i = 0; i <= share->nr_mru; i++)
 		INIT_LIST_HEAD(&share->mru_lists[i]);
 
 	return 0;
@@ -182,6 +176,8 @@ int nvmap_mru_init(struct nvmap_share *share)
 
 void nvmap_mru_destroy(struct nvmap_share *share)
 {
-	kfree(share->mru_lists);
+	if (share->mru_lists)
+		kfree(share->mru_lists);
+
 	share->mru_lists = NULL;
 }

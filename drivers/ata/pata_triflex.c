@@ -30,7 +30,7 @@
  * Loosely based on the piix & svwks drivers.
  *
  * Documentation:
- *	Not publicly available.
+ *	Not publically available.
  */
 
 #include <linux/kernel.h>

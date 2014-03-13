@@ -53,58 +53,58 @@ enum storvsc_request_type{
 };
 
 struct hv_storvsc_request {
-	enum storvsc_request_type type;
-	u32 host;
-	u32 bus;
-	u32 target_id;
-	u32 lun_id;
-	u8 *cdb;
-	u32 cdb_len;
-	u32 status;
-	u32 bytes_xfer;
+	enum storvsc_request_type Type;
+	u32 Host;
+	u32 Bus;
+	u32 TargetId;
+	u32 LunId;
+	u8 *Cdb;
+	u32 CdbLen;
+	u32 Status;
+	u32 BytesXfer;
 
-	unsigned char *sense_buffer;
-	u32 sense_buffer_size;
+	unsigned char *SenseBuffer;
+	u32 SenseBufferSize;
 
-	void *context;
+	void *Context;
 
-	void (*on_io_completion)(struct hv_storvsc_request *request);
+	void (*OnIOCompletion)(struct hv_storvsc_request *Request);
 
 	/* This points to the memory after DataBuffer */
-	void *extension;
+	void *Extension;
 
-	struct hv_multipage_buffer data_buffer;
+	struct hv_multipage_buffer DataBuffer;
 };
 
 /* Represents the block vsc driver */
 struct storvsc_driver_object {
 	/* Must be the first field */
 	/* Which is a bug FIXME! */
-	struct hv_driver base;
+	struct hv_driver Base;
 
 	/* Set by caller (in bytes) */
-	u32 ring_buffer_size;
+	u32 RingBufferSize;
 
 	/* Allocate this much private extension for each I/O request */
-	u32 request_ext_size;
+	u32 RequestExtSize;
 
 	/* Maximum # of requests in flight per channel/device */
-	u32 max_outstanding_req_per_channel;
+	u32 MaxOutstandingRequestsPerChannel;
 
 	/* Specific to this driver */
-	int (*on_io_request)(struct hv_device *device,
-			   struct hv_storvsc_request *request);
+	int (*OnIORequest)(struct hv_device *Device,
+			   struct hv_storvsc_request *Request);
 };
 
 struct storvsc_device_info {
-	unsigned int port_number;
-	unsigned char path_id;
-	unsigned char target_id;
+	unsigned int PortNumber;
+	unsigned char PathId;
+	unsigned char TargetId;
 };
 
 /* Interface */
-int stor_vsc_initialize(struct hv_driver *driver);
-int stor_vsc_on_host_reset(struct hv_device *device);
-int blk_vsc_initialize(struct hv_driver *driver);
+int StorVscInitialize(struct hv_driver *driver);
+int StorVscOnHostReset(struct hv_device *Device);
+int BlkVscInitialize(struct hv_driver *driver);
 
 #endif /* _STORVSC_API_H_ */

@@ -24,7 +24,6 @@
 #include <linux/leds.h>
 #include <linux/sysdev.h>
 #include <linux/slab.h>
-#include <linux/irq.h>
 #include <asm/bootinfo.h>
 #include <asm/time.h>
 #include <asm/reboot.h>

@@ -1,9 +1,9 @@
 /*
  * linux/arch/arm/mach-omap2/mux.c
  *
- * OMAP2, OMAP3 and OMAP4 pin multiplexing configurations
+ * OMAP2 and OMAP3 pin multiplexing configurations
  *
- * Copyright (C) 2004 - 2010 Texas Instruments Inc.
+ * Copyright (C) 2004 - 2008 Texas Instruments Inc.
  * Copyright (C) 2003 - 2008 Nokia Corporation
  *
  * Written by Tony Lindgren
@@ -23,11 +23,12 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  *
  */
-#include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/io.h>
-#include <linux/list.h>
 #include <linux/slab.h>
+#include <linux/spinlock.h>
+#include <linux/list.h>
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
@@ -35,79 +36,66 @@
 
 #include <asm/system.h>
 
-#include <plat/omap_hwmod.h>
+#include <plat/control.h>
 
-#include "control.h"
 #include "mux.h"
 
 #define OMAP_MUX_BASE_OFFSET		0x30	/* Offset from CTRL_BASE */
 #define OMAP_MUX_BASE_SZ		0x5ca
+#define MUXABLE_GPIO_MODE3		BIT(0)
 
 struct omap_mux_entry {
 	struct omap_mux		mux;
 	struct list_head	node;
 };
 
-static LIST_HEAD(mux_partitions);
-static DEFINE_MUTEX(muxmode_mutex);
+static unsigned long mux_phys;
+static void __iomem *mux_base;
+static u8 omap_mux_flags;
 
-struct omap_mux_partition *omap_mux_get(const char *name)
+u16 omap_mux_read(u16 reg)
 {
-	struct omap_mux_partition *partition;
-
-	list_for_each_entry(partition, &mux_partitions, node) {
-		if (!strcmp(name, partition->name))
-			return partition;
-	}
-
-	return NULL;
-}
-
-u16 omap_mux_read(struct omap_mux_partition *partition, u16 reg)
-{
-	if (partition->flags & OMAP_MUX_REG_8BIT)
-		return __raw_readb(partition->base + reg);
+	if (cpu_is_omap24xx())
+		return __raw_readb(mux_base + reg);
 	else
-		return __raw_readw(partition->base + reg);
+		return __raw_readw(mux_base + reg);
 }
 
-void omap_mux_write(struct omap_mux_partition *partition, u16 val,
-			   u16 reg)
+void omap_mux_write(u16 val, u16 reg)
 {
-	if (partition->flags & OMAP_MUX_REG_8BIT)
-		__raw_writeb(val, partition->base + reg);
+	if (cpu_is_omap24xx())
+		__raw_writeb(val, mux_base + reg);
 	else
-		__raw_writew(val, partition->base + reg);
+		__raw_writew(val, mux_base + reg);
 }
 
-void omap_mux_write_array(struct omap_mux_partition *partition,
-				 struct omap_board_mux *board_mux)
+void omap_mux_write_array(struct omap_board_mux *board_mux)
 {
-	while (board_mux->reg_offset != OMAP_MUX_TERMINATOR) {
-		omap_mux_write(partition, board_mux->value,
-			       board_mux->reg_offset);
+	while (board_mux->reg_offset !=  OMAP_MUX_TERMINATOR) {
+		omap_mux_write(board_mux->value, board_mux->reg_offset);
 		board_mux++;
 	}
 }
+
+static LIST_HEAD(muxmodes);
+static DEFINE_MUTEX(muxmode_mutex);
 
 #ifdef CONFIG_OMAP_MUX
 
 static char *omap_mux_options;
 
-static int __init _omap_mux_init_gpio(struct omap_mux_partition *partition,
-				      int gpio, int val)
+int __init omap_mux_init_gpio(int gpio, int val)
 {
 	struct omap_mux_entry *e;
-	struct omap_mux *gpio_mux = NULL;
+	struct omap_mux *gpio_mux;
 	u16 old_mode;
 	u16 mux_mode;
 	int found = 0;
-	struct list_head *muxmodes = &partition->muxmodes;
 
 	if (!gpio)
 		return -EINVAL;
 
-	list_for_each_entry(e, muxmodes, node) {
+	list_for_each_entry(e, &muxmodes, node) {
 		struct omap_mux *m = &e->mux;
 		if (gpio == m->gpio) {
 			gpio_mux = m;
@@ -116,310 +104,85 @@ static int __init _omap_mux_init_gpio(struct omap_mux_partition *partition,
 	}
 
 	if (found == 0) {
-		pr_err("%s: Could not set gpio%i\n", __func__, gpio);
+		printk(KERN_ERR "mux: Could not set gpio%i\n", gpio);
 		return -ENODEV;
 	}
 
 	if (found > 1) {
-		pr_info("%s: Multiple gpio paths (%d) for gpio%i\n", __func__,
-			found, gpio);
+		printk(KERN_INFO "mux: Multiple gpio paths (%d) for gpio%i\n",
+				found, gpio);
 		return -EINVAL;
 	}
 
-	old_mode = omap_mux_read(partition, gpio_mux->reg_offset);
+	old_mode = omap_mux_read(gpio_mux->reg_offset);
 	mux_mode = val & ~(OMAP_MUX_NR_MODES - 1);
-	if (partition->flags & OMAP_MUX_GPIO_IN_MODE3)
+	if (omap_mux_flags & MUXABLE_GPIO_MODE3)
 		mux_mode |= OMAP_MUX_MODE3;
 	else
 		mux_mode |= OMAP_MUX_MODE4;
-	pr_debug("%s: Setting signal %s.gpio%i 0x%04x -> 0x%04x\n", __func__,
-		 gpio_mux->muxnames[0], gpio, old_mode, mux_mode);
-	omap_mux_write(partition, mux_mode, gpio_mux->reg_offset);
+	printk(KERN_DEBUG "mux: Setting signal %s.gpio%i 0x%04x -> 0x%04x\n",
+			gpio_mux->muxnames[0], gpio, old_mode, mux_mode);
+	omap_mux_write(mux_mode, gpio_mux->reg_offset);
 
 	return 0;
 }
 
-int __init omap_mux_init_gpio(int gpio, int val)
+int __init omap_mux_init_signal(char *muxname, int val)
 {
-	struct omap_mux_partition *partition;
-	int ret;
-
-	list_for_each_entry(partition, &mux_partitions, node) {
-		ret = _omap_mux_init_gpio(partition, gpio, val);
-		if (!ret)
-			return ret;
-	}
-
-	return -ENODEV;
-}
-
-static int __init _omap_mux_get_by_name(struct omap_mux_partition *partition,
-					const char *muxname,
-					struct omap_mux **found_mux)
-{
-	struct omap_mux *mux = NULL;
 	struct omap_mux_entry *e;
-	const char *mode_name;
-	int found = 0, found_mode = 0, mode0_len = 0;
-	struct list_head *muxmodes = &partition->muxmodes;
+	char *m0_name = NULL, *mode_name = NULL;
+	int found = 0;
 
 	mode_name = strchr(muxname, '.');
 	if (mode_name) {
-		mode0_len = strlen(muxname) - strlen(mode_name);
+		*mode_name = '\0';
 		mode_name++;
+		m0_name = muxname;
 	} else {
 		mode_name = muxname;
 	}
 
-	list_for_each_entry(e, muxmodes, node) {
-		char *m0_entry;
+	list_for_each_entry(e, &muxmodes, node) {
+		struct omap_mux *m = &e->mux;
+		char *m0_entry = m->muxnames[0];
 		int i;
 
-		mux = &e->mux;
-		m0_entry = mux->muxnames[0];
-
-		/* First check for full name in mode0.muxmode format */
-		if (mode0_len && strncmp(muxname, m0_entry, mode0_len))
+		if (m0_name && strcmp(m0_name, m0_entry))
 			continue;
 
-		/* Then check for muxmode only */
 		for (i = 0; i < OMAP_MUX_NR_MODES; i++) {
-			char *mode_cur = mux->muxnames[i];
+			char *mode_cur = m->muxnames[i];
 
 			if (!mode_cur)
 				continue;
 
 			if (!strcmp(mode_name, mode_cur)) {
-				*found_mux = mux;
+				u16 old_mode;
+				u16 mux_mode;
+
+				old_mode = omap_mux_read(m->reg_offset);
+				mux_mode = val | i;
+				printk(KERN_DEBUG "mux: Setting signal "
+					"%s.%s 0x%04x -> 0x%04x\n",
+					m0_entry, muxname, old_mode, mux_mode);
+				omap_mux_write(mux_mode, m->reg_offset);
 				found++;
-				found_mode = i;
 			}
 		}
 	}
 
-	if (found == 1) {
-		return found_mode;
-	}
+	if (found == 1)
+		return 0;
 
 	if (found > 1) {
-		pr_err("%s: Multiple signal paths (%i) for %s\n", __func__,
-		       found, muxname);
+		printk(KERN_ERR "mux: Multiple signal paths (%i) for %s\n",
+				found, muxname);
 		return -EINVAL;
 	}
 
-	pr_err("%s: Could not find signal %s\n", __func__, muxname);
+	printk(KERN_ERR "mux: Could not set signal %s\n", muxname);
 
 	return -ENODEV;
-}
-
-static int __init
-omap_mux_get_by_name(const char *muxname,
-			struct omap_mux_partition **found_partition,
-			struct omap_mux **found_mux)
-{
-	struct omap_mux_partition *partition;
-
-	list_for_each_entry(partition, &mux_partitions, node) {
-		struct omap_mux *mux = NULL;
-		int mux_mode = _omap_mux_get_by_name(partition, muxname, &mux);
-		if (mux_mode < 0)
-			continue;
-
-		*found_partition = partition;
-		*found_mux = mux;
-
-		return mux_mode;
-	}
-
-	return -ENODEV;
-}
-
-int __init omap_mux_init_signal(const char *muxname, int val)
-{
-	struct omap_mux_partition *partition = NULL;
-	struct omap_mux *mux = NULL;
-	u16 old_mode;
-	int mux_mode;
-
-	mux_mode = omap_mux_get_by_name(muxname, &partition, &mux);
-	if (mux_mode < 0)
-		return mux_mode;
-
-	old_mode = omap_mux_read(partition, mux->reg_offset);
-	mux_mode |= val;
-	pr_debug("%s: Setting signal %s 0x%04x -> 0x%04x\n",
-			 __func__, muxname, old_mode, mux_mode);
-	omap_mux_write(partition, mux_mode, mux->reg_offset);
-
-	return 0;
-}
-
-struct omap_hwmod_mux_info * __init
-omap_hwmod_mux_init(struct omap_device_pad *bpads, int nr_pads)
-{
-	struct omap_hwmod_mux_info *hmux;
-	int i, nr_pads_dynamic = 0;
-
-	if (!bpads || nr_pads < 1)
-		return NULL;
-
-	hmux = kzalloc(sizeof(struct omap_hwmod_mux_info), GFP_KERNEL);
-	if (!hmux)
-		goto err1;
-
-	hmux->nr_pads = nr_pads;
-
-	hmux->pads = kzalloc(sizeof(struct omap_device_pad) *
-				nr_pads, GFP_KERNEL);
-	if (!hmux->pads)
-		goto err2;
-
-	for (i = 0; i < hmux->nr_pads; i++) {
-		struct omap_mux_partition *partition;
-		struct omap_device_pad *bpad = &bpads[i], *pad = &hmux->pads[i];
-		struct omap_mux *mux;
-		int mux_mode;
-
-		mux_mode = omap_mux_get_by_name(bpad->name, &partition, &mux);
-		if (mux_mode < 0)
-			goto err3;
-		if (!pad->partition)
-			pad->partition = partition;
-		if (!pad->mux)
-			pad->mux = mux;
-
-		pad->name = kzalloc(strlen(bpad->name) + 1, GFP_KERNEL);
-		if (!pad->name) {
-			int j;
-
-			for (j = i - 1; j >= 0; j--)
-				kfree(hmux->pads[j].name);
-			goto err3;
-		}
-		strcpy(pad->name, bpad->name);
-
-		pad->flags = bpad->flags;
-		pad->enable = bpad->enable;
-		pad->idle = bpad->idle;
-		pad->off = bpad->off;
-
-		if (pad->flags & OMAP_DEVICE_PAD_REMUX)
-			nr_pads_dynamic++;
-
-		pr_debug("%s: Initialized %s\n", __func__, pad->name);
-	}
-
-	if (!nr_pads_dynamic)
-		return hmux;
-
-	/*
-	 * Add pads that need dynamic muxing into a separate list
-	 */
-
-	hmux->nr_pads_dynamic = nr_pads_dynamic;
-	hmux->pads_dynamic = kzalloc(sizeof(struct omap_device_pad *) *
-					nr_pads_dynamic, GFP_KERNEL);
-	if (!hmux->pads_dynamic) {
-		pr_err("%s: Could not allocate dynamic pads\n", __func__);
-		return hmux;
-	}
-
-	nr_pads_dynamic = 0;
-	for (i = 0; i < hmux->nr_pads; i++) {
-		struct omap_device_pad *pad = &hmux->pads[i];
-
-		if (pad->flags & OMAP_DEVICE_PAD_REMUX) {
-			pr_debug("%s: pad %s tagged dynamic\n",
-					__func__, pad->name);
-			hmux->pads_dynamic[nr_pads_dynamic] = pad;
-			nr_pads_dynamic++;
-		}
-	}
-
-	return hmux;
-
-err3:
-	kfree(hmux->pads);
-err2:
-	kfree(hmux);
-err1:
-	pr_err("%s: Could not allocate device mux entry\n", __func__);
-
-	return NULL;
-}
-
-/* Assumes the calling function takes care of locking */
-void omap_hwmod_mux(struct omap_hwmod_mux_info *hmux, u8 state)
-{
-	int i;
-
-	/* Runtime idling of dynamic pads */
-	if (state == _HWMOD_STATE_IDLE && hmux->enabled) {
-		for (i = 0; i < hmux->nr_pads_dynamic; i++) {
-			struct omap_device_pad *pad = hmux->pads_dynamic[i];
-			int val = -EINVAL;
-
-			val = pad->idle;
-			omap_mux_write(pad->partition, val,
-					pad->mux->reg_offset);
-		}
-
-		return;
-	}
-
-	/* Runtime enabling of dynamic pads */
-	if ((state == _HWMOD_STATE_ENABLED) && hmux->pads_dynamic
-					&& hmux->enabled) {
-		for (i = 0; i < hmux->nr_pads_dynamic; i++) {
-			struct omap_device_pad *pad = hmux->pads_dynamic[i];
-			int val = -EINVAL;
-
-			val = pad->enable;
-			omap_mux_write(pad->partition, val,
-					pad->mux->reg_offset);
-		}
-
-		return;
-	}
-
-	/* Enabling or disabling of all pads */
-	for (i = 0; i < hmux->nr_pads; i++) {
-		struct omap_device_pad *pad = &hmux->pads[i];
-		int flags, val = -EINVAL;
-
-		flags = pad->flags;
-
-		switch (state) {
-		case _HWMOD_STATE_ENABLED:
-			val = pad->enable;
-			pr_debug("%s: Enabling %s %x\n", __func__,
-					pad->name, val);
-			break;
-		case _HWMOD_STATE_DISABLED:
-			/* Use safe mode unless OMAP_DEVICE_PAD_REMUX */
-			if (flags & OMAP_DEVICE_PAD_REMUX)
-				val = pad->off;
-			else
-				val = OMAP_MUX_MODE7;
-			pr_debug("%s: Disabling %s %x\n", __func__,
-					pad->name, val);
-			break;
-		default:
-			/* Nothing to be done */
-			break;
-		};
-
-		if (val >= 0) {
-			omap_mux_write(pad->partition, val,
-					pad->mux->reg_offset);
-			pad->flags = flags;
-		}
-	}
-
-	if (state == _HWMOD_STATE_ENABLED)
-		hmux->enabled = true;
-	else
-		hmux->enabled = false;
 }
 
 #ifdef CONFIG_DEBUG_FS
@@ -486,15 +249,13 @@ static inline void omap_mux_decode(struct seq_file *s, u16 val)
 	} while (i-- > 0);
 }
 
-#define OMAP_MUX_DEFNAME_LEN	32
+#define OMAP_MUX_DEFNAME_LEN	16
 
 static int omap_mux_dbg_board_show(struct seq_file *s, void *unused)
 {
-	struct omap_mux_partition *partition = s->private;
 	struct omap_mux_entry *e;
-	u8 omap_gen = omap_rev() >> 28;
 
-	list_for_each_entry(e, &partition->muxmodes, node) {
+	list_for_each_entry(e, &muxmodes, node) {
 		struct omap_mux *m = &e->mux;
 		char m0_def[OMAP_MUX_DEFNAME_LEN];
 		char *m0_name = m->muxnames[0];
@@ -512,16 +273,11 @@ static int omap_mux_dbg_board_show(struct seq_file *s, void *unused)
 			}
 			m0_def[i] = toupper(m0_name[i]);
 		}
-		val = omap_mux_read(partition, m->reg_offset);
+		val = omap_mux_read(m->reg_offset);
 		mode = val & OMAP_MUX_MODE7;
-		if (mode != 0)
-			seq_printf(s, "/* %s */\n", m->muxnames[mode]);
 
-		/*
-		 * XXX: Might be revisited to support differences across
-		 * same OMAP generation.
-		 */
-		seq_printf(s, "OMAP%d_MUX(%s, ", omap_gen, m0_def);
+		seq_printf(s, "OMAP%i_MUX(%s, ",
+					cpu_is_omap34xx() ? 3 : 0, m0_def);
 		omap_mux_decode(s, val);
 		seq_printf(s, "),\n");
 	}
@@ -531,7 +287,7 @@ static int omap_mux_dbg_board_show(struct seq_file *s, void *unused)
 
 static int omap_mux_dbg_board_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, omap_mux_dbg_board_show, inode->i_private);
+	return single_open(file, omap_mux_dbg_board_show, &inode->i_private);
 }
 
 static const struct file_operations omap_mux_dbg_board_fops = {
@@ -541,43 +297,19 @@ static const struct file_operations omap_mux_dbg_board_fops = {
 	.release	= single_release,
 };
 
-static struct omap_mux_partition *omap_mux_get_partition(struct omap_mux *mux)
-{
-	struct omap_mux_partition *partition;
-
-	list_for_each_entry(partition, &mux_partitions, node) {
-		struct list_head *muxmodes = &partition->muxmodes;
-		struct omap_mux_entry *e;
-
-		list_for_each_entry(e, muxmodes, node) {
-			struct omap_mux *m = &e->mux;
-
-			if (m == mux)
-				return partition;
-		}
-	}
-
-	return NULL;
-}
-
 static int omap_mux_dbg_signal_show(struct seq_file *s, void *unused)
 {
 	struct omap_mux *m = s->private;
-	struct omap_mux_partition *partition;
 	const char *none = "NA";
 	u16 val;
 	int mode;
 
-	partition = omap_mux_get_partition(m);
-	if (!partition)
-		return 0;
-
-	val = omap_mux_read(partition, m->reg_offset);
+	val = omap_mux_read(m->reg_offset);
 	mode = val & OMAP_MUX_MODE7;
 
-	seq_printf(s, "name: %s.%s (0x%08x/0x%03x = 0x%04x), b %s, t %s\n",
+	seq_printf(s, "name: %s.%s (0x%08lx/0x%03x = 0x%04x), b %s, t %s\n",
 			m->muxnames[0], m->muxnames[mode],
-			partition->phys + m->reg_offset, m->reg_offset, val,
+			mux_phys + m->reg_offset, m->reg_offset, val,
 			m->balls[0] ? m->balls[0] : none,
 			m->balls[1] ? m->balls[1] : none);
 	seq_printf(s, "mode: ");
@@ -599,15 +331,14 @@ static int omap_mux_dbg_signal_show(struct seq_file *s, void *unused)
 #define OMAP_MUX_MAX_ARG_CHAR  7
 
 static ssize_t omap_mux_dbg_signal_write(struct file *file,
-					 const char __user *user_buf,
-					 size_t count, loff_t *ppos)
+						const char __user *user_buf,
+						size_t count, loff_t *ppos)
 {
 	char buf[OMAP_MUX_MAX_ARG_CHAR];
 	struct seq_file *seqf;
 	struct omap_mux *m;
 	unsigned long val;
 	int buf_size, ret;
-	struct omap_mux_partition *partition;
 
 	if (count > OMAP_MUX_MAX_ARG_CHAR)
 		return -EINVAL;
@@ -628,11 +359,7 @@ static ssize_t omap_mux_dbg_signal_write(struct file *file,
 	seqf = file->private_data;
 	m = seqf->private;
 
-	partition = omap_mux_get_partition(m);
-	if (!partition)
-		return -ENODEV;
-
-	omap_mux_write(partition, (u16)val, m->reg_offset);
+	omap_mux_write((u16)val, m->reg_offset);
 	*ppos += count;
 
 	return count;
@@ -653,38 +380,22 @@ static const struct file_operations omap_mux_dbg_signal_fops = {
 
 static struct dentry *mux_dbg_dir;
 
-static void __init omap_mux_dbg_create_entry(
-				struct omap_mux_partition *partition,
-				struct dentry *mux_dbg_dir)
-{
-	struct omap_mux_entry *e;
-
-	list_for_each_entry(e, &partition->muxmodes, node) {
-		struct omap_mux *m = &e->mux;
-
-		(void)debugfs_create_file(m->muxnames[0], S_IWUSR, mux_dbg_dir,
-					  m, &omap_mux_dbg_signal_fops);
-	}
-}
-
 static void __init omap_mux_dbg_init(void)
 {
-	struct omap_mux_partition *partition;
-	static struct dentry *mux_dbg_board_dir;
+	struct omap_mux_entry *e;
 
 	mux_dbg_dir = debugfs_create_dir("omap_mux", NULL);
 	if (!mux_dbg_dir)
 		return;
 
-	mux_dbg_board_dir = debugfs_create_dir("board", mux_dbg_dir);
-	if (!mux_dbg_board_dir)
-		return;
+	(void)debugfs_create_file("board", S_IRUGO, mux_dbg_dir,
+					NULL, &omap_mux_dbg_board_fops);
 
-	list_for_each_entry(partition, &mux_partitions, node) {
-		omap_mux_dbg_create_entry(partition, mux_dbg_dir);
-		(void)debugfs_create_file(partition->name, S_IRUGO,
-					  mux_dbg_board_dir, partition,
-					  &omap_mux_dbg_board_fops);
+	list_for_each_entry(e, &muxmodes, node) {
+		struct omap_mux *m = &e->mux;
+
+		(void)debugfs_create_file(m->muxnames[0], S_IWUGO, mux_dbg_dir,
+					m, &omap_mux_dbg_signal_fops);
 	}
 }
 
@@ -711,25 +422,23 @@ static void __init omap_mux_free_names(struct omap_mux *m)
 /* Free all data except for GPIO pins unless CONFIG_DEBUG_FS is set */
 static int __init omap_mux_late_init(void)
 {
-	struct omap_mux_partition *partition;
+	struct omap_mux_entry *e, *tmp;
 
-	list_for_each_entry(partition, &mux_partitions, node) {
-		struct omap_mux_entry *e, *tmp;
-		list_for_each_entry_safe(e, tmp, &partition->muxmodes, node) {
-			struct omap_mux *m = &e->mux;
-			u16 mode = omap_mux_read(partition, m->reg_offset);
+	list_for_each_entry_safe(e, tmp, &muxmodes, node) {
+		struct omap_mux *m = &e->mux;
+		u16 mode = omap_mux_read(m->reg_offset);
 
-			if (OMAP_MODE_GPIO(mode))
-				continue;
+		if (OMAP_MODE_GPIO(mode))
+			continue;
 
 #ifndef CONFIG_DEBUG_FS
-			mutex_lock(&muxmode_mutex);
-			list_del(&e->node);
-			mutex_unlock(&muxmode_mutex);
-			omap_mux_free_names(m);
-			kfree(m);
+		mutex_lock(&muxmode_mutex);
+		list_del(&e->node);
+		mutex_unlock(&muxmode_mutex);
+		omap_mux_free_names(m);
+		kfree(m);
 #endif
-		}
+
 	}
 
 	omap_mux_dbg_init();
@@ -754,8 +463,8 @@ static void __init omap_mux_package_fixup(struct omap_mux *p,
 			s++;
 		}
 		if (!found)
-			pr_err("%s: Unknown entry offset 0x%x\n", __func__,
-			       p->reg_offset);
+			printk(KERN_ERR "mux: Unknown entry offset 0x%x\n",
+					p->reg_offset);
 		p++;
 	}
 }
@@ -779,8 +488,8 @@ static void __init omap_mux_package_init_balls(struct omap_ball *b,
 			s++;
 		}
 		if (!found)
-			pr_err("%s: Unknown ball offset 0x%x\n", __func__,
-			       b->reg_offset);
+			printk(KERN_ERR "mux: Unknown ball offset 0x%x\n",
+					b->reg_offset);
 		b++;
 	}
 }
@@ -846,7 +555,7 @@ static void __init omap_mux_set_cmdline_signals(void)
 }
 
 static int __init omap_mux_copy_names(struct omap_mux *src,
-				      struct omap_mux *dst)
+					struct omap_mux *dst)
 {
 	int i;
 
@@ -884,63 +593,51 @@ free:
 
 #endif	/* CONFIG_OMAP_MUX */
 
-static struct omap_mux *omap_mux_get_by_gpio(
-				struct omap_mux_partition *partition,
-				int gpio)
+static u16 omap_mux_get_by_gpio(int gpio)
 {
 	struct omap_mux_entry *e;
-	struct omap_mux *ret = NULL;
+	u16 offset = OMAP_MUX_TERMINATOR;
 
-	list_for_each_entry(e, &partition->muxmodes, node) {
+	list_for_each_entry(e, &muxmodes, node) {
 		struct omap_mux *m = &e->mux;
 		if (m->gpio == gpio) {
-			ret = m;
+			offset = m->reg_offset;
 			break;
 		}
 	}
 
-	return ret;
+	return offset;
 }
 
 /* Needed for dynamic muxing of GPIO pins for off-idle */
 u16 omap_mux_get_gpio(int gpio)
 {
-	struct omap_mux_partition *partition;
-	struct omap_mux *m;
+	u16 offset;
 
-	list_for_each_entry(partition, &mux_partitions, node) {
-		m = omap_mux_get_by_gpio(partition, gpio);
-		if (m)
-			return omap_mux_read(partition, m->reg_offset);
+	offset = omap_mux_get_by_gpio(gpio);
+	if (offset == OMAP_MUX_TERMINATOR) {
+		printk(KERN_ERR "mux: Could not get gpio%i\n", gpio);
+		return offset;
 	}
 
-	if (!m || m->reg_offset == OMAP_MUX_TERMINATOR)
-		pr_err("%s: Could not get gpio%i\n", __func__, gpio);
-
-	return OMAP_MUX_TERMINATOR;
+	return omap_mux_read(offset);
 }
 
 /* Needed for dynamic muxing of GPIO pins for off-idle */
 void omap_mux_set_gpio(u16 val, int gpio)
 {
-	struct omap_mux_partition *partition;
-	struct omap_mux *m = NULL;
+	u16 offset;
 
-	list_for_each_entry(partition, &mux_partitions, node) {
-		m = omap_mux_get_by_gpio(partition, gpio);
-		if (m) {
-			omap_mux_write(partition, val, m->reg_offset);
-			return;
-		}
+	offset = omap_mux_get_by_gpio(gpio);
+	if (offset == OMAP_MUX_TERMINATOR) {
+		printk(KERN_ERR "mux: Could not set gpio%i\n", gpio);
+		return;
 	}
 
-	if (!m || m->reg_offset == OMAP_MUX_TERMINATOR)
-		pr_err("%s: Could not set gpio%i\n", __func__, gpio);
+	omap_mux_write(val, offset);
 }
 
-static struct omap_mux * __init omap_mux_list_add(
-					struct omap_mux_partition *partition,
-					struct omap_mux *src)
+static struct omap_mux * __init omap_mux_list_add(struct omap_mux *src)
 {
 	struct omap_mux_entry *entry;
 	struct omap_mux *m;
@@ -950,7 +647,7 @@ static struct omap_mux * __init omap_mux_list_add(
 		return NULL;
 
 	m = &entry->mux;
-	entry->mux = *src;
+	memcpy(m, src, sizeof(struct omap_mux_entry));
 
 #ifdef CONFIG_OMAP_MUX
 	if (omap_mux_copy_names(src, m)) {
@@ -960,7 +657,7 @@ static struct omap_mux * __init omap_mux_list_add(
 #endif
 
 	mutex_lock(&muxmode_mutex);
-	list_add_tail(&entry->node, &partition->muxmodes);
+	list_add_tail(&entry->node, &muxmodes);
 	mutex_unlock(&muxmode_mutex);
 
 	return m;
@@ -971,8 +668,7 @@ static struct omap_mux * __init omap_mux_list_add(
  * the GPIO to mux offset mapping that is needed for dynamic muxing
  * of GPIO pins for off-idle.
  */
-static void __init omap_mux_init_list(struct omap_mux_partition *partition,
-				      struct omap_mux *superset)
+static void __init omap_mux_init_list(struct omap_mux *superset)
 {
 	while (superset->reg_offset !=  OMAP_MUX_TERMINATOR) {
 		struct omap_mux *entry;
@@ -984,16 +680,15 @@ static void __init omap_mux_init_list(struct omap_mux_partition *partition,
 		}
 #else
 		/* Skip pins that are not muxed as GPIO by bootloader */
-		if (!OMAP_MODE_GPIO(omap_mux_read(partition,
-				    superset->reg_offset))) {
+		if (!OMAP_MODE_GPIO(omap_mux_read(superset->reg_offset))) {
 			superset++;
 			continue;
 		}
 #endif
 
-		entry = omap_mux_list_add(partition, superset);
+		entry = omap_mux_list_add(superset);
 		if (!entry) {
-			pr_err("%s: Could not add entry\n", __func__);
+			printk(KERN_ERR "mux: Could not add entry\n");
 			return;
 		}
 		superset++;
@@ -1012,11 +707,10 @@ static void omap_mux_init_package(struct omap_mux *superset,
 		omap_mux_package_init_balls(package_balls, superset);
 }
 
-static void omap_mux_init_signals(struct omap_mux_partition *partition,
-				  struct omap_board_mux *board_mux)
+static void omap_mux_init_signals(struct omap_board_mux *board_mux)
 {
 	omap_mux_set_cmdline_signals();
-	omap_mux_write_array(partition, board_mux);
+	omap_mux_write_array(board_mux);
 }
 
 #else
@@ -1027,50 +721,34 @@ static void omap_mux_init_package(struct omap_mux *superset,
 {
 }
 
-static void omap_mux_init_signals(struct omap_mux_partition *partition,
-				  struct omap_board_mux *board_mux)
+static void omap_mux_init_signals(struct omap_board_mux *board_mux)
 {
 }
 
 #endif
 
-static u32 mux_partitions_cnt;
-
-int __init omap_mux_init(const char *name, u32 flags,
-			 u32 mux_pbase, u32 mux_size,
-			 struct omap_mux *superset,
-			 struct omap_mux *package_subset,
-			 struct omap_board_mux *board_mux,
-			 struct omap_ball *package_balls)
+int __init omap_mux_init(u32 mux_pbase, u32 mux_size,
+				struct omap_mux *superset,
+				struct omap_mux *package_subset,
+				struct omap_board_mux *board_mux,
+				struct omap_ball *package_balls)
 {
-	struct omap_mux_partition *partition;
+	if (mux_base)
+		return -EBUSY;
 
-	partition = kzalloc(sizeof(struct omap_mux_partition), GFP_KERNEL);
-	if (!partition)
-		return -ENOMEM;
-
-	partition->name = name;
-	partition->flags = flags;
-	partition->size = mux_size;
-	partition->phys = mux_pbase;
-	partition->base = ioremap(mux_pbase, mux_size);
-	if (!partition->base) {
-		pr_err("%s: Could not ioremap mux partition at 0x%08x\n",
-			__func__, partition->phys);
-		kfree(partition);
+	mux_phys = mux_pbase;
+	mux_base = ioremap(mux_pbase, mux_size);
+	if (!mux_base) {
+		printk(KERN_ERR "mux: Could not ioremap\n");
 		return -ENODEV;
 	}
 
-	INIT_LIST_HEAD(&partition->muxmodes);
-
-	list_add_tail(&partition->node, &mux_partitions);
-	mux_partitions_cnt++;
-	pr_info("%s: Add partition: #%d: %s, flags: %x\n", __func__,
-		mux_partitions_cnt, partition->name, partition->flags);
+	if (cpu_is_omap24xx())
+		omap_mux_flags = MUXABLE_GPIO_MODE3;
 
 	omap_mux_init_package(superset, package_subset, package_balls);
-	omap_mux_init_list(partition, superset);
-	omap_mux_init_signals(partition, board_mux);
+	omap_mux_init_list(superset);
+	omap_mux_init_signals(board_mux);
 
 	return 0;
 }

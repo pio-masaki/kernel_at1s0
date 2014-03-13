@@ -26,6 +26,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
 
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/ds.h>
 #include <pcmcia/ss.h>
@@ -51,7 +52,7 @@ static void pcmcia_check_driver(struct pcmcia_driver *p_drv)
 
 	if (!p_drv->probe || !p_drv->remove)
 		printk(KERN_DEBUG "pcmcia: %s lacks a requisite callback "
-		       "function\n", p_drv->name);
+		       "function\n", p_drv->drv.name);
 
 	while (did && did->match_flags) {
 		for (i = 0; i < 4; i++) {
@@ -64,7 +65,7 @@ static void pcmcia_check_driver(struct pcmcia_driver *p_drv)
 
 			printk(KERN_DEBUG "pcmcia: %s: invalid hash for "
 			       "product string \"%s\": is 0x%x, should "
-			       "be 0x%x\n", p_drv->name, did->prod_id[i],
+			       "be 0x%x\n", p_drv->drv.name, did->prod_id[i],
 			       did->prod_id_hash[i], hash);
 			printk(KERN_DEBUG "pcmcia: see "
 				"Documentation/pcmcia/devicetable.txt for "
@@ -179,11 +180,10 @@ int pcmcia_register_driver(struct pcmcia_driver *driver)
 	/* initialize common fields */
 	driver->drv.bus = &pcmcia_bus_type;
 	driver->drv.owner = driver->owner;
-	driver->drv.name = driver->name;
 	mutex_init(&driver->dynids.lock);
 	INIT_LIST_HEAD(&driver->dynids.list);
 
-	pr_debug("registering driver %s\n", driver->name);
+	pr_debug("registering driver %s\n", driver->drv.name);
 
 	error = driver_register(&driver->drv);
 	if (error < 0)
@@ -203,7 +203,7 @@ EXPORT_SYMBOL(pcmcia_register_driver);
  */
 void pcmcia_unregister_driver(struct pcmcia_driver *driver)
 {
-	pr_debug("unregistering driver %s\n", driver->name);
+	pr_debug("unregistering driver %s\n", driver->drv.name);
 	driver_unregister(&driver->drv);
 	pcmcia_free_dynids(driver);
 }
@@ -264,7 +264,7 @@ static int pcmcia_device_probe(struct device *dev)
 	p_drv = to_pcmcia_drv(dev->driver);
 	s = p_dev->socket;
 
-	dev_dbg(dev, "trying to bind to %s\n", p_drv->name);
+	dev_dbg(dev, "trying to bind to %s\n", p_drv->drv.name);
 
 	if ((!p_drv->probe) || (!p_dev->function_config) ||
 	    (!try_module_get(p_drv->owner))) {
@@ -276,28 +276,21 @@ static int pcmcia_device_probe(struct device *dev)
 	ret = pccard_read_tuple(p_dev->socket, p_dev->func, CISTPL_CONFIG,
 				&cis_config);
 	if (!ret) {
-		p_dev->config_base = cis_config.base;
-		p_dev->config_regs = cis_config.rmask[0];
-		dev_dbg(dev, "base %x, regs %x", p_dev->config_base,
-			p_dev->config_regs);
+		p_dev->conf.ConfigBase = cis_config.base;
+		p_dev->conf.Present = cis_config.rmask[0];
 	} else {
 		dev_printk(KERN_INFO, dev,
 			   "pcmcia: could not parse base and rmask0 of CIS\n");
-		p_dev->config_base = 0;
-		p_dev->config_regs = 0;
+		p_dev->conf.ConfigBase = 0;
+		p_dev->conf.Present = 0;
 	}
 
 	ret = p_drv->probe(p_dev);
 	if (ret) {
 		dev_dbg(dev, "binding to %s failed with %d\n",
-			   p_drv->name, ret);
+			   p_drv->drv.name, ret);
 		goto put_module;
 	}
-	dev_dbg(dev, "%s bound: Vpp %d.%d, idx %x, IRQ %d", p_drv->name,
-		p_dev->vpp/10, p_dev->vpp%10, p_dev->config_index, p_dev->irq);
-	dev_dbg(dev, "resources: ioport %pR %pR iomem %pR %pR %pR",
-		p_dev->resource[0], p_dev->resource[1], p_dev->resource[2],
-		p_dev->resource[3], p_dev->resource[4]);
 
 	mutex_lock(&s->ops_mutex);
 	if ((s->pcmcia_pfc) &&
@@ -381,13 +374,13 @@ static int pcmcia_device_remove(struct device *dev)
 	if (p_dev->_irq || p_dev->_io || p_dev->_locked)
 		dev_printk(KERN_INFO, dev,
 			"pcmcia: driver %s did not release config properly\n",
-			p_drv->name);
+			p_drv->drv.name);
 
 	for (i = 0; i < MAX_WIN; i++)
 		if (p_dev->_win & CLIENT_WIN_REQ(i))
 			dev_printk(KERN_INFO, dev,
 			  "pcmcia: driver %s did not release window properly\n",
-			   p_drv->name);
+			   p_drv->drv.name);
 
 	/* references from pcmcia_probe_device */
 	pcmcia_put_dev(p_dev);
@@ -1143,7 +1136,7 @@ static int pcmcia_dev_suspend(struct device *dev, pm_message_t state)
 			dev_printk(KERN_ERR, dev,
 				   "pcmcia: device %s (driver %s) did "
 				   "not want to go to sleep (%d)\n",
-				   p_dev->devname, p_drv->name, ret);
+				   p_dev->devname, p_drv->drv.name, ret);
 			mutex_lock(&p_dev->socket->ops_mutex);
 			p_dev->suspended = 0;
 			mutex_unlock(&p_dev->socket->ops_mutex);
@@ -1185,7 +1178,7 @@ static int pcmcia_dev_resume(struct device *dev)
 
 	if (p_dev->device_no == p_dev->func) {
 		dev_dbg(dev, "requesting configuration\n");
-		ret = pcmcia_enable_device(p_dev);
+		ret = pcmcia_request_configuration(p_dev, &p_dev->conf);
 		if (ret)
 			goto out;
 	}

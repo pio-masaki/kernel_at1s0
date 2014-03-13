@@ -35,7 +35,7 @@
 #include <linux/seq_file.h>
 #include <linux/init.h>
 #include <linux/hdreg.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/spinlock.h>
 #include <linux/blkdev.h>
 #include <linux/genhd.h>
@@ -68,7 +68,6 @@ MODULE_LICENSE("GPL");
 
 #define CPQARRAY_DMA_MASK	0xFFFFFFFF	/* 32 bit DMA */
 
-static DEFINE_MUTEX(cpqarray_mutex);
 static int nr_ctlr;
 static ctlr_info_t *hba[MAX_CTLR];
 
@@ -846,9 +845,9 @@ static int ida_unlocked_open(struct block_device *bdev, fmode_t mode)
 {
 	int ret;
 
-	mutex_lock(&cpqarray_mutex);
+	lock_kernel();
 	ret = ida_open(bdev, mode);
-	mutex_unlock(&cpqarray_mutex);
+	unlock_kernel();
 
 	return ret;
 }
@@ -860,10 +859,10 @@ static int ida_release(struct gendisk *disk, fmode_t mode)
 {
 	ctlr_info_t *host;
 
-	mutex_lock(&cpqarray_mutex);
+	lock_kernel();
 	host = get_host(disk);
 	host->usage_count--;
-	mutex_unlock(&cpqarray_mutex);
+	unlock_kernel();
 
 	return 0;
 }
@@ -910,6 +909,9 @@ static void do_ida_request(struct request_queue *q)
 	struct request *creq;
 	struct scatterlist tmp_sg[SG_MAX];
 	int i, dir, seg;
+
+	if (blk_queue_plugged(q))
+		goto startio;
 
 queue_next:
 	creq = blk_peek_request(q);
@@ -1215,9 +1217,9 @@ static int ida_ioctl(struct block_device *bdev, fmode_t mode,
 {
 	int ret;
 
-	mutex_lock(&cpqarray_mutex);
+	lock_kernel();
 	ret = ida_locked_ioctl(bdev, mode, cmd, param);
-	mutex_unlock(&cpqarray_mutex);
+	unlock_kernel();
 
 	return ret;
 }

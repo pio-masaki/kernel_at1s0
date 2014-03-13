@@ -274,7 +274,6 @@ static const struct file_operations monwrite_fops = {
 	.open	 = &monwrite_open,
 	.release = &monwrite_close,
 	.write	 = &monwrite_write,
-	.llseek  = noop_llseek,
 };
 
 static struct miscdevice mon_dev = {

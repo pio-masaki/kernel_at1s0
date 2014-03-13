@@ -90,7 +90,7 @@ struct ds1wm_data {
 	void		__iomem *map;
 	int		bus_shift; /* # of shifts to calc register offsets */
 	struct platform_device *pdev;
-	const struct mfd_cell *cell;
+	struct mfd_cell	*cell;
 	int		irq;
 	int		active_high;
 	int		slave_present;
@@ -216,7 +216,7 @@ static int ds1wm_find_divisor(int gclk)
 static void ds1wm_up(struct ds1wm_data *ds1wm_data)
 {
 	int divisor;
-	struct ds1wm_driver_data *plat = mfd_get_data(ds1wm_data->pdev);
+	struct ds1wm_driver_data *plat = ds1wm_data->cell->driver_data;
 
 	if (ds1wm_data->cell->enable)
 		ds1wm_data->cell->enable(ds1wm_data->pdev);
@@ -330,9 +330,14 @@ static int ds1wm_probe(struct platform_device *pdev)
 	struct ds1wm_data *ds1wm_data;
 	struct ds1wm_driver_data *plat;
 	struct resource *res;
+	struct mfd_cell *cell;
 	int ret;
 
 	if (!pdev)
+		return -ENODEV;
+
+	cell = pdev->dev.platform_data;
+	if (!cell)
 		return -ENODEV;
 
 	ds1wm_data = kzalloc(sizeof(*ds1wm_data), GFP_KERNEL);
@@ -351,13 +356,13 @@ static int ds1wm_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		goto err0;
 	}
-	plat = mfd_get_data(pdev);
+	plat = cell->driver_data;
 
 	/* calculate bus shift from mem resource */
 	ds1wm_data->bus_shift = resource_size(res) >> 3;
 
 	ds1wm_data->pdev = pdev;
-	ds1wm_data->cell = mfd_get_cell(pdev);
+	ds1wm_data->cell = cell;
 
 	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	if (!res) {
@@ -368,9 +373,9 @@ static int ds1wm_probe(struct platform_device *pdev)
 	ds1wm_data->active_high = plat->active_high;
 
 	if (res->flags & IORESOURCE_IRQ_HIGHEDGE)
-		irq_set_irq_type(ds1wm_data->irq, IRQ_TYPE_EDGE_RISING);
+		set_irq_type(ds1wm_data->irq, IRQ_TYPE_EDGE_RISING);
 	if (res->flags & IORESOURCE_IRQ_LOWEDGE)
-		irq_set_irq_type(ds1wm_data->irq, IRQ_TYPE_EDGE_FALLING);
+		set_irq_type(ds1wm_data->irq, IRQ_TYPE_EDGE_FALLING);
 
 	ret = request_irq(ds1wm_data->irq, ds1wm_isr, IRQF_DISABLED,
 			  "ds1wm", ds1wm_data);

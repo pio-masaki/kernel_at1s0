@@ -84,35 +84,36 @@ static inline void jz4740_adc_irq_set_masked(struct jz4740_adc *adc, int irq,
 	spin_unlock_irqrestore(&adc->lock, flags);
 }
 
-static void jz4740_adc_irq_mask(struct irq_data *data)
+static void jz4740_adc_irq_mask(unsigned int irq)
 {
-	struct jz4740_adc *adc = irq_data_get_irq_chip_data(data);
-	jz4740_adc_irq_set_masked(adc, data->irq, true);
+	struct jz4740_adc *adc = get_irq_chip_data(irq);
+	jz4740_adc_irq_set_masked(adc, irq, true);
 }
 
-static void jz4740_adc_irq_unmask(struct irq_data *data)
+static void jz4740_adc_irq_unmask(unsigned int irq)
 {
-	struct jz4740_adc *adc = irq_data_get_irq_chip_data(data);
-	jz4740_adc_irq_set_masked(adc, data->irq, false);
+	struct jz4740_adc *adc = get_irq_chip_data(irq);
+	jz4740_adc_irq_set_masked(adc, irq, false);
 }
 
-static void jz4740_adc_irq_ack(struct irq_data *data)
+static void jz4740_adc_irq_ack(unsigned int irq)
 {
-	struct jz4740_adc *adc = irq_data_get_irq_chip_data(data);
-	unsigned int irq = data->irq - adc->irq_base;
+	struct jz4740_adc *adc = get_irq_chip_data(irq);
+
+	irq -= adc->irq_base;
 	writeb(BIT(irq), adc->base + JZ_REG_ADC_STATUS);
 }
 
 static struct irq_chip jz4740_adc_irq_chip = {
 	.name = "jz4740-adc",
-	.irq_mask = jz4740_adc_irq_mask,
-	.irq_unmask = jz4740_adc_irq_unmask,
-	.irq_ack = jz4740_adc_irq_ack,
+	.mask = jz4740_adc_irq_mask,
+	.unmask = jz4740_adc_irq_unmask,
+	.ack = jz4740_adc_irq_ack,
 };
 
 static void jz4740_adc_irq_demux(unsigned int irq, struct irq_desc *desc)
 {
-	struct jz4740_adc *adc = irq_desc_get_handler_data(desc);
+	struct jz4740_adc *adc = get_irq_desc_data(desc);
 	uint8_t status;
 	unsigned int i;
 
@@ -152,7 +153,7 @@ static inline void jz4740_adc_set_enabled(struct jz4740_adc *adc, int engine,
 	if (enabled)
 		val |= BIT(engine);
 	else
-		val &= ~BIT(engine);
+		val &= BIT(engine);
 	writeb(val, adc->base + JZ_REG_ADC_ENABLE);
 
 	spin_unlock_irqrestore(&adc->lock, flags);
@@ -232,6 +233,8 @@ const struct mfd_cell jz4740_adc_cells[] = {
 		.name = "jz4740-hwmon",
 		.num_resources = ARRAY_SIZE(jz4740_hwmon_resources),
 		.resources = jz4740_hwmon_resources,
+		.platform_data = (void *)&jz4740_adc_cells[0],
+		.data_size = sizeof(struct mfd_cell),
 
 		.enable = jz4740_adc_cell_enable,
 		.disable = jz4740_adc_cell_disable,
@@ -241,6 +244,8 @@ const struct mfd_cell jz4740_adc_cells[] = {
 		.name = "jz4740-battery",
 		.num_resources = ARRAY_SIZE(jz4740_battery_resources),
 		.resources = jz4740_battery_resources,
+		.platform_data = (void *)&jz4740_adc_cells[1],
+		.data_size = sizeof(struct mfd_cell),
 
 		.enable = jz4740_adc_cell_enable,
 		.disable = jz4740_adc_cell_disable,
@@ -310,13 +315,13 @@ static int __devinit jz4740_adc_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, adc);
 
 	for (irq = adc->irq_base; irq < adc->irq_base + 5; ++irq) {
-		irq_set_chip_data(irq, adc);
-		irq_set_chip_and_handler(irq, &jz4740_adc_irq_chip,
-					 handle_level_irq);
+		set_irq_chip_data(irq, adc);
+		set_irq_chip_and_handler(irq, &jz4740_adc_irq_chip,
+		    handle_level_irq);
 	}
 
-	irq_set_handler_data(adc->irq, adc);
-	irq_set_chained_handler(adc->irq, jz4740_adc_irq_demux);
+	set_irq_data(adc->irq, adc);
+	set_irq_chained_handler(adc->irq, jz4740_adc_irq_demux);
 
 	writeb(0x00, adc->base + JZ_REG_ADC_ENABLE);
 	writeb(0xff, adc->base + JZ_REG_ADC_CTRL);
@@ -347,8 +352,8 @@ static int __devexit jz4740_adc_remove(struct platform_device *pdev)
 
 	mfd_remove_devices(&pdev->dev);
 
-	irq_set_handler_data(adc->irq, NULL);
-	irq_set_chained_handler(adc->irq, NULL);
+	set_irq_data(adc->irq, NULL);
+	set_irq_chained_handler(adc->irq, NULL);
 
 	iounmap(adc->base);
 	release_mem_region(adc->mem->start, resource_size(adc->mem));

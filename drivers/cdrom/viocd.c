@@ -42,7 +42,7 @@
 #include <linux/module.h>
 #include <linux/completion.h>
 #include <linux/proc_fs.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/seq_file.h>
 #include <linux/scatterlist.h>
 
@@ -61,7 +61,6 @@
  */
 #define VIOCD_MAX_CD	HVMAXARCHITECTEDVIRTUALCDROMS
 
-static DEFINE_MUTEX(viocd_mutex);
 static const struct vio_error_entry viocd_err_table[] = {
 	{0x0201, EINVAL, "Invalid Range"},
 	{0x0202, EINVAL, "Invalid Token"},
@@ -157,9 +156,9 @@ static int viocd_blk_open(struct block_device *bdev, fmode_t mode)
 	struct disk_info *di = bdev->bd_disk->private_data;
 	int ret;
 
-	mutex_lock(&viocd_mutex);
+	lock_kernel();
 	ret = cdrom_open(&di->viocd_info, bdev, mode);
-	mutex_unlock(&viocd_mutex);
+	unlock_kernel();
 
 	return ret;
 }
@@ -167,9 +166,9 @@ static int viocd_blk_open(struct block_device *bdev, fmode_t mode)
 static int viocd_blk_release(struct gendisk *disk, fmode_t mode)
 {
 	struct disk_info *di = disk->private_data;
-	mutex_lock(&viocd_mutex);
+	lock_kernel();
 	cdrom_release(&di->viocd_info, mode);
-	mutex_unlock(&viocd_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -179,18 +178,17 @@ static int viocd_blk_ioctl(struct block_device *bdev, fmode_t mode,
 	struct disk_info *di = bdev->bd_disk->private_data;
 	int ret;
 
-	mutex_lock(&viocd_mutex);
+	lock_kernel();
 	ret = cdrom_ioctl(&di->viocd_info, bdev, mode, cmd, arg);
-	mutex_unlock(&viocd_mutex);
+	unlock_kernel();
 
 	return ret;
 }
 
-static unsigned int viocd_blk_check_events(struct gendisk *disk,
-					   unsigned int clearing)
+static int viocd_blk_media_changed(struct gendisk *disk)
 {
 	struct disk_info *di = disk->private_data;
-	return cdrom_check_events(&di->viocd_info, clearing);
+	return cdrom_media_changed(&di->viocd_info);
 }
 
 static const struct block_device_operations viocd_fops = {
@@ -198,7 +196,7 @@ static const struct block_device_operations viocd_fops = {
 	.open =			viocd_blk_open,
 	.release =		viocd_blk_release,
 	.ioctl =		viocd_blk_ioctl,
-	.check_events =		viocd_blk_check_events,
+	.media_changed =	viocd_blk_media_changed,
 };
 
 static int viocd_open(struct cdrom_device_info *cdi, int purpose)
@@ -321,8 +319,7 @@ static void do_viocd_request(struct request_queue *q)
 	}
 }
 
-static unsigned int viocd_check_events(struct cdrom_device_info *cdi,
-				       unsigned int clearing, int disc_nr)
+static int viocd_media_changed(struct cdrom_device_info *cdi, int disc_nr)
 {
 	struct viocd_waitevent we;
 	HvLpEvent_Rc hvrc;
@@ -342,7 +339,7 @@ static unsigned int viocd_check_events(struct cdrom_device_info *cdi,
 	if (hvrc != 0) {
 		pr_warning("bad rc on HvCallEvent_signalLpEventFast %d\n",
 			   (int)hvrc);
-		return 0;
+		return -EIO;
 	}
 
 	wait_for_completion(&we.com);
@@ -356,7 +353,7 @@ static unsigned int viocd_check_events(struct cdrom_device_info *cdi,
 		return 0;
 	}
 
-	return we.changed ? DISK_EVENT_MEDIA_CHANGE : 0;
+	return we.changed;
 }
 
 static int viocd_lock_door(struct cdrom_device_info *cdi, int locking)
@@ -552,7 +549,7 @@ static int viocd_audio_ioctl(struct cdrom_device_info *cdi, unsigned int cmd,
 static struct cdrom_device_ops viocd_dops = {
 	.open = viocd_open,
 	.release = viocd_release,
-	.check_events = viocd_check_events,
+	.media_changed = viocd_media_changed,
 	.lock_door = viocd_lock_door,
 	.generic_packet = viocd_packet,
 	.audio_ioctl = viocd_audio_ioctl,
@@ -625,8 +622,7 @@ static int viocd_probe(struct vio_dev *vdev, const struct vio_device_id *id)
 	blk_queue_max_hw_sectors(q, 4096 / 512);
 	gendisk->queue = q;
 	gendisk->fops = &viocd_fops;
-	gendisk->flags = GENHD_FL_CD | GENHD_FL_REMOVABLE |
-			 GENHD_FL_BLOCK_EVENTS_ON_EXCL_WRITE;
+	gendisk->flags = GENHD_FL_CD|GENHD_FL_REMOVABLE;
 	set_capacity(gendisk, 0);
 	gendisk->private_data = d;
 	d->viocd_disk = gendisk;

@@ -195,7 +195,7 @@ void aa_dfa_free_kref(struct kref *kref)
  *
  * Unpack a dfa that has been serialized.  To find information on the dfa
  * format look in Documentation/apparmor.txt
- * Assumes the dfa @blob stream has been aligned on a 8 byte boundary
+ * Assumes the dfa @blob stream has been aligned on a 8 byte boundry
  *
  * Returns: an unpacked dfa ready for matching or ERR_PTR on failure
  */

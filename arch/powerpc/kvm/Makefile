@@ -4,7 +4,7 @@
 
 subdir-ccflags-$(CONFIG_PPC_WERROR) := -Werror
 
-ccflags-y := -Ivirt/kvm -Iarch/powerpc/kvm
+EXTRA_CFLAGS += -Ivirt/kvm -Iarch/powerpc/kvm
 
 common-objs-y = $(addprefix ../../../virt/kvm/, kvm_main.o coalesced_mmio.o)
 

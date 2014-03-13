@@ -30,8 +30,7 @@
     Abstract:
 
     Revision History:
-    Who          	When            What
-    Justin P. Mattock	11/07/2010	Fix some typos
+    Who          When          What
     ---------    ----------    ----------------------------------------------
  */
 
@@ -46,7 +45,7 @@
 
 /* */
 /* Device ID & Vendor ID related definitions, */
-/* NOTE: you should not add the new VendorID/DeviceID here unless you know for sure what chip it belongs too. */
+/* NOTE: you should not add the new VendorID/DeviceID here unless you not sure it belongs to what chip. */
 /* */
 #define NIC_PCI_VENDOR_ID		0x1814
 #define PCIBUS_INTEL_VENDOR	0x8086
@@ -84,7 +83,7 @@ struct PACKED rt_txd {
 	u32 SDPtr1;
 	/*Word3 */
 	u32 rsv2:24;
-	u32 WIV:1;		/* Wireless Info Valid. 1 if Driver already fill WI,  o if DMA needs to copy WI to correct position */
+	u32 WIV:1;		/* Wireless Info Valid. 1 if Driver already fill WI,  o if DMA needs to copy WI to correctposition */
 	u32 QSEL:2;		/* select on-chip FIFO ID for 2nd-stage output scheduler.0:MGMT, 1:HCCA 2:EDCA */
 	u32 rsv:2;
 	u32 TCO:1;		/* */

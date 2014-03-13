@@ -1,11 +1,6 @@
-config XVMALLOC
-	bool
-	default n
-
 config ZRAM
 	tristate "Compressed RAM block device support"
-	depends on BLOCK && SYSFS
-	select XVMALLOC
+	depends on BLOCK
 	select LZO_COMPRESS
 	select LZO_DECOMPRESS
 	default n
@@ -21,10 +16,14 @@ config ZRAM
 	  See zram.txt for more information.
 	  Project home: http://compcache.googlecode.com/
 
-config ZRAM_DEBUG
-	bool "Compressed RAM block device debug support"
+config ZRAM_STATS
+	bool "Enable statistics for compressed RAM disks"
 	depends on ZRAM
-	default n
+	default y
 	help
-	  This option adds additional debugging code to the compressed
-	  RAM block device driver.
+	  Enable statistics collection for compressed RAM devices. Statistics
+	  are exported through ioctl interface, so you have to use zramconfig
+	  program to get them. This adds only a minimal overhead.
+
+	  If unsure, say Y.
+

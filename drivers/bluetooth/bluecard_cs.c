@@ -39,6 +39,7 @@
 #include <linux/skbuff.h>
 #include <linux/io.h>
 
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/ciscode.h>
 #include <pcmcia/ds.h>
@@ -864,7 +865,8 @@ static int bluecard_probe(struct pcmcia_device *link)
 	info->p_dev = link;
 	link->priv = info;
 
-	link->config_flags |= CONF_ENABLE_IRQ;
+	link->conf.Attributes = CONF_ENABLE_IRQ;
+	link->conf.IntType = INT_MEMORY_AND_IO;
 
 	return bluecard_config(link);
 }
@@ -884,7 +886,7 @@ static int bluecard_config(struct pcmcia_device *link)
 	bluecard_info_t *info = link->priv;
 	int i, n;
 
-	link->config_index = 0x20;
+	link->conf.ConfigIndex = 0x20;
 
 	link->resource[0]->flags |= IO_DATA_PATH_WIDTH_8;
 	link->resource[0]->end = 64;
@@ -904,7 +906,7 @@ static int bluecard_config(struct pcmcia_device *link)
 	if (i != 0)
 		goto failed;
 
-	i = pcmcia_enable_device(link);
+	i = pcmcia_request_configuration(link, &link->conf);
 	if (i != 0)
 		goto failed;
 
@@ -940,7 +942,9 @@ MODULE_DEVICE_TABLE(pcmcia, bluecard_ids);
 
 static struct pcmcia_driver bluecard_driver = {
 	.owner		= THIS_MODULE,
-	.name		= "bluecard_cs",
+	.drv		= {
+		.name	= "bluecard_cs",
+	},
 	.probe		= bluecard_probe,
 	.remove		= bluecard_detach,
 	.id_table	= bluecard_ids,

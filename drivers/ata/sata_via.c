@@ -148,7 +148,7 @@ static struct ata_port_operations vt8251_ops = {
 };
 
 static const struct ata_port_info vt6420_port_info = {
-	.flags		= ATA_FLAG_SATA,
+	.flags		= ATA_FLAG_SATA | ATA_FLAG_NO_LEGACY,
 	.pio_mask	= ATA_PIO4,
 	.mwdma_mask	= ATA_MWDMA2,
 	.udma_mask	= ATA_UDMA6,
@@ -156,7 +156,7 @@ static const struct ata_port_info vt6420_port_info = {
 };
 
 static struct ata_port_info vt6421_sport_info = {
-	.flags		= ATA_FLAG_SATA,
+	.flags		= ATA_FLAG_SATA | ATA_FLAG_NO_LEGACY,
 	.pio_mask	= ATA_PIO4,
 	.mwdma_mask	= ATA_MWDMA2,
 	.udma_mask	= ATA_UDMA6,
@@ -164,7 +164,7 @@ static struct ata_port_info vt6421_sport_info = {
 };
 
 static struct ata_port_info vt6421_pport_info = {
-	.flags		= ATA_FLAG_SLAVE_POSS,
+	.flags		= ATA_FLAG_SLAVE_POSS | ATA_FLAG_NO_LEGACY,
 	.pio_mask	= ATA_PIO4,
 	/* No MWDMA */
 	.udma_mask	= ATA_UDMA6,
@@ -172,7 +172,8 @@ static struct ata_port_info vt6421_pport_info = {
 };
 
 static struct ata_port_info vt8251_port_info = {
-	.flags		= ATA_FLAG_SATA | ATA_FLAG_SLAVE_POSS,
+	.flags		= ATA_FLAG_SATA | ATA_FLAG_SLAVE_POSS |
+			  ATA_FLAG_NO_LEGACY,
 	.pio_mask	= ATA_PIO4,
 	.mwdma_mask	= ATA_MWDMA2,
 	.udma_mask	= ATA_UDMA6,
@@ -348,7 +349,7 @@ static int vt6420_prereset(struct ata_link *link, unsigned long deadline)
 
 	/* wait for phy to become ready, if necessary */
 	do {
-		ata_msleep(link->ap, 200);
+		msleep(200);
 		svia_scr_read(link, SCR_STATUS, &sstatus);
 		if ((sstatus & 0xf) != 1)
 			break;
@@ -582,7 +583,7 @@ static void svia_configure(struct pci_dev *pdev, int board_id)
 	 * When host issues HOLD, device may send up to 20DW of data
 	 * before acknowledging it with HOLDA and the host should be
 	 * able to buffer them in FIFO.  Unfortunately, some WD drives
-	 * send up to 40DW before acknowledging HOLD and, in the
+	 * send upto 40DW before acknowledging HOLD and, in the
 	 * default configuration, this ends up overflowing vt6421's
 	 * FIFO, making the controller abort the transaction with
 	 * R_ERR.

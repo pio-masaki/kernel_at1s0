@@ -11,7 +11,7 @@
  *	Power management on ports
  *
  *
- *  Documentation publicly available.
+ *  Documentation publically available.
  */
 
 #include <linux/kernel.h>

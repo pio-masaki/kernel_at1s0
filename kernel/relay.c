@@ -70,10 +70,17 @@ static const struct vm_operations_struct relay_file_mmap_ops = {
  */
 static struct page **relay_alloc_page_array(unsigned int n_pages)
 {
-	const size_t pa_size = n_pages * sizeof(struct page *);
-	if (pa_size > PAGE_SIZE)
-		return vzalloc(pa_size);
-	return kzalloc(pa_size, GFP_KERNEL);
+	struct page **array;
+	size_t pa_size = n_pages * sizeof(struct page *);
+
+	if (pa_size > PAGE_SIZE) {
+		array = vmalloc(pa_size);
+		if (array)
+			memset(array, 0, pa_size);
+	} else {
+		array = kzalloc(pa_size, GFP_KERNEL);
+	}
+	return array;
 }
 
 /*

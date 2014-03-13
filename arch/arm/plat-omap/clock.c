@@ -37,16 +37,14 @@ static struct clk_functions *arch_clock;
 int clk_enable(struct clk *clk)
 {
 	unsigned long flags;
-	int ret;
+	int ret = 0;
 
 	if (clk == NULL || IS_ERR(clk))
 		return -EINVAL;
 
-	if (!arch_clock || !arch_clock->clk_enable)
-		return -EINVAL;
-
 	spin_lock_irqsave(&clockfw_lock, flags);
-	ret = arch_clock->clk_enable(clk);
+	if (arch_clock->clk_enable)
+		ret = arch_clock->clk_enable(clk);
 	spin_unlock_irqrestore(&clockfw_lock, flags);
 
 	return ret;
@@ -60,18 +58,16 @@ void clk_disable(struct clk *clk)
 	if (clk == NULL || IS_ERR(clk))
 		return;
 
-	if (!arch_clock || !arch_clock->clk_disable)
-		return;
-
 	spin_lock_irqsave(&clockfw_lock, flags);
 	if (clk->usecount == 0) {
-		pr_err("Trying disable clock %s with 0 usecount\n",
+		printk(KERN_ERR "Trying disable clock %s with 0 usecount\n",
 		       clk->name);
 		WARN_ON(1);
 		goto out;
 	}
 
-	arch_clock->clk_disable(clk);
+	if (arch_clock->clk_disable)
+		arch_clock->clk_disable(clk);
 
 out:
 	spin_unlock_irqrestore(&clockfw_lock, flags);
@@ -81,7 +77,7 @@ EXPORT_SYMBOL(clk_disable);
 unsigned long clk_get_rate(struct clk *clk)
 {
 	unsigned long flags;
-	unsigned long ret;
+	unsigned long ret = 0;
 
 	if (clk == NULL || IS_ERR(clk))
 		return 0;
@@ -101,16 +97,14 @@ EXPORT_SYMBOL(clk_get_rate);
 long clk_round_rate(struct clk *clk, unsigned long rate)
 {
 	unsigned long flags;
-	long ret;
+	long ret = 0;
 
 	if (clk == NULL || IS_ERR(clk))
-		return 0;
-
-	if (!arch_clock || !arch_clock->clk_round_rate)
-		return 0;
+		return ret;
 
 	spin_lock_irqsave(&clockfw_lock, flags);
-	ret = arch_clock->clk_round_rate(clk, rate);
+	if (arch_clock->clk_round_rate)
+		ret = arch_clock->clk_round_rate(clk, rate);
 	spin_unlock_irqrestore(&clockfw_lock, flags);
 
 	return ret;
@@ -125,13 +119,14 @@ int clk_set_rate(struct clk *clk, unsigned long rate)
 	if (clk == NULL || IS_ERR(clk))
 		return ret;
 
-	if (!arch_clock || !arch_clock->clk_set_rate)
-		return ret;
-
 	spin_lock_irqsave(&clockfw_lock, flags);
-	ret = arch_clock->clk_set_rate(clk, rate);
-	if (ret == 0)
+	if (arch_clock->clk_set_rate)
+		ret = arch_clock->clk_set_rate(clk, rate);
+	if (ret == 0) {
+		if (clk->recalc)
+			clk->rate = clk->recalc(clk);
 		propagate_rate(clk);
+	}
 	spin_unlock_irqrestore(&clockfw_lock, flags);
 
 	return ret;
@@ -146,14 +141,15 @@ int clk_set_parent(struct clk *clk, struct clk *parent)
 	if (clk == NULL || IS_ERR(clk) || parent == NULL || IS_ERR(parent))
 		return ret;
 
-	if (!arch_clock || !arch_clock->clk_set_parent)
-		return ret;
-
 	spin_lock_irqsave(&clockfw_lock, flags);
 	if (clk->usecount == 0) {
-		ret = arch_clock->clk_set_parent(clk, parent);
-		if (ret == 0)
+		if (arch_clock->clk_set_parent)
+			ret = arch_clock->clk_set_parent(clk, parent);
+		if (ret == 0) {
+			if (clk->recalc)
+				clk->rate = clk->recalc(clk);
 			propagate_rate(clk);
+		}
 	} else
 		ret = -EBUSY;
 	spin_unlock_irqrestore(&clockfw_lock, flags);
@@ -339,38 +335,6 @@ struct clk *omap_clk_get_by_name(const char *name)
 	return ret;
 }
 
-int omap_clk_enable_autoidle_all(void)
-{
-	struct clk *c;
-	unsigned long flags;
-
-	spin_lock_irqsave(&clockfw_lock, flags);
-
-	list_for_each_entry(c, &clocks, node)
-		if (c->ops->allow_idle)
-			c->ops->allow_idle(c);
-
-	spin_unlock_irqrestore(&clockfw_lock, flags);
-
-	return 0;
-}
-
-int omap_clk_disable_autoidle_all(void)
-{
-	struct clk *c;
-	unsigned long flags;
-
-	spin_lock_irqsave(&clockfw_lock, flags);
-
-	list_for_each_entry(c, &clocks, node)
-		if (c->ops->deny_idle)
-			c->ops->deny_idle(c);
-
-	spin_unlock_irqrestore(&clockfw_lock, flags);
-
-	return 0;
-}
-
 /*
  * Low level helpers
  */
@@ -403,11 +367,9 @@ void clk_init_cpufreq_table(struct cpufreq_frequency_table **table)
 {
 	unsigned long flags;
 
-	if (!arch_clock || !arch_clock->clk_init_cpufreq_table)
-		return;
-
 	spin_lock_irqsave(&clockfw_lock, flags);
-	arch_clock->clk_init_cpufreq_table(table);
+	if (arch_clock->clk_init_cpufreq_table)
+		arch_clock->clk_init_cpufreq_table(table);
 	spin_unlock_irqrestore(&clockfw_lock, flags);
 }
 
@@ -415,11 +377,9 @@ void clk_exit_cpufreq_table(struct cpufreq_frequency_table **table)
 {
 	unsigned long flags;
 
-	if (!arch_clock || !arch_clock->clk_exit_cpufreq_table)
-		return;
-
 	spin_lock_irqsave(&clockfw_lock, flags);
-	arch_clock->clk_exit_cpufreq_table(table);
+	if (arch_clock->clk_exit_cpufreq_table)
+		arch_clock->clk_exit_cpufreq_table(table);
 	spin_unlock_irqrestore(&clockfw_lock, flags);
 }
 #endif
@@ -437,10 +397,6 @@ static int __init clk_disable_unused(void)
 	struct clk *ck;
 	unsigned long flags;
 
-	if (!arch_clock || !arch_clock->clk_disable_unused)
-		return 0;
-
-	pr_info("clock: disabling unused clocks to save power\n");
 	list_for_each_entry(ck, &clocks, node) {
 		if (ck->ops == &clkops_null)
 			continue;
@@ -449,20 +405,20 @@ static int __init clk_disable_unused(void)
 			continue;
 
 		spin_lock_irqsave(&clockfw_lock, flags);
-		arch_clock->clk_disable_unused(ck);
+		if (arch_clock->clk_disable_unused)
+			arch_clock->clk_disable_unused(ck);
 		spin_unlock_irqrestore(&clockfw_lock, flags);
 	}
 
 	return 0;
 }
 late_initcall(clk_disable_unused);
-late_initcall(omap_clk_enable_autoidle_all);
 #endif
 
 int __init clk_init(struct clk_functions * custom_clocks)
 {
 	if (!custom_clocks) {
-		pr_err("No custom clock functions registered\n");
+		printk(KERN_ERR "No custom clock functions registered\n");
 		BUG();
 	}
 

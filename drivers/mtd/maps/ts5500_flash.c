@@ -94,6 +94,7 @@ static int __init init_ts5500_map(void)
 	return 0;
 
 err1:
+	map_destroy(mymtd);
 	iounmap(ts5500_map.virt);
 err2:
 	return rc;

@@ -7,7 +7,7 @@
 #include <linux/init.h>
 #include <linux/irq.h>
 
-#include <linux/irq_work.h>
+#include <linux/perf_event.h>
 #include <linux/ftrace.h>
 
 #include <asm/pil.h>
@@ -43,14 +43,14 @@ void __irq_entry deferred_pcr_work_irq(int irq, struct pt_regs *regs)
 
 	old_regs = set_irq_regs(regs);
 	irq_enter();
-#ifdef CONFIG_IRQ_WORK
-	irq_work_run();
+#ifdef CONFIG_PERF_EVENTS
+	perf_event_do_pending();
 #endif
 	irq_exit();
 	set_irq_regs(old_regs);
 }
 
-void arch_irq_work_raise(void)
+void set_perf_event_pending(void)
 {
 	set_softint(1 << PIL_DEFERRED_PCR_WORK);
 }
@@ -81,7 +81,7 @@ static void n2_pcr_write(u64 val)
 	unsigned long ret;
 
 	ret = sun4v_niagara2_setperf(HV_N2_PERF_SPARC_CTL, val);
-	if (ret != HV_EOK)
+	if (val != HV_EOK)
 		write_pcr(val);
 }
 
@@ -167,3 +167,5 @@ out_unregister:
 	unregister_perf_hsvc();
 	return err;
 }
+
+arch_initcall(pcr_arch_init);

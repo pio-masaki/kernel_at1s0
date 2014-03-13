@@ -74,6 +74,11 @@ static int s3c24xx_gpiolib_bankf_toirq(struct gpio_chip *chip, unsigned offset)
 	return -EINVAL;
 }
 
+static int s3c24xx_gpiolib_bankg_toirq(struct gpio_chip *chip, unsigned offset)
+{
+	return IRQ_EINT8 + offset;
+}
+
 static struct s3c_gpio_cfg s3c24xx_gpiocfg_banka = {
 	.set_config	= s3c_gpio_setcfg_s3c24xx_a,
 	.get_config	= s3c_gpio_getcfg_s3c24xx_a,
@@ -152,13 +157,12 @@ struct s3c_gpio_chip s3c24xx_gpios[] = {
 	[6] = {
 		.base	= S3C2410_GPGCON,
 		.pm	= __gpio_pm(&s3c_gpio_pm_2bit),
-		.irq_base = IRQ_EINT8,
 		.chip	= {
 			.base			= S3C2410_GPG(0),
 			.owner			= THIS_MODULE,
 			.label			= "GPIOG",
 			.ngpio			= 16,
-			.to_irq			= samsung_gpiolib_to_irq,
+			.to_irq			= s3c24xx_gpiolib_bankg_toirq,
 		},
 	}, {
 		.base	= S3C2410_GPHCON,

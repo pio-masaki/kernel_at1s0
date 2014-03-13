@@ -181,7 +181,7 @@
 #include <linux/init.h>
 #include <linux/soundcard.h>
 #include <linux/poll.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 
 #include <asm/uaccess.h>
 
@@ -194,7 +194,6 @@
      *  Declarations
      */
 
-static DEFINE_MUTEX(dmasound_core_mutex);
 int dmasound_catchRadius = 0;
 module_param(dmasound_catchRadius, int, 0);
 
@@ -324,22 +323,22 @@ static struct {
 
 static int mixer_open(struct inode *inode, struct file *file)
 {
-	mutex_lock(&dmasound_core_mutex);
+	lock_kernel();
 	if (!try_module_get(dmasound.mach.owner)) {
-		mutex_unlock(&dmasound_core_mutex);
+		unlock_kernel();
 		return -ENODEV;
 	}
 	mixer.busy = 1;
-	mutex_unlock(&dmasound_core_mutex);
+	unlock_kernel();
 	return 0;
 }
 
 static int mixer_release(struct inode *inode, struct file *file)
 {
-	mutex_lock(&dmasound_core_mutex);
+	lock_kernel();
 	mixer.busy = 0;
 	module_put(dmasound.mach.owner);
-	mutex_unlock(&dmasound_core_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -371,9 +370,9 @@ static long mixer_unlocked_ioctl(struct file *file, u_int cmd, u_long arg)
 {
 	int ret;
 
-	mutex_lock(&dmasound_core_mutex);
+	lock_kernel();
 	ret = mixer_ioctl(file, cmd, arg);
-	mutex_unlock(&dmasound_core_mutex);
+	unlock_kernel();
 
 	return ret;
 }
@@ -753,9 +752,9 @@ static int sq_open(struct inode *inode, struct file *file)
 {
 	int rc;
 
-	mutex_lock(&dmasound_core_mutex);
+	lock_kernel();
 	if (!try_module_get(dmasound.mach.owner)) {
-		mutex_unlock(&dmasound_core_mutex);
+		unlock_kernel();
 		return -ENODEV;
 	}
 
@@ -800,11 +799,11 @@ static int sq_open(struct inode *inode, struct file *file)
 		sound_set_format(AFMT_MU_LAW);
 	}
 #endif
-	mutex_unlock(&dmasound_core_mutex);
+	unlock_kernel();
 	return 0;
  out:
 	module_put(dmasound.mach.owner);
-	mutex_unlock(&dmasound_core_mutex);
+	unlock_kernel();
 	return rc;
 }
 
@@ -870,7 +869,7 @@ static int sq_release(struct inode *inode, struct file *file)
 {
 	int rc = 0;
 
-	mutex_lock(&dmasound_core_mutex);
+	lock_kernel();
 
 	if (file->f_mode & FMODE_WRITE) {
 		if (write_sq.busy)
@@ -901,7 +900,7 @@ static int sq_release(struct inode *inode, struct file *file)
 	write_sq_wake_up(file); /* checks f_mode */
 #endif /* blocking open() */
 
-	mutex_unlock(&dmasound_core_mutex);
+	unlock_kernel();
 
 	return rc;
 }
@@ -1021,7 +1020,7 @@ static int sq_ioctl(struct file *file, u_int cmd, u_long arg)
 	case SNDCTL_DSP_SYNC:
 		/* This call, effectively, has the same behaviour as SNDCTL_DSP_RESET
 		   except that it waits for output to finish before resetting
-		   everything - read, however, is killed immediately.
+		   everything - read, however, is killed imediately.
 		*/
 		result = 0 ;
 		if (file->f_mode & FMODE_WRITE) {
@@ -1142,9 +1141,9 @@ static long sq_unlocked_ioctl(struct file *file, u_int cmd, u_long arg)
 {
 	int ret;
 
-	mutex_lock(&dmasound_core_mutex);
+	lock_kernel();
 	ret = sq_ioctl(file, cmd, arg);
-	mutex_unlock(&dmasound_core_mutex);
+	unlock_kernel();
 
 	return ret;
 }
@@ -1258,7 +1257,7 @@ static int state_open(struct inode *inode, struct file *file)
 	int len = 0;
 	int ret;
 
-	mutex_lock(&dmasound_core_mutex);
+	lock_kernel();
 	ret = -EBUSY;
 	if (state.busy)
 		goto out;
@@ -1330,16 +1329,16 @@ printk("dmasound: stat buffer used %d bytes\n", len) ;
 	state.len = len;
 	ret = 0;
 out:
-	mutex_unlock(&dmasound_core_mutex);
+	unlock_kernel();
 	return ret;
 }
 
 static int state_release(struct inode *inode, struct file *file)
 {
-	mutex_lock(&dmasound_core_mutex);
+	lock_kernel();
 	state.busy = 0;
 	module_put(dmasound.mach.owner);
-	mutex_unlock(&dmasound_core_mutex);
+	unlock_kernel();
 	return 0;
 }
 

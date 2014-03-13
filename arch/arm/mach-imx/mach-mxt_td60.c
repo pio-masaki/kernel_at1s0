@@ -31,10 +31,13 @@
 #include <mach/iomux-mx27.h>
 #include <mach/mxc_nand.h>
 #include <linux/i2c/pca953x.h>
+#include <mach/imxfb.h>
+#include <mach/mmc.h>
 
 #include "devices-imx27.h"
+#include "devices.h"
 
-static const int mxt_td60_pins[] __initconst = {
+static unsigned int mxt_td60_pins[] __initdata = {
 	/* UART0 */
 	PE12_PF_UART1_TXD,
 	PE13_PF_UART1_RXD,
@@ -193,7 +196,7 @@ static struct imx_fb_videomode mxt_td60_modes[] = {
 	},
 };
 
-static const struct imx_fb_platform_data mxt_td60_fb_data __initconst = {
+static struct imx_fb_platform_data mxt_td60_fb_data = {
 	.mode = mxt_td60_modes,
 	.num_modes = ARRAY_SIZE(mxt_td60_modes),
 
@@ -223,9 +226,13 @@ static void mxt_td60_sdhc1_exit(struct device *dev, void *data)
 	free_irq(IRQ_GPIOF(8), data);
 }
 
-static const struct imxmmc_platform_data sdhc1_pdata __initconst = {
+static struct imxmmc_platform_data sdhc1_pdata = {
 	.init = mxt_td60_sdhc1_init,
 	.exit = mxt_td60_sdhc1_exit,
+};
+
+static struct platform_device *platform_devices[] __initdata = {
+	&mxc_fec_device,
 };
 
 static const struct imxuart_platform_data uart_pdata __initconst = {
@@ -248,11 +255,12 @@ static void __init mxt_td60_board_init(void)
 	i2c_register_board_info(1, mxt_td60_i2c2_devices,
 				ARRAY_SIZE(mxt_td60_i2c2_devices));
 
-	imx27_add_imx_i2c(0, &mxt_td60_i2c0_data);
-	imx27_add_imx_i2c(1, &mxt_td60_i2c1_data);
-	imx27_add_imx_fb(&mxt_td60_fb_data);
-	imx27_add_mxc_mmc(0, &sdhc1_pdata);
-	imx27_add_fec(NULL);
+	imx27_add_i2c_imx0(&mxt_td60_i2c0_data);
+	imx27_add_i2c_imx1(&mxt_td60_i2c1_data);
+	mxc_register_device(&mxc_fb_device, &mxt_td60_fb_data);
+	mxc_register_device(&mxc_sdhc_device0, &sdhc1_pdata);
+
+	platform_add_devices(platform_devices, ARRAY_SIZE(platform_devices));
 }
 
 static void __init mxt_td60_timer_init(void)
@@ -266,10 +274,12 @@ static struct sys_timer mxt_td60_timer = {
 
 MACHINE_START(MXT_TD60, "Maxtrack i-MXT TD60")
 	/* maintainer: Maxtrack Industrial */
-	.boot_params = MX27_PHYS_OFFSET + 0x100,
-	.map_io = mx27_map_io,
-	.init_early = imx27_init_early,
-	.init_irq = mx27_init_irq,
-	.timer = &mxt_td60_timer,
-	.init_machine = mxt_td60_board_init,
+	.phys_io	= MX27_AIPI_BASE_ADDR,
+	.io_pg_offst	= ((MX27_AIPI_BASE_ADDR_VIRT) >> 18) & 0xfffc,
+	.boot_params	= MX27_PHYS_OFFSET + 0x100,
+	.map_io		= mx27_map_io,
+	.init_irq	= mx27_init_irq,
+	.init_machine	= mxt_td60_board_init,
+	.timer		= &mxt_td60_timer,
 MACHINE_END
+

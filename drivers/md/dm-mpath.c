@@ -23,8 +23,6 @@
 
 #define DM_MSG_PREFIX "multipath"
 #define MESG_STR(x) x, sizeof(x)
-#define DM_PG_INIT_DELAY_MSECS 2000
-#define DM_PG_INIT_DELAY_DEFAULT ((unsigned) -1)
 
 /* Path properties */
 struct pgpath {
@@ -35,7 +33,8 @@ struct pgpath {
 	unsigned fail_count;		/* Cumulative failure count */
 
 	struct dm_path path;
-	struct delayed_work activate_path;
+	struct work_struct deactivate_path;
+	struct work_struct activate_path;
 };
 
 #define path_to_pgpath(__pgp) container_of((__pgp), struct pgpath, path)
@@ -66,15 +65,11 @@ struct multipath {
 
 	const char *hw_handler_name;
 	char *hw_handler_params;
-
 	unsigned nr_priority_groups;
 	struct list_head priority_groups;
-
-	wait_queue_head_t pg_init_wait;	/* Wait for pg_init completion */
-
 	unsigned pg_init_required;	/* pg_init needs calling? */
 	unsigned pg_init_in_progress;	/* Only one pg_init allowed at once */
-	unsigned pg_init_delay_retry;	/* Delay pg_init retry? */
+	wait_queue_head_t pg_init_wait;	/* Wait for pg_init completion */
 
 	unsigned nr_valid_paths;	/* Total number of usable paths */
 	struct pgpath *current_pgpath;
@@ -87,7 +82,6 @@ struct multipath {
 	unsigned saved_queue_if_no_path;/* Saved state during suspension */
 	unsigned pg_init_retries;	/* Number of times to retry pg_init */
 	unsigned pg_init_count;		/* Number of times pg_init called */
-	unsigned pg_init_delay_msecs;	/* Number of msecs before pg_init retry */
 
 	struct work_struct process_queued_ios;
 	struct list_head queued_ios;
@@ -122,6 +116,7 @@ static struct workqueue_struct *kmultipathd, *kmpath_handlerd;
 static void process_queued_ios(struct work_struct *work);
 static void trigger_event(struct work_struct *work);
 static void activate_path(struct work_struct *work);
+static void deactivate_path(struct work_struct *work);
 
 
 /*-----------------------------------------------
@@ -134,7 +129,8 @@ static struct pgpath *alloc_pgpath(void)
 
 	if (pgpath) {
 		pgpath->is_active = 1;
-		INIT_DELAYED_WORK(&pgpath->activate_path, activate_path);
+		INIT_WORK(&pgpath->deactivate_path, deactivate_path);
+		INIT_WORK(&pgpath->activate_path, activate_path);
 	}
 
 	return pgpath;
@@ -143,6 +139,14 @@ static struct pgpath *alloc_pgpath(void)
 static void free_pgpath(struct pgpath *pgpath)
 {
 	kfree(pgpath);
+}
+
+static void deactivate_path(struct work_struct *work)
+{
+	struct pgpath *pgpath =
+		container_of(work, struct pgpath, deactivate_path);
+
+	blk_abort_queue(pgpath->path.dev->bdev->bd_disk->queue);
 }
 
 static struct priority_group *alloc_priority_group(void)
@@ -195,7 +199,6 @@ static struct multipath *alloc_multipath(struct dm_target *ti)
 		INIT_LIST_HEAD(&m->queued_ios);
 		spin_lock_init(&m->lock);
 		m->queue_io = 1;
-		m->pg_init_delay_msecs = DM_PG_INIT_DELAY_DEFAULT;
 		INIT_WORK(&m->process_queued_ios, process_queued_ios);
 		INIT_WORK(&m->trigger_event, trigger_event);
 		init_waitqueue_head(&m->pg_init_wait);
@@ -235,19 +238,14 @@ static void free_multipath(struct multipath *m)
 static void __pg_init_all_paths(struct multipath *m)
 {
 	struct pgpath *pgpath;
-	unsigned long pg_init_delay = 0;
 
 	m->pg_init_count++;
 	m->pg_init_required = 0;
-	if (m->pg_init_delay_retry)
-		pg_init_delay = msecs_to_jiffies(m->pg_init_delay_msecs != DM_PG_INIT_DELAY_DEFAULT ?
-						 m->pg_init_delay_msecs : DM_PG_INIT_DELAY_MSECS);
 	list_for_each_entry(pgpath, &m->current_pg->pgpaths, list) {
 		/* Skip failed paths */
 		if (!pgpath->is_active)
 			continue;
-		if (queue_delayed_work(kmpath_handlerd, &pgpath->activate_path,
-				       pg_init_delay))
+		if (queue_work(kmpath_handlerd, &pgpath->activate_path))
 			m->pg_init_in_progress++;
 	}
 }
@@ -795,9 +793,8 @@ static int parse_features(struct arg_set *as, struct multipath *m)
 	const char *param_name;
 
 	static struct param _params[] = {
-		{0, 5, "invalid number of feature args"},
+		{0, 3, "invalid number of feature args"},
 		{1, 50, "pg_init_retries must be between 1 and 50"},
-		{0, 60000, "pg_init_delay_msecs must be between 0 and 60000"},
 	};
 
 	r = read_param(_params, shift(as), &argc, &ti->error);
@@ -824,14 +821,6 @@ static int parse_features(struct arg_set *as, struct multipath *m)
 			continue;
 		}
 
-		if (!strnicmp(param_name, MESG_STR("pg_init_delay_msecs")) &&
-		    (argc >= 1)) {
-			r = read_param(_params + 2, shift(as),
-				       &m->pg_init_delay_msecs, &ti->error);
-			argc--;
-			continue;
-		}
-
 		ti->error = "Unrecognised multipath feature request";
 		r = -EINVAL;
 	} while (argc && !r);
@@ -844,8 +833,8 @@ static int multipath_ctr(struct dm_target *ti, unsigned int argc,
 {
 	/* target parameters */
 	static struct param _params[] = {
-		{0, 1024, "invalid number of priority groups"},
-		{0, 1024, "invalid initial priority group number"},
+		{1, 1024, "invalid number of priority groups"},
+		{1, 1024, "invalid initial priority group number"},
 	};
 
 	int r;
@@ -878,13 +867,6 @@ static int multipath_ctr(struct dm_target *ti, unsigned int argc,
 	r = read_param(_params + 1, shift(&as), &next_pg_num, &ti->error);
 	if (r)
 		goto bad;
-
-	if ((!m->nr_priority_groups && next_pg_num) ||
-	    (m->nr_priority_groups && !next_pg_num)) {
-		ti->error = "invalid initial priority group";
-		r = -EINVAL;
-		goto bad;
-	}
 
 	/* parse the priority groups */
 	while (as.argc) {
@@ -949,7 +931,7 @@ static void flush_multipath_work(struct multipath *m)
 	flush_workqueue(kmpath_handlerd);
 	multipath_wait_for_pg_init_completion(m);
 	flush_workqueue(kmultipathd);
-	flush_work_sync(&m->trigger_event);
+	flush_scheduled_work();
 }
 
 static void multipath_dtr(struct dm_target *ti)
@@ -1013,6 +995,7 @@ static int fail_path(struct pgpath *pgpath)
 		      pgpath->path.dev->name, m->nr_valid_paths);
 
 	schedule_work(&m->trigger_event);
+	queue_work(kmultipathd, &pgpath->deactivate_path);
 
 out:
 	spin_unlock_irqrestore(&m->lock, flags);
@@ -1051,7 +1034,7 @@ static int reinstate_path(struct pgpath *pgpath)
 		m->current_pgpath = NULL;
 		queue_work(kmultipathd, &m->process_queued_ios);
 	} else if (m->hw_handler_name && (m->current_pg == pgpath->pg)) {
-		if (queue_work(kmpath_handlerd, &pgpath->activate_path.work))
+		if (queue_work(kmpath_handlerd, &pgpath->activate_path))
 			m->pg_init_in_progress++;
 	}
 
@@ -1072,7 +1055,7 @@ out:
 static int action_dev(struct multipath *m, struct dm_dev *dev,
 		      action_fn action)
 {
-	int r = -EINVAL;
+	int r = 0;
 	struct pgpath *pgpath;
 	struct priority_group *pg;
 
@@ -1186,7 +1169,6 @@ static void pg_init_done(void *data, int errors)
 	struct priority_group *pg = pgpath->pg;
 	struct multipath *m = pg->m;
 	unsigned long flags;
-	unsigned delay_retry = 0;
 
 	/* device or driver problems */
 	switch (errors) {
@@ -1211,9 +1193,8 @@ static void pg_init_done(void *data, int errors)
 		 */
 		bypass_pg(m, pg, 1);
 		break;
+	/* TODO: For SCSI_DH_RETRY we should wait a couple seconds */
 	case SCSI_DH_RETRY:
-		/* Wait before retrying. */
-		delay_retry = 1;
 	case SCSI_DH_IMM_RETRY:
 	case SCSI_DH_RES_TEMP_UNAVAIL:
 		if (pg_init_limit_reached(m, pgpath))
@@ -1246,7 +1227,6 @@ static void pg_init_done(void *data, int errors)
 	if (!m->pg_init_required)
 		m->queue_io = 0;
 
-	m->pg_init_delay_retry = delay_retry;
 	queue_work(kmultipathd, &m->process_queued_ios);
 
 	/*
@@ -1261,7 +1241,7 @@ out:
 static void activate_path(struct work_struct *work)
 {
 	struct pgpath *pgpath =
-		container_of(work, struct pgpath, activate_path.work);
+		container_of(work, struct pgpath, activate_path);
 
 	scsi_dh_activate(bdev_get_queue(pgpath->path.dev->bdev),
 				pg_init_done, pgpath);
@@ -1290,22 +1270,24 @@ static int do_end_io(struct multipath *m, struct request *clone,
 	if (!error && !clone->errors)
 		return 0;	/* I/O complete */
 
-	if (error == -EOPNOTSUPP || error == -EREMOTEIO || error == -EILSEQ)
+	if (error == -EOPNOTSUPP)
+		return error;
+
+	if (clone->cmd_flags & REQ_DISCARD)
+		/*
+		 * Pass all discard request failures up.
+		 * FIXME: only fail_path if the discard failed due to a
+		 * transport problem.  This requires precise understanding
+		 * of the underlying failure (e.g. the SCSI sense).
+		 */
 		return error;
 
 	if (mpio->pgpath)
 		fail_path(mpio->pgpath);
 
 	spin_lock_irqsave(&m->lock, flags);
-	if (!m->nr_valid_paths) {
-		if (!m->queue_if_no_path) {
-			if (!__must_push_back(m))
-				r = -EIO;
-		} else {
-			if (error == -EBADE)
-				r = error;
-		}
-	}
+	if (!m->nr_valid_paths && !m->queue_if_no_path && !__must_push_back(m))
+		r = -EIO;
 	spin_unlock_irqrestore(&m->lock, flags);
 
 	return r;
@@ -1400,14 +1382,11 @@ static int multipath_status(struct dm_target *ti, status_type_t type,
 		DMEMIT("2 %u %u ", m->queue_size, m->pg_init_count);
 	else {
 		DMEMIT("%u ", m->queue_if_no_path +
-			      (m->pg_init_retries > 0) * 2 +
-			      (m->pg_init_delay_msecs != DM_PG_INIT_DELAY_DEFAULT) * 2);
+			      (m->pg_init_retries > 0) * 2);
 		if (m->queue_if_no_path)
 			DMEMIT("queue_if_no_path ");
 		if (m->pg_init_retries)
 			DMEMIT("pg_init_retries %u ", m->pg_init_retries);
-		if (m->pg_init_delay_msecs != DM_PG_INIT_DELAY_DEFAULT)
-			DMEMIT("pg_init_delay_msecs %u ", m->pg_init_delay_msecs);
 	}
 
 	if (!m->hw_handler_name || type == STATUSTYPE_INFO)
@@ -1422,7 +1401,7 @@ static int multipath_status(struct dm_target *ti, status_type_t type,
 	else if (m->current_pg)
 		pg_num = m->current_pg->pg_num;
 	else
-		pg_num = (m->nr_priority_groups ? 1 : 0);
+			pg_num = 1;
 
 	DMEMIT("%u ", pg_num);
 
@@ -1676,7 +1655,7 @@ out:
  *---------------------------------------------------------------*/
 static struct target_type multipath_target = {
 	.name = "multipath",
-	.version = {1, 3, 0},
+	.version = {1, 1, 1},
 	.module = THIS_MODULE,
 	.ctr = multipath_ctr,
 	.dtr = multipath_dtr,
@@ -1708,7 +1687,7 @@ static int __init dm_multipath_init(void)
 		return -EINVAL;
 	}
 
-	kmultipathd = alloc_workqueue("kmpathd", WQ_MEM_RECLAIM, 0);
+	kmultipathd = create_workqueue("kmpathd");
 	if (!kmultipathd) {
 		DMERR("failed to create workqueue kmpathd");
 		dm_unregister_target(&multipath_target);
@@ -1722,8 +1701,7 @@ static int __init dm_multipath_init(void)
 	 * old workqueue would also create a bottleneck in the
 	 * path of the storage hardware device activation.
 	 */
-	kmpath_handlerd = alloc_ordered_workqueue("kmpath_handlerd",
-						  WQ_MEM_RECLAIM);
+	kmpath_handlerd = create_singlethread_workqueue("kmpath_handlerd");
 	if (!kmpath_handlerd) {
 		DMERR("failed to create workqueue kmpath_handlerd");
 		destroy_workqueue(kmultipathd);

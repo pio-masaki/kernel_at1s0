@@ -139,10 +139,6 @@ static int lines, cols;
 #include "../../../../lib/decompress_unlzma.c"
 #endif
 
-#ifdef CONFIG_KERNEL_XZ
-#include "../../../../lib/decompress_unxz.c"
-#endif
-
 #ifdef CONFIG_KERNEL_LZO
 #include "../../../../lib/decompress_unlzo.c"
 #endif
@@ -233,35 +229,18 @@ void *memset(void *s, int c, size_t n)
 		ss[i] = c;
 	return s;
 }
-#ifdef CONFIG_X86_32
+
 void *memcpy(void *dest, const void *src, size_t n)
 {
-	int d0, d1, d2;
-	asm volatile(
-		"rep ; movsl\n\t"
-		"movl %4,%%ecx\n\t"
-		"rep ; movsb\n\t"
-		: "=&c" (d0), "=&D" (d1), "=&S" (d2)
-		: "0" (n >> 2), "g" (n & 3), "1" (dest), "2" (src)
-		: "memory");
+	int i;
+	const char *s = src;
+	char *d = dest;
 
+	for (i = 0; i < n; i++)
+		d[i] = s[i];
 	return dest;
 }
-#else
-void *memcpy(void *dest, const void *src, size_t n)
-{
-	long d0, d1, d2;
-	asm volatile(
-		"rep ; movsq\n\t"
-		"movq %4,%%rcx\n\t"
-		"rep ; movsb\n\t"
-		: "=&c" (d0), "=&D" (d1), "=&S" (d2)
-		: "0" (n >> 3), "g" (n & 7), "1" (dest), "2" (src)
-		: "memory");
 
-	return dest;
-}
-#endif
 
 static void error(char *x)
 {
@@ -359,7 +338,7 @@ asmlinkage void decompress_kernel(void *rmode, memptr heap,
 	if (heap > 0x3fffffffffffUL)
 		error("Destination address too large");
 #else
-	if (heap > ((-__PAGE_OFFSET-(128<<20)-1) & 0x7fffffff))
+	if (heap > ((-__PAGE_OFFSET-(512<<20)-1) & 0x7fffffff))
 		error("Destination address too large");
 #endif
 #ifndef CONFIG_RELOCATABLE

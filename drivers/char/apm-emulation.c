@@ -7,13 +7,13 @@
  *   Intel Corporation, Microsoft Corporation. Advanced Power Management
  *   (APM) BIOS Interface Specification, Revision 1.2, February 1996.
  *
- * This document is available from Microsoft at:
- *    http://www.microsoft.com/whdc/archive/amp_12.mspx
+ * [This document is available from Microsoft at:
+ *    http://www.microsoft.com/hwdev/busbios/amp_12.htm]
  */
 #include <linux/module.h>
 #include <linux/poll.h>
 #include <linux/slab.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/miscdevice.h>
@@ -126,7 +126,6 @@ struct apm_user {
 /*
  * Local variables
  */
-static DEFINE_MUTEX(apm_mutex);
 static atomic_t suspend_acks_pending = ATOMIC_INIT(0);
 static atomic_t userspace_notification_inhibit = ATOMIC_INIT(0);
 static int apm_disabled;
@@ -275,7 +274,7 @@ apm_ioctl(struct file *filp, u_int cmd, u_long arg)
 	if (!as->suser || !as->writer)
 		return -EPERM;
 
-	mutex_lock(&apm_mutex);
+	lock_kernel();
 	switch (cmd) {
 	case APM_IOC_SUSPEND:
 		mutex_lock(&state_lock);
@@ -336,7 +335,7 @@ apm_ioctl(struct file *filp, u_int cmd, u_long arg)
 		mutex_unlock(&state_lock);
 		break;
 	}
-	mutex_unlock(&apm_mutex);
+	unlock_kernel();
 
 	return err;
 }
@@ -371,7 +370,7 @@ static int apm_open(struct inode * inode, struct file * filp)
 {
 	struct apm_user *as;
 
-	mutex_lock(&apm_mutex);
+	lock_kernel();
 	as = kzalloc(sizeof(*as), GFP_KERNEL);
 	if (as) {
 		/*
@@ -391,7 +390,7 @@ static int apm_open(struct inode * inode, struct file * filp)
 
 		filp->private_data = as;
 	}
-	mutex_unlock(&apm_mutex);
+	unlock_kernel();
 
 	return as ? 0 : -ENOMEM;
 }
@@ -403,7 +402,6 @@ static const struct file_operations apm_bios_fops = {
 	.unlocked_ioctl	= apm_ioctl,
 	.open		= apm_open,
 	.release	= apm_release,
-	.llseek		= noop_llseek,
 };
 
 static struct miscdevice apm_device = {

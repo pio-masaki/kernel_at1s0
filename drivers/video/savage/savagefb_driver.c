@@ -385,7 +385,7 @@ SavageSetup2DEngine(struct savagefb_par  *par)
 	BCI_SEND(GlobalBitmapDescriptor);
 
 	/*
-	 * I don't know why, sending this twice fixes the initial black screen,
+	 * I don't know why, sending this twice fixes the intial black screen,
 	 * prevents X from crashing at least in Toshiba laptops with SavageIX.
 	 * --Tony
 	 */
@@ -2211,7 +2211,7 @@ static int __devinit savagefb_probe(struct pci_dev* dev,
 		goto failed_mmio;
 
 	video_len = savage_init_hw(par);
-	/* FIXME: can't be negative */
+	/* FIXME: cant be negative */
 	if (video_len < 0) {
 		err = video_len;
 		goto failed_mmio;
@@ -2373,7 +2373,7 @@ static int savagefb_suspend(struct pci_dev *dev, pm_message_t mesg)
 	if (mesg.event == PM_EVENT_FREEZE)
 		return 0;
 
-	console_lock();
+	acquire_console_sem();
 	fb_set_suspend(info, 1);
 
 	if (info->fbops->fb_sync)
@@ -2385,7 +2385,7 @@ static int savagefb_suspend(struct pci_dev *dev, pm_message_t mesg)
 	pci_save_state(dev);
 	pci_disable_device(dev);
 	pci_set_power_state(dev, pci_choose_state(dev, mesg));
-	console_unlock();
+	release_console_sem();
 
 	return 0;
 }
@@ -2409,7 +2409,7 @@ static int savagefb_resume(struct pci_dev* dev)
 		return 0;
 	}
 
-	console_lock();
+	acquire_console_sem();
 
 	pci_set_power_state(dev, PCI_D0);
 	pci_restore_state(dev);
@@ -2423,7 +2423,7 @@ static int savagefb_resume(struct pci_dev* dev)
 	savagefb_set_par(info);
 	fb_set_suspend(info, 0);
 	savagefb_blank(FB_BLANK_UNBLANK, info);
-	console_unlock();
+	release_console_sem();
 
 	return 0;
 }

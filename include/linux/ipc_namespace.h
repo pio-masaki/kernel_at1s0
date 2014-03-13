@@ -5,7 +5,6 @@
 #include <linux/idr.h>
 #include <linux/rwsem.h>
 #include <linux/notifier.h>
-#include <linux/nsproxy.h>
 
 /*
  * ipc namespace events
@@ -16,7 +15,6 @@
 
 #define IPCNS_CALLBACK_PRI 0
 
-struct user_namespace;
 
 struct ipc_ids {
 	int in_use;
@@ -58,8 +56,6 @@ struct ipc_namespace {
 	unsigned int    mq_msg_max;      /* initialized to DFLT_MSGMAX */
 	unsigned int    mq_msgsize_max;  /* initialized to DFLT_MSGSIZEMAX */
 
-	/* user_ns which owns the ipc ns */
-	struct user_namespace *user_ns;
 };
 
 extern struct ipc_namespace init_ipc_ns;
@@ -94,7 +90,7 @@ static inline int mq_init_ns(struct ipc_namespace *ns) { return 0; }
 
 #if defined(CONFIG_IPC_NS)
 extern struct ipc_namespace *copy_ipcs(unsigned long flags,
-				       struct task_struct *tsk);
+				       struct ipc_namespace *ns);
 static inline struct ipc_namespace *get_ipc_ns(struct ipc_namespace *ns)
 {
 	if (ns)
@@ -105,12 +101,12 @@ static inline struct ipc_namespace *get_ipc_ns(struct ipc_namespace *ns)
 extern void put_ipc_ns(struct ipc_namespace *ns);
 #else
 static inline struct ipc_namespace *copy_ipcs(unsigned long flags,
-					      struct task_struct *tsk)
+		struct ipc_namespace *ns)
 {
 	if (flags & CLONE_NEWIPC)
 		return ERR_PTR(-EINVAL);
 
-	return tsk->nsproxy->ipc_ns;
+	return ns;
 }
 
 static inline struct ipc_namespace *get_ipc_ns(struct ipc_namespace *ns)

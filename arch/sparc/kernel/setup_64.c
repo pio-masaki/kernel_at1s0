@@ -315,7 +315,7 @@ void __init setup_arch(char **cmdline_p)
 
 #ifdef CONFIG_IP_PNP
 	if (!ic_set_manually) {
-		phandle chosen = prom_finddevice("/chosen");
+		int chosen = prom_finddevice ("/chosen");
 		u32 cl, sv, gw;
 		
 		cl = prom_getintdefault (chosen, "client-ip", 0);

@@ -189,20 +189,15 @@ static inline void qe_ic_write(volatile __be32  __iomem * base, unsigned int reg
 
 static inline struct qe_ic *qe_ic_from_irq(unsigned int virq)
 {
-	return irq_get_chip_data(virq);
-}
-
-static inline struct qe_ic *qe_ic_from_irq_data(struct irq_data *d)
-{
-	return irq_data_get_irq_chip_data(d);
+	return irq_to_desc(virq)->chip_data;
 }
 
 #define virq_to_hw(virq)	((unsigned int)irq_map[virq].hwirq)
 
-static void qe_ic_unmask_irq(struct irq_data *d)
+static void qe_ic_unmask_irq(unsigned int virq)
 {
-	struct qe_ic *qe_ic = qe_ic_from_irq_data(d);
-	unsigned int src = virq_to_hw(d->irq);
+	struct qe_ic *qe_ic = qe_ic_from_irq(virq);
+	unsigned int src = virq_to_hw(virq);
 	unsigned long flags;
 	u32 temp;
 
@@ -215,10 +210,10 @@ static void qe_ic_unmask_irq(struct irq_data *d)
 	raw_spin_unlock_irqrestore(&qe_ic_lock, flags);
 }
 
-static void qe_ic_mask_irq(struct irq_data *d)
+static void qe_ic_mask_irq(unsigned int virq)
 {
-	struct qe_ic *qe_ic = qe_ic_from_irq_data(d);
-	unsigned int src = virq_to_hw(d->irq);
+	struct qe_ic *qe_ic = qe_ic_from_irq(virq);
+	unsigned int src = virq_to_hw(virq);
 	unsigned long flags;
 	u32 temp;
 
@@ -243,9 +238,9 @@ static void qe_ic_mask_irq(struct irq_data *d)
 
 static struct irq_chip qe_ic_irq_chip = {
 	.name = "QEIC",
-	.irq_unmask = qe_ic_unmask_irq,
-	.irq_mask = qe_ic_mask_irq,
-	.irq_mask_ack = qe_ic_mask_irq,
+	.unmask = qe_ic_unmask_irq,
+	.mask = qe_ic_mask_irq,
+	.mask_ack = qe_ic_mask_irq,
 };
 
 static int qe_ic_host_match(struct irq_host *h, struct device_node *node)
@@ -267,10 +262,10 @@ static int qe_ic_host_map(struct irq_host *h, unsigned int virq,
 	/* Default chip */
 	chip = &qe_ic->hc_irq;
 
-	irq_set_chip_data(virq, qe_ic);
-	irq_set_status_flags(virq, IRQ_LEVEL);
+	set_irq_chip_data(virq, qe_ic);
+	irq_to_desc(virq)->status |= IRQ_LEVEL;
 
-	irq_set_chip_and_handler(virq, chip, handle_level_irq);
+	set_irq_chip_and_handler(virq, chip, handle_level_irq);
 
 	return 0;
 }
@@ -386,13 +381,13 @@ void __init qe_ic_init(struct device_node *node, unsigned int flags,
 
 	qe_ic_write(qe_ic->regs, QEIC_CICR, temp);
 
-	irq_set_handler_data(qe_ic->virq_low, qe_ic);
-	irq_set_chained_handler(qe_ic->virq_low, low_handler);
+	set_irq_data(qe_ic->virq_low, qe_ic);
+	set_irq_chained_handler(qe_ic->virq_low, low_handler);
 
 	if (qe_ic->virq_high != NO_IRQ &&
 			qe_ic->virq_high != qe_ic->virq_low) {
-		irq_set_handler_data(qe_ic->virq_high, qe_ic);
-		irq_set_chained_handler(qe_ic->virq_high, high_handler);
+		set_irq_data(qe_ic->virq_high, qe_ic);
+		set_irq_chained_handler(qe_ic->virq_high, high_handler);
 	}
 }
 

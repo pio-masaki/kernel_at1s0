@@ -25,9 +25,6 @@
 #include "tegra2_emc.h"
 #include "board.h"
 
-extern void tegra_emc_write_mrw(unsigned long addr);
-extern void antares_guery_ram_normal_mode(bool *enable);
-
 /*
  * Revision History - 
  *     20110314_Elpida-1GB_-25~+85_Done
@@ -333,8 +330,8 @@ static const struct tegra_emc_table antares_emc_tables_Elpida_EDB8132B2PB_6D_F_3
 			0x00000000,   /* ODT_WRITE */
 			0x00000000,   /* ODT_READ */
 			0x00000282,   /* FBIO_CFG5 */
-			0xa09404ae,   /* CFG_DIG_DLL */
-			0x00070000,   /* DLL_XFORM_DQS */
+			0xa0ae04ae,   /* CFG_DIG_DLL */
+			0x007c2010,   /* DLL_XFORM_DQS */
 			0x00000000,   /* DLL_XFORM_QUSE */
 			0x00000000,   /* ZCAL_REF_CNT */
 			0x00000003,   /* ZCAL_WAIT_CNT */
@@ -384,7 +381,7 @@ static const struct tegra_emc_table antares_emc_tables_Elpida_EDB8132B2PB_6D_F_3
 			0x00000000,   /* ODT_WRITE */
 			0x00000000,   /* ODT_READ */
 			0x00000282,   /* FBIO_CFG5 */
-			0xa09404ae,   /* CFG_DIG_DLL */
+			0xa0ae04ae,   /* CFG_DIG_DLL */
 			0x00070000,   /* DLL_XFORM_DQS */
 			0x00000000,   /* DLL_XFORM_QUSE */
 			0x00000000,   /* ZCAL_REF_CNT */
@@ -435,7 +432,7 @@ static const struct tegra_emc_table antares_emc_tables_Elpida_EDB8132B2PB_6D_F_3
 			0x00000000,   /* ODT_WRITE */
 			0x00000000,   /* ODT_READ */
 			0x00000282,   /* FBIO_CFG5 */
-			0xa09404ae,   /* CFG_DIG_DLL */
+			0xa0ae04ae,   /* CFG_DIG_DLL */
 			0x00070000,   /* DLL_XFORM_DQS */
 			0x00000000,   /* DLL_XFORM_QUSE */
 			0x00000000,   /* ZCAL_REF_CNT */
@@ -486,8 +483,8 @@ static const struct tegra_emc_table antares_emc_tables_Elpida_EDB8132B2PB_6D_F_3
 			0x00000000,   /* ODT_WRITE */
 			0x00000000,   /* ODT_READ */
 			0x00000282,   /* FBIO_CFG5 */
-			0xa06804ae,   /* CFG_DIG_DLL */
-			0x007df010,   /* DLL_XFORM_DQS */
+			0xa07c04ae,   /* CFG_DIG_DLL */
+			0x007e2010,   /* DLL_XFORM_DQS */
 			0x00000000,   /* DLL_XFORM_QUSE */
 			0x00000000,   /* ZCAL_REF_CNT */
 			0x0000000e,   /* ZCAL_WAIT_CNT */
@@ -537,8 +534,8 @@ static const struct tegra_emc_table antares_emc_tables_Elpida_EDB8132B2PB_6D_F_3
 			0x00000000,   /* ODT_WRITE */
 			0x00000000,   /* ODT_READ */
 			0x00000282,   /* FBIO_CFG5 */
-			0xe04e048b,   /* CFG_DIG_DLL */
-			0x007de010,   /* DLL_XFORM_DQS */
+			0xe059048b,   /* CFG_DIG_DLL */
+			0x007e0010,   /* DLL_XFORM_DQS */
 			0x00000000,   /* DLL_XFORM_QUSE */
 			0x00000000,   /* ZCAL_REF_CNT */
 			0x0000001b,   /* ZCAL_WAIT_CNT */
@@ -591,7 +588,7 @@ static const struct tegra_emc_table antares_emc_tables_Hynix_H8TJR00X0MLR_0YM_30
 			0x00000000,   /* ODT_WRITE */
 			0x00000000,   /* ODT_READ */
 			0x00000282,   /* FBIO_CFG5 */
-			0xa09404ae,   /* CFG_DIG_DLL */
+			0xa0ae04ae,   /* CFG_DIG_DLL */
 			0x00070000,   /* DLL_XFORM_DQS */
 			0x00000000,   /* DLL_XFORM_QUSE */
 			0x00000000,   /* ZCAL_REF_CNT */
@@ -642,7 +639,7 @@ static const struct tegra_emc_table antares_emc_tables_Hynix_H8TJR00X0MLR_0YM_30
 			0x00000000,   /* ODT_WRITE */
 			0x00000000,   /* ODT_READ */
 			0x00000282,   /* FBIO_CFG5 */
-			0xa09404ae,   /* CFG_DIG_DLL */
+			0xa0ae04ae,   /* CFG_DIG_DLL */
 			0x00070000,   /* DLL_XFORM_DQS */
 			0x00000000,   /* DLL_XFORM_QUSE */
 			0x00000000,   /* ZCAL_REF_CNT */
@@ -693,7 +690,7 @@ static const struct tegra_emc_table antares_emc_tables_Hynix_H8TJR00X0MLR_0YM_30
 			0x00000000,   /* ODT_WRITE */
 			0x00000000,   /* ODT_READ */
 			0x00000282,   /* FBIO_CFG5 */
-			0xa09404ae,   /* CFG_DIG_DLL */
+			0xa0ae04ae,   /* CFG_DIG_DLL */
 			0x00070000,   /* DLL_XFORM_DQS */
 			0x00000000,   /* DLL_XFORM_QUSE */
 			0x00000000,   /* ZCAL_REF_CNT */
@@ -744,8 +741,8 @@ static const struct tegra_emc_table antares_emc_tables_Hynix_H8TJR00X0MLR_0YM_30
 			0x00000000,   /* ODT_WRITE */
 			0x00000000,   /* ODT_READ */
 			0x00000282,   /* FBIO_CFG5 */
-			0xa06804ae,   /* CFG_DIG_DLL */
-			0x007e2010,   /* DLL_XFORM_DQS */
+			0xa07c04ae,   /* CFG_DIG_DLL */
+			0x007e6010,   /* DLL_XFORM_DQS */
 			0x00000000,   /* DLL_XFORM_QUSE */
 			0x00000000,   /* ZCAL_REF_CNT */
 			0x0000000e,   /* ZCAL_WAIT_CNT */
@@ -795,7 +792,7 @@ static const struct tegra_emc_table antares_emc_tables_Hynix_H8TJR00X0MLR_0YM_30
 			0x00000000,   /* ODT_WRITE */
 			0x00000000,   /* ODT_READ */
 			0x00000282,   /* FBIO_CFG5 */
-			0xe04e048b,   /* CFG_DIG_DLL */
+			0xe059048b,   /* CFG_DIG_DLL */
 			0x007e2010,   /* DLL_XFORM_DQS */
 			0x00000000,   /* DLL_XFORM_QUSE */
 			0x00000000,   /* ZCAL_REF_CNT */
@@ -820,8 +817,6 @@ int antares_emc_init(void)
 	void __iomem *apb_misc = IO_ADDRESS(TEGRA_APB_MISC_BASE);
 	const struct tegra_emc_table *emc_tables;
 	int emc_tables_size;
-    bool is_normal;
-
 	reg = readl(apb_misc + STRAP_OPT);
 	ram_id = (reg & RAM_ID_MASK) >> RAM_CODE_SHIFT;
 
@@ -842,11 +837,6 @@ int antares_emc_init(void)
 
 	case 2:
 		pr_info("%s: ram: Hynix_H8TJR00X0MLR_0YM_300Mhz!\n", __func__);
-        antares_guery_ram_normal_mode(&is_normal);
-        if (!is_normal) {
-          pr_info("Apply Hynix memory patch\n");
-          tegra_emc_write_mrw(9);
-        }
 		/* set Elpida as default */
 		emc_tables = antares_emc_tables_Hynix_H8TJR00X0MLR_0YM_300Mhz;
 		emc_tables_size = ARRAY_SIZE(antares_emc_tables_Hynix_H8TJR00X0MLR_0YM_300Mhz);

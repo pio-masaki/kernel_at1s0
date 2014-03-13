@@ -23,6 +23,9 @@
 
 void bfin_pm_suspend_standby_enter(void)
 {
+	unsigned long flags;
+
+	local_irq_save_hw(flags);
 	bfin_pm_standby_setup();
 
 #ifdef CONFIG_PM_BFIN_SLEEP_DEEPER
@@ -52,6 +55,8 @@ void bfin_pm_suspend_standby_enter(void)
 #else
 	bfin_write_SIC_IWR(IWR_DISABLE_ALL);
 #endif
+
+	local_irq_restore_hw(flags);
 }
 
 int bf53x_suspend_l1_mem(unsigned char *memptr)
@@ -122,6 +127,7 @@ static void flushinv_all_dcache(void)
 
 int bfin_pm_suspend_mem_enter(void)
 {
+	unsigned long flags;
 	int wakeup, ret;
 
 	unsigned char *memptr = kmalloc(L1_CODE_LENGTH + L1_DATA_A_LENGTH
@@ -143,9 +149,12 @@ int bfin_pm_suspend_mem_enter(void)
 	wakeup |= GPWE;
 #endif
 
+	local_irq_save_hw(flags);
+
 	ret = blackfin_dma_suspend();
 
 	if (ret) {
+		local_irq_restore_hw(flags);
 		kfree(memptr);
 		return ret;
 	}
@@ -169,6 +178,7 @@ int bfin_pm_suspend_mem_enter(void)
 	bfin_gpio_pm_hibernate_restore();
 	blackfin_dma_resume();
 
+	local_irq_restore_hw(flags);
 	kfree(memptr);
 
 	return 0;
@@ -223,7 +233,7 @@ static int bfin_pm_enter(suspend_state_t state)
 	return 0;
 }
 
-static const struct platform_suspend_ops bfin_pm_ops = {
+struct platform_suspend_ops bfin_pm_ops = {
 	.enter = bfin_pm_enter,
 	.valid	= bfin_pm_valid,
 };

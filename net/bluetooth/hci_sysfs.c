@@ -11,7 +11,7 @@
 
 static struct class *bt_class;
 
-struct dentry *bt_debugfs;
+struct dentry *bt_debugfs = NULL;
 EXPORT_SYMBOL_GPL(bt_debugfs);
 
 static inline char *link_typetostr(int type)
@@ -37,7 +37,9 @@ static ssize_t show_link_type(struct device *dev, struct device_attribute *attr,
 static ssize_t show_link_address(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct hci_conn *conn = dev_get_drvdata(dev);
-	return sprintf(buf, "%s\n", batostr(&conn->dst));
+	bdaddr_t bdaddr;
+	baswap(&bdaddr, &conn->dst);
+	return sprintf(buf, "%s\n", batostr(&bdaddr));
 }
 
 static ssize_t show_link_features(struct device *dev, struct device_attribute *attr, char *buf)
@@ -51,8 +53,8 @@ static ssize_t show_link_features(struct device *dev, struct device_attribute *a
 				conn->features[6], conn->features[7]);
 }
 
-#define LINK_ATTR(_name, _mode, _show, _store) \
-struct device_attribute link_attr_##_name = __ATTR(_name, _mode, _show, _store)
+#define LINK_ATTR(_name,_mode,_show,_store) \
+struct device_attribute link_attr_##_name = __ATTR(_name,_mode,_show,_store)
 
 static LINK_ATTR(type, S_IRUGO, show_link_type, NULL);
 static LINK_ATTR(address, S_IRUGO, show_link_address, NULL);
@@ -194,8 +196,8 @@ static inline char *host_typetostr(int type)
 	switch (type) {
 	case HCI_BREDR:
 		return "BR/EDR";
-	case HCI_AMP:
-		return "AMP";
+	case HCI_80211:
+		return "802.11";
 	default:
 		return "UNKNOWN";
 	}
@@ -236,7 +238,9 @@ static ssize_t show_class(struct device *dev, struct device_attribute *attr, cha
 static ssize_t show_address(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct hci_dev *hdev = dev_get_drvdata(dev);
-	return sprintf(buf, "%s\n", batostr(&hdev->bdaddr));
+	bdaddr_t bdaddr;
+	baswap(&bdaddr, &hdev->bdaddr);
+	return sprintf(buf, "%s\n", batostr(&bdaddr));
 }
 
 static ssize_t show_features(struct device *dev, struct device_attribute *attr, char *buf)
@@ -404,8 +408,10 @@ static int inquiry_cache_show(struct seq_file *f, void *p)
 
 	for (e = cache->list; e; e = e->next) {
 		struct inquiry_data *data = &e->data;
+		bdaddr_t bdaddr;
+		baswap(&bdaddr, &data->bdaddr);
 		seq_printf(f, "%s %d %d %d 0x%.2x%.2x%.2x 0x%.4x %d %d %u\n",
-			   batostr(&data->bdaddr),
+			   batostr(&bdaddr),
 			   data->pscan_rep_mode, data->pscan_period_mode,
 			   data->pscan_mode, data->dev_class[2],
 			   data->dev_class[1], data->dev_class[0],
@@ -439,10 +445,13 @@ static int blacklist_show(struct seq_file *f, void *p)
 
 	list_for_each(l, &hdev->blacklist) {
 		struct bdaddr_list *b;
+		bdaddr_t bdaddr;
 
 		b = list_entry(l, struct bdaddr_list, list);
 
-		seq_printf(f, "%s\n", batostr(&b->bdaddr));
+		baswap(&bdaddr, &b->bdaddr);
+
+		seq_printf(f, "%s\n", batostr(&bdaddr));
 	}
 
 	hci_dev_unlock_bh(hdev);
@@ -461,56 +470,6 @@ static const struct file_operations blacklist_fops = {
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };
-
-static void print_bt_uuid(struct seq_file *f, u8 *uuid)
-{
-	u32 data0, data4;
-	u16 data1, data2, data3, data5;
-
-	memcpy(&data0, &uuid[0], 4);
-	memcpy(&data1, &uuid[4], 2);
-	memcpy(&data2, &uuid[6], 2);
-	memcpy(&data3, &uuid[8], 2);
-	memcpy(&data4, &uuid[10], 4);
-	memcpy(&data5, &uuid[14], 2);
-
-	seq_printf(f, "%.8x-%.4x-%.4x-%.4x-%.8x%.4x\n",
-				ntohl(data0), ntohs(data1), ntohs(data2),
-				ntohs(data3), ntohl(data4), ntohs(data5));
-}
-
-static int uuids_show(struct seq_file *f, void *p)
-{
-	struct hci_dev *hdev = f->private;
-	struct list_head *l;
-
-	hci_dev_lock_bh(hdev);
-
-	list_for_each(l, &hdev->uuids) {
-		struct bt_uuid *uuid;
-
-		uuid = list_entry(l, struct bt_uuid, list);
-
-		print_bt_uuid(f, uuid->uuid);
-	}
-
-	hci_dev_unlock_bh(hdev);
-
-	return 0;
-}
-
-static int uuids_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, uuids_show, inode->i_private);
-}
-
-static const struct file_operations uuids_fops = {
-	.open		= uuids_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
 int hci_register_sysfs(struct hci_dev *hdev)
 {
 	struct device *dev = &hdev->dev;
@@ -542,8 +501,6 @@ int hci_register_sysfs(struct hci_dev *hdev)
 
 	debugfs_create_file("blacklist", 0444, hdev->debugfs,
 						hdev, &blacklist_fops);
-
-	debugfs_create_file("uuids", 0444, hdev->debugfs, hdev, &uuids_fops);
 
 	return 0;
 }

@@ -27,68 +27,67 @@
 
 #include <linux/list.h>
 #include <linux/timer.h>
-#include <linux/workqueue.h>
 #include "ring_buffer.h"
 #include "vmbus_channel_interface.h"
 #include "vmbus_packet_format.h"
 
 /* Version 1 messages */
 enum vmbus_channel_message_type {
-	CHANNELMSG_INVALID			=  0,
-	CHANNELMSG_OFFERCHANNEL		=  1,
-	CHANNELMSG_RESCIND_CHANNELOFFER	=  2,
-	CHANNELMSG_REQUESTOFFERS		=  3,
-	CHANNELMSG_ALLOFFERS_DELIVERED	=  4,
-	CHANNELMSG_OPENCHANNEL		=  5,
-	CHANNELMSG_OPENCHANNEL_RESULT		=  6,
-	CHANNELMSG_CLOSECHANNEL		=  7,
-	CHANNELMSG_GPADL_HEADER		=  8,
-	CHANNELMSG_GPADL_BODY			=  9,
-	CHANNELMSG_GPADL_CREATED		= 10,
-	CHANNELMSG_GPADL_TEARDOWN		= 11,
-	CHANNELMSG_GPADL_TORNDOWN		= 12,
-	CHANNELMSG_RELID_RELEASED		= 13,
-	CHANNELMSG_INITIATE_CONTACT		= 14,
-	CHANNELMSG_VERSION_RESPONSE		= 15,
-	CHANNELMSG_UNLOAD			= 16,
+	ChannelMessageInvalid			=  0,
+	ChannelMessageOfferChannel		=  1,
+	ChannelMessageRescindChannelOffer	=  2,
+	ChannelMessageRequestOffers		=  3,
+	ChannelMessageAllOffersDelivered	=  4,
+	ChannelMessageOpenChannel		=  5,
+	ChannelMessageOpenChannelResult		=  6,
+	ChannelMessageCloseChannel		=  7,
+	ChannelMessageGpadlHeader		=  8,
+	ChannelMessageGpadlBody			=  9,
+	ChannelMessageGpadlCreated		= 10,
+	ChannelMessageGpadlTeardown		= 11,
+	ChannelMessageGpadlTorndown		= 12,
+	ChannelMessageRelIdReleased		= 13,
+	ChannelMessageInitiateContact		= 14,
+	ChannelMessageVersionResponse		= 15,
+	ChannelMessageUnload			= 16,
 #ifdef VMBUS_FEATURE_PARENT_OR_PEER_MEMORY_MAPPED_INTO_A_CHILD
-	CHANNELMSG_VIEWRANGE_ADD		= 17,
-	CHANNELMSG_VIEWRANGE_REMOVE		= 18,
+	ChannelMessageViewRangeAdd		= 17,
+	ChannelMessageViewRangeRemove		= 18,
 #endif
-	CHANNELMSG_COUNT
+	ChannelMessageCount
 };
 
 struct vmbus_channel_message_header {
-	enum vmbus_channel_message_type msgtype;
-	u32 padding;
-} __packed;
+	enum vmbus_channel_message_type MessageType;
+	u32 Padding;
+} __attribute__((packed));
 
 /* Query VMBus Version parameters */
 struct vmbus_channel_query_vmbus_version {
-	struct vmbus_channel_message_header header;
-	u32 version;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	u32 Version;
+} __attribute__((packed));
 
 /* VMBus Version Supported parameters */
 struct vmbus_channel_version_supported {
-	struct vmbus_channel_message_header header;
-	bool version_supported;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	bool VersionSupported;
+} __attribute__((packed));
 
 /* Offer Channel parameters */
 struct vmbus_channel_offer_channel {
-	struct vmbus_channel_message_header header;
-	struct vmbus_channel_offer offer;
-	u32 child_relid;
-	u8 monitorid;
-	bool monitor_allocated;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	struct vmbus_channel_offer Offer;
+	u32 ChildRelId;
+	u8 MonitorId;
+	bool MonitorAllocated;
+} __attribute__((packed));
 
 /* Rescind Offer parameters */
 struct vmbus_channel_rescind_offer {
-	struct vmbus_channel_message_header header;
-	u32 child_relid;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	u32 ChildRelId;
+} __attribute__((packed));
 
 /*
  * Request Offer -- no parameters, SynIC message contains the partition ID
@@ -101,44 +100,44 @@ struct vmbus_channel_rescind_offer {
 
 /* Open Channel parameters */
 struct vmbus_channel_open_channel {
-	struct vmbus_channel_message_header header;
+	struct vmbus_channel_message_header Header;
 
 	/* Identifies the specific VMBus channel that is being opened. */
-	u32 child_relid;
+	u32 ChildRelId;
 
 	/* ID making a particular open request at a channel offer unique. */
-	u32 openid;
+	u32 OpenId;
 
 	/* GPADL for the channel's ring buffer. */
-	u32 ringbuffer_gpadlhandle;
+	u32 RingBufferGpadlHandle;
 
 	/* GPADL for the channel's server context save area. */
-	u32 server_contextarea_gpadlhandle;
+	u32 ServerContextAreaGpadlHandle;
 
 	/*
 	* The upstream ring buffer begins at offset zero in the memory
 	* described by RingBufferGpadlHandle. The downstream ring buffer
 	* follows it at this offset (in pages).
 	*/
-	u32 downstream_ringbuffer_pageoffset;
+	u32 DownstreamRingBufferPageOffset;
 
 	/* User-specific data to be passed along to the server endpoint. */
-	unsigned char userdata[MAX_USER_DEFINED_BYTES];
-} __packed;
+	unsigned char UserData[MAX_USER_DEFINED_BYTES];
+} __attribute__((packed));
 
 /* Open Channel Result parameters */
 struct vmbus_channel_open_result {
-	struct vmbus_channel_message_header header;
-	u32 child_relid;
-	u32 openid;
-	u32 status;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	u32 ChildRelId;
+	u32 OpenId;
+	u32 Status;
+} __attribute__((packed));
 
 /* Close channel parameters; */
 struct vmbus_channel_close_channel {
-	struct vmbus_channel_message_header header;
-	u32 child_relid;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	u32 ChildRelId;
+} __attribute__((packed));
 
 /* Channel Message GPADL */
 #define GPADL_TYPE_RING_BUFFER		1
@@ -152,73 +151,73 @@ struct vmbus_channel_close_channel {
  * follow-up packet that contains more.
  */
 struct vmbus_channel_gpadl_header {
-	struct vmbus_channel_message_header header;
-	u32 child_relid;
-	u32 gpadl;
-	u16 range_buflen;
-	u16 rangecount;
-	struct gpa_range range[0];
-} __packed;
+	struct vmbus_channel_message_header Header;
+	u32 ChildRelId;
+	u32 Gpadl;
+	u16 RangeBufLen;
+	u16 RangeCount;
+	struct gpa_range Range[0];
+} __attribute__((packed));
 
 /* This is the followup packet that contains more PFNs. */
 struct vmbus_channel_gpadl_body {
-	struct vmbus_channel_message_header header;
-	u32 msgnumber;
-	u32 gpadl;
-	u64 pfn[0];
-} __packed;
+	struct vmbus_channel_message_header Header;
+	u32 MessageNumber;
+	u32 Gpadl;
+	u64 Pfn[0];
+} __attribute__((packed));
 
 struct vmbus_channel_gpadl_created {
-	struct vmbus_channel_message_header header;
-	u32 child_relid;
-	u32 gpadl;
-	u32 creation_status;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	u32 ChildRelId;
+	u32 Gpadl;
+	u32 CreationStatus;
+} __attribute__((packed));
 
 struct vmbus_channel_gpadl_teardown {
-	struct vmbus_channel_message_header header;
-	u32 child_relid;
-	u32 gpadl;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	u32 ChildRelId;
+	u32 Gpadl;
+} __attribute__((packed));
 
 struct vmbus_channel_gpadl_torndown {
-	struct vmbus_channel_message_header header;
-	u32 gpadl;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	u32 Gpadl;
+} __attribute__((packed));
 
 #ifdef VMBUS_FEATURE_PARENT_OR_PEER_MEMORY_MAPPED_INTO_A_CHILD
 struct vmbus_channel_view_range_add {
-	struct vmbus_channel_message_header header;
-	PHYSICAL_ADDRESS viewrange_base;
-	u64 viewrange_length;
-	u32 child_relid;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	PHYSICAL_ADDRESS ViewRangeBase;
+	u64 ViewRangeLength;
+	u32 ChildRelId;
+} __attribute__((packed));
 
 struct vmbus_channel_view_range_remove {
-	struct vmbus_channel_message_header header;
-	PHYSICAL_ADDRESS viewrange_base;
-	u32 child_relid;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	PHYSICAL_ADDRESS ViewRangeBase;
+	u32 ChildRelId;
+} __attribute__((packed));
 #endif
 
 struct vmbus_channel_relid_released {
-	struct vmbus_channel_message_header header;
-	u32 child_relid;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	u32 ChildRelId;
+} __attribute__((packed));
 
 struct vmbus_channel_initiate_contact {
-	struct vmbus_channel_message_header header;
-	u32 vmbus_version_requested;
-	u32 padding2;
-	u64 interrupt_page;
-	u64 monitor_page1;
-	u64 monitor_page2;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	u32 VMBusVersionRequested;
+	u32 Padding2;
+	u64 InterruptPage;
+	u64 MonitorPage1;
+	u64 MonitorPage2;
+} __attribute__((packed));
 
 struct vmbus_channel_version_response {
-	struct vmbus_channel_message_header header;
-	bool version_supported;
-} __packed;
+	struct vmbus_channel_message_header Header;
+	bool VersionSupported;
+} __attribute__((packed));
 
 enum vmbus_channel_state {
 	CHANNEL_OFFER_STATE,
@@ -227,55 +226,54 @@ enum vmbus_channel_state {
 };
 
 struct vmbus_channel {
-	struct list_head listentry;
+	struct list_head ListEntry;
 
-	struct hv_device *device_obj;
+	struct hv_device *DeviceObject;
 
 	struct timer_list poll_timer; /* SA-111 workaround */
-	struct work_struct work;
 
-	enum vmbus_channel_state state;
+	enum vmbus_channel_state State;
 
-	struct vmbus_channel_offer_channel offermsg;
+	struct vmbus_channel_offer_channel OfferMsg;
 	/*
 	 * These are based on the OfferMsg.MonitorId.
 	 * Save it here for easy access.
 	 */
-	u8 monitor_grp;
-	u8 monitor_bit;
+	u8 MonitorGroup;
+	u8 MonitorBit;
 
-	u32 ringbuffer_gpadlhandle;
+	u32 RingBufferGpadlHandle;
 
 	/* Allocated memory for ring buffer */
-	void *ringbuffer_pages;
-	u32 ringbuffer_pagecount;
-	struct hv_ring_buffer_info outbound;	/* send to parent */
-	struct hv_ring_buffer_info inbound;	/* receive from parent */
+	void *RingBufferPages;
+	u32 RingBufferPageCount;
+	struct hv_ring_buffer_info Outbound;	/* send to parent */
+	struct hv_ring_buffer_info Inbound;	/* receive from parent */
 	spinlock_t inbound_lock;
-	struct workqueue_struct *controlwq;
+	struct workqueue_struct *ControlWQ;
 
 	/* Channel callback are invoked in this workqueue context */
 	/* HANDLE dataWorkQueue; */
 
-	void (*onchannel_callback)(void *context);
-	void *channel_callback_context;
+	void (*OnChannelCallback)(void *context);
+	void *ChannelCallbackContext;
 };
 
 struct vmbus_channel_debug_info {
-	u32 relid;
-	enum vmbus_channel_state state;
-	struct hv_guid interfacetype;
-	struct hv_guid interface_instance;
-	u32 monitorid;
-	u32 servermonitor_pending;
-	u32 servermonitor_latency;
-	u32 servermonitor_connectionid;
-	u32 clientmonitor_pending;
-	u32 clientmonitor_latency;
-	u32 clientmonitor_connectionid;
+	u32 RelId;
+	enum vmbus_channel_state State;
+	struct hv_guid InterfaceType;
+	struct hv_guid InterfaceInstance;
+	u32 MonitorId;
+	u32 ServerMonitorPending;
+	u32 ServerMonitorLatency;
+	u32 ServerMonitorConnectionId;
+	u32 ClientMonitorPending;
+	u32 ClientMonitorLatency;
+	u32 ClientMonitorConnectionId;
 
-	struct hv_ring_buffer_debug_info inbound;
-	struct hv_ring_buffer_debug_info outbound;
+	struct hv_ring_buffer_debug_info Inbound;
+	struct hv_ring_buffer_debug_info Outbound;
 };
 
 /*
@@ -284,37 +282,39 @@ struct vmbus_channel_debug_info {
  */
 struct vmbus_channel_msginfo {
 	/* Bookkeeping stuff */
-	struct list_head msglistentry;
+	struct list_head MsgListEntry;
 
 	/* So far, this is only used to handle gpadl body message */
-	struct list_head submsglist;
+	struct list_head SubMsgList;
 
 	/* Synchronize the request/response if needed */
-	int wait_condition;
-	wait_queue_head_t waitevent;
-	union {
-		struct vmbus_channel_version_supported version_supported;
-		struct vmbus_channel_open_result open_result;
-		struct vmbus_channel_gpadl_torndown gpadl_torndown;
-		struct vmbus_channel_gpadl_created gpadl_created;
-		struct vmbus_channel_version_response version_response;
-	} response;
+	struct osd_waitevent *WaitEvent;
 
-	u32 msgsize;
+	union {
+		struct vmbus_channel_version_supported VersionSupported;
+		struct vmbus_channel_open_result OpenResult;
+		struct vmbus_channel_gpadl_torndown GpadlTorndown;
+		struct vmbus_channel_gpadl_created GpadlCreated;
+		struct vmbus_channel_version_response VersionResponse;
+	} Response;
+
+	u32 MessageSize;
 	/*
 	 * The channel message that goes out on the "wire".
 	 * It will contain at minimum the VMBUS_CHANNEL_MESSAGE_HEADER header
 	 */
-	unsigned char msg[0];
+	unsigned char Msg[0];
 };
 
 
-void free_channel(struct vmbus_channel *channel);
+struct vmbus_channel *AllocVmbusChannel(void);
 
-void vmbus_onmessage(void *context);
+void FreeVmbusChannel(struct vmbus_channel *Channel);
 
-int vmbus_request_offers(void);
+void VmbusOnChannelMessage(void *Context);
 
-void vmbus_release_unattached_channels(void);
+int VmbusChannelRequestOffers(void);
+
+void VmbusChannelReleaseUnattachedChannels(void);
 
 #endif /* _CHANNEL_MGMT_H_ */

@@ -15,6 +15,7 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/kernel.h>
 #include <linux/signal.h>
 #include <linux/errno.h>
@@ -255,9 +256,9 @@ int copy_siginfo_from_user32(siginfo_t *to, struct compat_siginfo __user *from)
 	return err;
 }
 
-long compat_sys_sigaltstack(const struct compat_sigaltstack __user *uss_ptr,
-			    struct compat_sigaltstack __user *uoss_ptr,
-			    struct pt_regs *regs)
+long _compat_sys_sigaltstack(const struct compat_sigaltstack __user *uss_ptr,
+			     struct compat_sigaltstack __user *uoss_ptr,
+			     struct pt_regs *regs)
 {
 	stack_t uss, uoss;
 	int ret;
@@ -290,12 +291,12 @@ long compat_sys_sigaltstack(const struct compat_sigaltstack __user *uss_ptr,
 	return ret;
 }
 
-/* The assembly shim for this function arranges to ignore the return value. */
-long compat_sys_rt_sigreturn(struct pt_regs *regs)
+long _compat_sys_rt_sigreturn(struct pt_regs *regs)
 {
 	struct compat_rt_sigframe __user *frame =
 		(struct compat_rt_sigframe __user *) compat_ptr(regs->sp);
 	sigset_t set;
+	long r0;
 
 	if (!access_ok(VERIFY_READ, frame, sizeof(*frame)))
 		goto badframe;
@@ -308,13 +309,13 @@ long compat_sys_rt_sigreturn(struct pt_regs *regs)
 	recalc_sigpending();
 	spin_unlock_irq(&current->sighand->siglock);
 
-	if (restore_sigcontext(regs, &frame->uc.uc_mcontext))
+	if (restore_sigcontext(regs, &frame->uc.uc_mcontext, &r0))
 		goto badframe;
 
-	if (compat_sys_sigaltstack(&frame->uc.uc_stack, NULL, regs) != 0)
+	if (_compat_sys_sigaltstack(&frame->uc.uc_stack, NULL, regs) != 0)
 		goto badframe;
 
-	return 0;
+	return r0;
 
 badframe:
 	force_sig(SIGSEGV, current);

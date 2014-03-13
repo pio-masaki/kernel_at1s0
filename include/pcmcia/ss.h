@@ -19,6 +19,7 @@
 #include <linux/sched.h>	/* task_struct, completion */
 #include <linux/mutex.h>
 
+#include <pcmcia/cs.h>
 #ifdef CONFIG_CARDBUS
 #include <linux/pci.h>
 #endif

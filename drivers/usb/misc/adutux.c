@@ -679,7 +679,6 @@ static const struct file_operations adu_fops = {
 	.write = adu_write,
 	.open = adu_open,
 	.release = adu_release,
-	.llseek = noop_llseek,
 };
 
 /*
@@ -717,7 +716,7 @@ static int adu_probe(struct usb_interface *interface,
 		goto exit;
 	}
 
-	/* allocate memory for our device state and initialize it */
+	/* allocate memory for our device state and intialize it */
 	dev = kzalloc(sizeof(struct adu_device), GFP_KERNEL);
 	if (dev == NULL) {
 		dev_err(&interface->dev, "Out of memory\n");

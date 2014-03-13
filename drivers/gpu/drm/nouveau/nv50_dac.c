@@ -41,7 +41,8 @@ nv50_dac_disconnect(struct drm_encoder *encoder)
 {
 	struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
 	struct drm_device *dev = encoder->dev;
-	struct nouveau_channel *evo = nv50_display(dev)->master;
+	struct drm_nouveau_private *dev_priv = dev->dev_private;
+	struct nouveau_channel *evo = dev_priv->evo;
 	int ret;
 
 	if (!nv_encoder->crtc)
@@ -78,7 +79,7 @@ nv50_dac_detect(struct drm_encoder *encoder, struct drm_connector *connector)
 
 	nv_wr32(dev, NV50_PDISPLAY_DAC_DPMS_CTRL(or),
 		0x00150000 | NV50_PDISPLAY_DAC_DPMS_CTRL_PENDING);
-	if (!nv_wait(dev, NV50_PDISPLAY_DAC_DPMS_CTRL(or),
+	if (!nv_wait(NV50_PDISPLAY_DAC_DPMS_CTRL(or),
 		     NV50_PDISPLAY_DAC_DPMS_CTRL_PENDING, 0)) {
 		NV_ERROR(dev, "timeout: DAC_DPMS_CTRL_PENDING(%d) == 0\n", or);
 		NV_ERROR(dev, "DAC_DPMS_CTRL(%d) = 0x%08x\n", or,
@@ -129,7 +130,7 @@ nv50_dac_dpms(struct drm_encoder *encoder, int mode)
 	NV_DEBUG_KMS(dev, "or %d mode %d\n", or, mode);
 
 	/* wait for it to be done */
-	if (!nv_wait(dev, NV50_PDISPLAY_DAC_DPMS_CTRL(or),
+	if (!nv_wait(NV50_PDISPLAY_DAC_DPMS_CTRL(or),
 		     NV50_PDISPLAY_DAC_DPMS_CTRL_PENDING, 0)) {
 		NV_ERROR(dev, "timeout: DAC_DPMS_CTRL_PENDING(%d) == 0\n", or);
 		NV_ERROR(dev, "DAC_DPMS_CTRL(%d) = 0x%08x\n", or,
@@ -215,7 +216,8 @@ nv50_dac_mode_set(struct drm_encoder *encoder, struct drm_display_mode *mode,
 {
 	struct nouveau_encoder *nv_encoder = nouveau_encoder(encoder);
 	struct drm_device *dev = encoder->dev;
-	struct nouveau_channel *evo = nv50_display(dev)->master;
+	struct drm_nouveau_private *dev_priv = dev->dev_private;
+	struct nouveau_channel *evo = dev_priv->evo;
 	struct nouveau_crtc *crtc = nouveau_crtc(encoder->crtc);
 	uint32_t mode_ctl = 0, mode_ctl2 = 0;
 	int ret;

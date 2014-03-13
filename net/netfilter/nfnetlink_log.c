@@ -376,6 +376,7 @@ __build_packet_message(struct nfulnl_instance *inst,
 			unsigned int hooknum,
 			const struct net_device *indev,
 			const struct net_device *outdev,
+			const struct nf_loginfo *li,
 			const char *prefix, unsigned int plen)
 {
 	struct nfulnl_msg_packet_hdr pmsg;
@@ -651,7 +652,7 @@ nfulnl_log_packet(u_int8_t pf,
 	inst->qlen++;
 
 	__build_packet_message(inst, skb, data_len, pf,
-				hooknum, in, out, prefix, plen);
+				hooknum, in, out, li, prefix, plen);
 
 	if (inst->qlen >= qthreshold)
 		__nfulnl_flush(inst);
@@ -873,19 +874,19 @@ static struct hlist_node *get_first(struct iter_state *st)
 
 	for (st->bucket = 0; st->bucket < INSTANCE_BUCKETS; st->bucket++) {
 		if (!hlist_empty(&instance_table[st->bucket]))
-			return rcu_dereference_bh(hlist_first_rcu(&instance_table[st->bucket]));
+			return rcu_dereference_bh(instance_table[st->bucket].first);
 	}
 	return NULL;
 }
 
 static struct hlist_node *get_next(struct iter_state *st, struct hlist_node *h)
 {
-	h = rcu_dereference_bh(hlist_next_rcu(h));
+	h = rcu_dereference_bh(h->next);
 	while (!h) {
 		if (++st->bucket >= INSTANCE_BUCKETS)
 			return NULL;
 
-		h = rcu_dereference_bh(hlist_first_rcu(&instance_table[st->bucket]));
+		h = rcu_dereference_bh(instance_table[st->bucket].first);
 	}
 	return h;
 }

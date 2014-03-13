@@ -21,36 +21,21 @@ int mac80211_open_file_generic(struct inode *inode, struct file *file)
 	return 0;
 }
 
-#define DEBUGFS_FORMAT_BUFFER_SIZE 100
-
-int mac80211_format_buffer(char __user *userbuf, size_t count,
-				  loff_t *ppos, char *fmt, ...)
-{
-	va_list args;
-	char buf[DEBUGFS_FORMAT_BUFFER_SIZE];
-	int res;
-
-	va_start(args, fmt);
-	res = vscnprintf(buf, sizeof(buf), fmt, args);
-	va_end(args);
-
-	return simple_read_from_buffer(userbuf, count, ppos, buf, res);
-}
-
-#define DEBUGFS_READONLY_FILE(name, fmt, value...)			\
+#define DEBUGFS_READONLY_FILE(name, buflen, fmt, value...)		\
 static ssize_t name## _read(struct file *file, char __user *userbuf,	\
 			    size_t count, loff_t *ppos)			\
 {									\
 	struct ieee80211_local *local = file->private_data;		\
+	char buf[buflen];						\
+	int res;							\
 									\
-	return mac80211_format_buffer(userbuf, count, ppos, 		\
-				      fmt "\n", ##value);		\
+	res = scnprintf(buf, buflen, fmt "\n", ##value);		\
+	return simple_read_from_buffer(userbuf, count, ppos, buf, res);	\
 }									\
 									\
 static const struct file_operations name## _ops = {			\
 	.read = name## _read,						\
 	.open = mac80211_open_file_generic,				\
-	.llseek = generic_file_llseek,					\
 };
 
 #define DEBUGFS_ADD(name)						\
@@ -60,17 +45,13 @@ static const struct file_operations name## _ops = {			\
 	debugfs_create_file(#name, mode, phyd, local, &name## _ops);
 
 
-DEBUGFS_READONLY_FILE(user_power, "%d",
-		      local->user_power_level);
-DEBUGFS_READONLY_FILE(power, "%d",
-		      local->hw.conf.power_level);
-DEBUGFS_READONLY_FILE(frequency, "%d",
+DEBUGFS_READONLY_FILE(frequency, 20, "%d",
 		      local->hw.conf.channel->center_freq);
-DEBUGFS_READONLY_FILE(total_ps_buffered, "%d",
+DEBUGFS_READONLY_FILE(total_ps_buffered, 20, "%d",
 		      local->total_ps_buffered);
-DEBUGFS_READONLY_FILE(wep_iv, "%#08x",
+DEBUGFS_READONLY_FILE(wep_iv, 20, "%#08x",
 		      local->wep_iv & 0xffffff);
-DEBUGFS_READONLY_FILE(rate_ctrl_alg, "%s",
+DEBUGFS_READONLY_FILE(rate_ctrl_alg, 100, "%s",
 	local->rate_ctrl ? local->rate_ctrl->ops->name : "hw/driver");
 
 static ssize_t tsf_read(struct file *file, char __user *user_buf,
@@ -78,11 +59,13 @@ static ssize_t tsf_read(struct file *file, char __user *user_buf,
 {
 	struct ieee80211_local *local = file->private_data;
 	u64 tsf;
+	char buf[100];
 
 	tsf = drv_get_tsf(local);
 
-	return mac80211_format_buffer(user_buf, count, ppos, "0x%016llx\n",
-				      (unsigned long long) tsf);
+	snprintf(buf, sizeof(buf), "0x%016llx\n", (unsigned long long) tsf);
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, 19);
 }
 
 static ssize_t tsf_write(struct file *file,
@@ -102,15 +85,13 @@ static ssize_t tsf_write(struct file *file,
 	if (strncmp(buf, "reset", 5) == 0) {
 		if (local->ops->reset_tsf) {
 			drv_reset_tsf(local);
-			wiphy_info(local->hw.wiphy, "debugfs reset TSF\n");
+			printk(KERN_INFO "%s: debugfs reset TSF\n", wiphy_name(local->hw.wiphy));
 		}
 	} else {
 		tsf = simple_strtoul(buf, NULL, 0);
 		if (local->ops->set_tsf) {
 			drv_set_tsf(local, tsf);
-			wiphy_info(local->hw.wiphy,
-				   "debugfs set TSF to %#018llx\n", tsf);
-
+			printk(KERN_INFO "%s: debugfs set TSF to %#018llx\n", wiphy_name(local->hw.wiphy), tsf);
 		}
 	}
 
@@ -120,8 +101,7 @@ static ssize_t tsf_write(struct file *file,
 static const struct file_operations tsf_ops = {
 	.read = tsf_read,
 	.write = tsf_write,
-	.open = mac80211_open_file_generic,
-	.llseek = default_llseek,
+	.open = mac80211_open_file_generic
 };
 
 static ssize_t reset_write(struct file *file, const char __user *user_buf,
@@ -140,16 +120,18 @@ static ssize_t reset_write(struct file *file, const char __user *user_buf,
 static const struct file_operations reset_ops = {
 	.write = reset_write,
 	.open = mac80211_open_file_generic,
-	.llseek = noop_llseek,
 };
 
 static ssize_t noack_read(struct file *file, char __user *user_buf,
 			  size_t count, loff_t *ppos)
 {
 	struct ieee80211_local *local = file->private_data;
+	int res;
+	char buf[10];
 
-	return mac80211_format_buffer(user_buf, count, ppos, "%d\n",
-				      local->wifi_wme_noack_test);
+	res = scnprintf(buf, sizeof(buf), "%d\n", local->wifi_wme_noack_test);
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, res);
 }
 
 static ssize_t noack_write(struct file *file,
@@ -173,16 +155,19 @@ static ssize_t noack_write(struct file *file,
 static const struct file_operations noack_ops = {
 	.read = noack_read,
 	.write = noack_write,
-	.open = mac80211_open_file_generic,
-	.llseek = default_llseek,
+	.open = mac80211_open_file_generic
 };
 
 static ssize_t uapsd_queues_read(struct file *file, char __user *user_buf,
 				 size_t count, loff_t *ppos)
 {
 	struct ieee80211_local *local = file->private_data;
-	return mac80211_format_buffer(user_buf, count, ppos, "0x%x\n",
-				      local->uapsd_queues);
+	int res;
+	char buf[10];
+
+	res = scnprintf(buf, sizeof(buf), "0x%x\n", local->uapsd_queues);
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, res);
 }
 
 static ssize_t uapsd_queues_write(struct file *file,
@@ -216,17 +201,19 @@ static ssize_t uapsd_queues_write(struct file *file,
 static const struct file_operations uapsd_queues_ops = {
 	.read = uapsd_queues_read,
 	.write = uapsd_queues_write,
-	.open = mac80211_open_file_generic,
-	.llseek = default_llseek,
+	.open = mac80211_open_file_generic
 };
 
 static ssize_t uapsd_max_sp_len_read(struct file *file, char __user *user_buf,
 				     size_t count, loff_t *ppos)
 {
 	struct ieee80211_local *local = file->private_data;
+	int res;
+	char buf[10];
 
-	return mac80211_format_buffer(user_buf, count, ppos, "0x%x\n",
-				      local->uapsd_max_sp_len);
+	res = scnprintf(buf, sizeof(buf), "0x%x\n", local->uapsd_max_sp_len);
+
+	return simple_read_from_buffer(user_buf, count, ppos, buf, res);
 }
 
 static ssize_t uapsd_max_sp_len_write(struct file *file,
@@ -260,8 +247,7 @@ static ssize_t uapsd_max_sp_len_write(struct file *file,
 static const struct file_operations uapsd_max_sp_len_ops = {
 	.read = uapsd_max_sp_len_read,
 	.write = uapsd_max_sp_len_write,
-	.open = mac80211_open_file_generic,
-	.llseek = default_llseek,
+	.open = mac80211_open_file_generic
 };
 
 static ssize_t channel_type_read(struct file *file, char __user *user_buf,
@@ -293,8 +279,7 @@ static ssize_t channel_type_read(struct file *file, char __user *user_buf,
 
 static const struct file_operations channel_type_ops = {
 	.read = channel_type_read,
-	.open = mac80211_open_file_generic,
-	.llseek = default_llseek,
+	.open = mac80211_open_file_generic
 };
 
 static ssize_t queues_read(struct file *file, char __user *user_buf,
@@ -317,8 +302,7 @@ static ssize_t queues_read(struct file *file, char __user *user_buf,
 
 static const struct file_operations queues_ops = {
 	.read = queues_read,
-	.open = mac80211_open_file_generic,
-	.llseek = default_llseek,
+	.open = mac80211_open_file_generic
 };
 
 /* statistics stuff */
@@ -362,7 +346,6 @@ static ssize_t stats_ ##name## _read(struct file *file,			\
 static const struct file_operations stats_ ##name## _ops = {		\
 	.read = stats_ ##name## _read,					\
 	.open = mac80211_open_file_generic,				\
-	.llseek = generic_file_llseek,					\
 };
 
 #define DEBUGFS_STATS_ADD(name, field)					\
@@ -383,6 +366,7 @@ void debugfs_hw_add(struct ieee80211_local *local)
 	if (!phyd)
 		return;
 
+	local->debugfs.stations = debugfs_create_dir("stations", phyd);
 	local->debugfs.keys = debugfs_create_dir("keys", phyd);
 
 	DEBUGFS_ADD(frequency);
@@ -395,8 +379,6 @@ void debugfs_hw_add(struct ieee80211_local *local)
 	DEBUGFS_ADD(uapsd_queues);
 	DEBUGFS_ADD(uapsd_max_sp_len);
 	DEBUGFS_ADD(channel_type);
-	DEBUGFS_ADD(user_power);
-	DEBUGFS_ADD(power);
 
 	statsd = debugfs_create_dir("statistics", phyd);
 

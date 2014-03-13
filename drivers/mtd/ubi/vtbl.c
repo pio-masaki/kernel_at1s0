@@ -62,7 +62,7 @@
 #include <asm/div64.h>
 #include "ubi.h"
 
-#ifdef CONFIG_MTD_UBI_DEBUG
+#ifdef CONFIG_MTD_UBI_DEBUG_PARANOID
 static void paranoid_vtbl_check(const struct ubi_device *ubi);
 #else
 #define paranoid_vtbl_check(ubi)
@@ -366,7 +366,7 @@ write_error:
 		 * Probably this physical eraseblock went bad, try to pick
 		 * another one.
 		 */
-		list_add(&new_seb->u.list, &si->erase);
+		list_add_tail(&new_seb->u.list, &si->corr);
 		goto retry;
 	}
 	kfree(new_seb);
@@ -425,11 +425,12 @@ static struct ubi_vtbl_record *process_lvol(struct ubi_device *ubi,
 
 	/* Read both LEB 0 and LEB 1 into memory */
 	ubi_rb_for_each_entry(rb, seb, &sv->root, u.rb) {
-		leb[seb->lnum] = vzalloc(ubi->vtbl_size);
+		leb[seb->lnum] = vmalloc(ubi->vtbl_size);
 		if (!leb[seb->lnum]) {
 			err = -ENOMEM;
 			goto out_free;
 		}
+		memset(leb[seb->lnum], 0, ubi->vtbl_size);
 
 		err = ubi_io_read_data(ubi, leb[seb->lnum], seb->pnum, 0,
 				       ubi->vtbl_size);
@@ -515,9 +516,10 @@ static struct ubi_vtbl_record *create_empty_lvol(struct ubi_device *ubi,
 	int i;
 	struct ubi_vtbl_record *vtbl;
 
-	vtbl = vzalloc(ubi->vtbl_size);
+	vtbl = vmalloc(ubi->vtbl_size);
 	if (!vtbl)
 		return ERR_PTR(-ENOMEM);
+	memset(vtbl, 0, ubi->vtbl_size);
 
 	for (i = 0; i < ubi->vtbl_slots; i++)
 		memcpy(&vtbl[i], &empty_vtbl_record, UBI_VTBL_RECORD_SIZE);
@@ -660,13 +662,9 @@ static int init_volumes(struct ubi_device *ubi, const struct ubi_scan_info *si,
 	ubi->vol_count += 1;
 	vol->ubi = ubi;
 
-	if (reserved_pebs > ubi->avail_pebs) {
+	if (reserved_pebs > ubi->avail_pebs)
 		ubi_err("not enough PEBs, required %d, available %d",
 			reserved_pebs, ubi->avail_pebs);
-		if (ubi->corr_peb_count)
-			ubi_err("%d PEBs are corrupted and not used",
-				ubi->corr_peb_count);
-	}
 	ubi->rsvd_pebs += reserved_pebs;
 	ubi->avail_pebs -= reserved_pebs;
 
@@ -839,7 +837,7 @@ int ubi_read_volume_table(struct ubi_device *ubi, struct ubi_scan_info *si)
 			return PTR_ERR(ubi->vtbl);
 	}
 
-	ubi->avail_pebs = ubi->good_peb_count - ubi->corr_peb_count;
+	ubi->avail_pebs = ubi->good_peb_count;
 
 	/*
 	 * The layout volume is OK, initialize the corresponding in-RAM data
@@ -868,7 +866,7 @@ out_free:
 	return err;
 }
 
-#ifdef CONFIG_MTD_UBI_DEBUG
+#ifdef CONFIG_MTD_UBI_DEBUG_PARANOID
 
 /**
  * paranoid_vtbl_check - check volume table.
@@ -876,13 +874,10 @@ out_free:
  */
 static void paranoid_vtbl_check(const struct ubi_device *ubi)
 {
-	if (!(ubi_chk_flags & UBI_CHK_GEN))
-		return;
-
 	if (vtbl_check(ubi, ubi->vtbl)) {
 		ubi_err("paranoid check failed");
 		BUG();
 	}
 }
 
-#endif /* CONFIG_MTD_UBI_DEBUG */
+#endif /* CONFIG_MTD_UBI_DEBUG_PARANOID */

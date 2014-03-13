@@ -22,7 +22,7 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 
 #include <asm/etraxgpio.h>
 #include <hwregs/reg_map.h>
@@ -64,7 +64,6 @@ static int dp_cnt;
 #define DP(x)
 #endif
 
-static DEFINE_MUTEX(gpio_mutex);
 static char gpio_name[] = "etrax gpio";
 
 #if 0
@@ -430,7 +429,7 @@ gpio_open(struct inode *inode, struct file *filp)
 	if (!priv)
 		return -ENOMEM;
 
-	mutex_lock(&gpio_mutex);
+	lock_kernel();
 	memset(priv, 0, sizeof(*priv));
 
 	priv->minor = p;
@@ -451,7 +450,7 @@ gpio_open(struct inode *inode, struct file *filp)
 	alarmlist = priv;
 	spin_unlock_irq(&alarm_lock);
 
-	mutex_unlock(&gpio_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -709,9 +708,9 @@ static long gpio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
        long ret;
 
-       mutex_lock(&gpio_mutex);
+       lock_kernel();
        ret = gpio_ioctl_unlocked(file, cmd, arg);
-       mutex_unlock(&gpio_mutex);
+       unlock_kernel();
 
        return ret;
 }
@@ -871,7 +870,6 @@ static const struct file_operations gpio_fops = {
 	.write		= gpio_write,
 	.open		= gpio_open,
 	.release	= gpio_release,
-	.llseek		= noop_llseek,
 };
 
 #ifdef CONFIG_ETRAX_VIRTUAL_GPIO

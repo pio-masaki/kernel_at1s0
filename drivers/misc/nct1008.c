@@ -1,9 +1,10 @@
 /*
- * drivers/misc/nct1008.c
+ * drivers/hwmon/nct1008.c
  *
- * Driver for NCT1008, temperature monitoring device from ON Semiconductors
+ * Temperature Sensor driver for NCT1008 Temperature Monitor chip
+ * manufactured by ON Semiconductors (www.onsemi.com).
  *
- * Copyright (c) 2010-2011, NVIDIA Corporation.
+ * Copyright (c) 2010, NVIDIA Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,8 +28,6 @@
 #include <linux/hwmon.h>
 #include <linux/slab.h>
 #include <linux/err.h>
-//#include <linux/device.h>
-//#include <linux/regulator/consumer.h>
 #include <linux/miscdevice.h>
 #include <linux/fs.h>
 #include <linux/delay.h>
@@ -64,16 +63,16 @@
 #endif
 
 #define NCT1008_LOCAL_TEMP_RD			0x00
-#define NCT1008_REMOTE_TEMPH_RD			0x01
-#define NCT1008_REMOTE_TEMPL_RD			0x10
-#define NCT1008_CONFIG_RD				0x03
-#define NCT1008_MFR_ID_RD				0xFE
+#define NCT1008_REMOTE_TEMPH_RD                 0x01
+#define NCT1008_REMOTE_TEMPL_RD                 0x10
+#define NCT1008_CONFIG_RD			0x03
+#define NCT1008_MFR_ID_RD			0xFE
 
-#define NCT1008_CONFIG_WR				0x09
+#define NCT1008_CONFIG_WR			0x09
 #define NCT1008_CONV_RATE_WR			0x0A
-#define NCT1008_OFFSET_WR				0x11
-#define NCT1008_REMOTE_THERM_LIMIT_WR	0x19
-#define NCT1008_LOCAL_THERM_LIMIT_WR	0x20
+#define NCT1008_OFFSET_WR			0x11
+#define NCT1008_REMOTE_THERM_LIMIT_WR           0x19
+#define NCT1008_LOCAL_THERM_LIMIT_WR		0x20
 
 /* Configuration Register Bits */
 #define EXTENDED_RANGE_BIT              (0x1 << 2)

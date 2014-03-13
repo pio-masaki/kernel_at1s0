@@ -330,4 +330,3 @@ int __meminit vmemmap_populate(struct page *start_page,
 	return 0;
 }
 #endif /* CONFIG_SPARSEMEM_VMEMMAP */
-

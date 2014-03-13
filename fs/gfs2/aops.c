@@ -36,8 +36,8 @@
 #include "glops.h"
 
 
-void gfs2_page_add_databufs(struct gfs2_inode *ip, struct page *page,
-			    unsigned int from, unsigned int to)
+static void gfs2_page_add_databufs(struct gfs2_inode *ip, struct page *page,
+				   unsigned int from, unsigned int to)
 {
 	struct buffer_head *head = page_buffers(page);
 	unsigned int bsize = head->b_size;
@@ -615,9 +615,10 @@ static int gfs2_write_begin(struct file *file, struct address_space *mapping,
 	unsigned int data_blocks = 0, ind_blocks = 0, rblocks;
 	int alloc_required;
 	int error = 0;
-	struct gfs2_alloc *al = NULL;
+	struct gfs2_alloc *al;
 	pgoff_t index = pos >> PAGE_CACHE_SHIFT;
 	unsigned from = pos & (PAGE_CACHE_SIZE - 1);
+	unsigned to = from + len;
 	struct page *page;
 
 	gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, &ip->i_gh);
@@ -662,8 +663,6 @@ static int gfs2_write_begin(struct file *file, struct address_space *mapping,
 		rblocks += RES_STATFS + RES_QUOTA;
 	if (&ip->i_inode == sdp->sd_rindex)
 		rblocks += 2 * RES_STATFS;
-	if (alloc_required)
-		rblocks += gfs2_rg_blocks(al);
 
 	error = gfs2_trans_begin(sdp, rblocks,
 				 PAGE_CACHE_SIZE/sdp->sd_sb.sb_bsize);
@@ -690,19 +689,20 @@ static int gfs2_write_begin(struct file *file, struct address_space *mapping,
 	}
 
 prepare_write:
-	error = __block_write_begin(page, from, len, gfs2_block_map);
+	error = block_prepare_write(page, from, to, gfs2_block_map);
 out:
 	if (error == 0)
 		return 0;
 
-	unlock_page(page);
 	page_cache_release(page);
 
-	gfs2_trans_end(sdp);
+	/*
+	 * XXX(truncate): the call below should probably be replaced with
+	 * a call to the gfs2-specific truncate blocks helper to actually
+	 * release disk blocks..
+	 */
 	if (pos + len > ip->i_inode.i_size)
-		gfs2_trim_blocks(&ip->i_inode);
-	goto out_trans_fail;
-
+		truncate_setsize(&ip->i_inode, ip->i_inode.i_size);
 out_endtrans:
 	gfs2_trans_end(sdp);
 out_trans_fail:
@@ -802,8 +802,10 @@ static int gfs2_stuffed_write_end(struct inode *inode, struct buffer_head *dibh,
 	page_cache_release(page);
 
 	if (copied) {
-		if (inode->i_size < to)
+		if (inode->i_size < to) {
 			i_size_write(inode, to);
+			ip->i_disksize = inode->i_size;
+		}
 		gfs2_dinode_out(ip, di);
 		mark_inode_dirty(inode);
 	}
@@ -874,6 +876,8 @@ static int gfs2_write_end(struct file *file, struct address_space *mapping,
 
 	ret = generic_write_end(file, mapping, pos, len, copied, page, fsdata);
 	if (ret > 0) {
+		if (inode->i_size > ip->i_disksize)
+			ip->i_disksize = inode->i_size;
 		gfs2_dinode_out(ip, dibh->b_data);
 		mark_inode_dirty(inode);
 	}
@@ -884,8 +888,8 @@ static int gfs2_write_end(struct file *file, struct address_space *mapping,
 	}
 
 	brelse(dibh);
-failed:
 	gfs2_trans_end(sdp);
+failed:
 	if (al) {
 		gfs2_inplace_release(ip);
 		gfs2_quota_unlock(ip);
@@ -1117,6 +1121,7 @@ static const struct address_space_operations gfs2_writeback_aops = {
 	.writepages = gfs2_writeback_writepages,
 	.readpage = gfs2_readpage,
 	.readpages = gfs2_readpages,
+	.sync_page = block_sync_page,
 	.write_begin = gfs2_write_begin,
 	.write_end = gfs2_write_end,
 	.bmap = gfs2_bmap,
@@ -1132,6 +1137,7 @@ static const struct address_space_operations gfs2_ordered_aops = {
 	.writepage = gfs2_ordered_writepage,
 	.readpage = gfs2_readpage,
 	.readpages = gfs2_readpages,
+	.sync_page = block_sync_page,
 	.write_begin = gfs2_write_begin,
 	.write_end = gfs2_write_end,
 	.set_page_dirty = gfs2_set_page_dirty,
@@ -1149,6 +1155,7 @@ static const struct address_space_operations gfs2_jdata_aops = {
 	.writepages = gfs2_jdata_writepages,
 	.readpage = gfs2_readpage,
 	.readpages = gfs2_readpages,
+	.sync_page = block_sync_page,
 	.write_begin = gfs2_write_begin,
 	.write_end = gfs2_write_end,
 	.set_page_dirty = gfs2_set_page_dirty,

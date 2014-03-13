@@ -35,6 +35,7 @@ static struct clocksource ns9360_clocksource = {
 	.rating	= 300,
 	.read	= ns9360_clocksource_read,
 	.mask	= CLOCKSOURCE_MASK(32),
+	.shift	= 20,
 	.flags	= CLOCK_SOURCE_IS_CONTINUOUS,
 };
 
@@ -147,7 +148,10 @@ static void __init ns9360_timer_init(void)
 
 	__raw_writel(tc, SYS_TC(TIMER_CLOCKSOURCE));
 
-	clocksource_register_hz(&ns9360_clocksource, ns9360_cpuclock());
+	ns9360_clocksource.mult = clocksource_hz2mult(ns9360_cpuclock(),
+			ns9360_clocksource.shift);
+
+	clocksource_register(&ns9360_clocksource);
 
 	latch = SH_DIV(ns9360_cpuclock(), HZ, 0);
 

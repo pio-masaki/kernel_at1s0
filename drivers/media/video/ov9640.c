@@ -31,8 +31,6 @@
 
 #include "ov9640.h"
 
-#define to_ov9640_sensor(sd)	container_of(sd, struct ov9640_priv, subdev)
-
 /* default register setup */
 static const struct ov9640_reg ov9640_regs_dflt[] = {
 	{ OV9640_COM5,	OV9640_COM5_SYSCLK | OV9640_COM5_LONGEXP },
@@ -273,7 +271,7 @@ static int ov9640_reset(struct i2c_client *client)
 	ret = ov9640_reg_write(client, OV9640_COM7, OV9640_COM7_SCCB_RESET);
 	if (ret)
 		dev_err(&client->dev,
-			"An error occurred while entering soft reset!\n");
+			"An error occured while entering soft reset!\n");
 
 	return ret;
 }
@@ -310,7 +308,9 @@ static unsigned long ov9640_query_bus_param(struct soc_camera_device *icd)
 /* Get status of additional camera capabilities */
 static int ov9640_g_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 {
-	struct ov9640_priv *priv = to_ov9640_sensor(sd);
+	struct i2c_client *client = sd->priv;
+	struct ov9640_priv *priv = container_of(i2c_get_clientdata(client),
+					struct ov9640_priv, subdev);
 
 	switch (ctrl->id) {
 	case V4L2_CID_VFLIP:
@@ -326,8 +326,9 @@ static int ov9640_g_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 /* Set status of additional camera capabilities */
 static int ov9640_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 {
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct ov9640_priv *priv = to_ov9640_sensor(sd);
+	struct i2c_client *client = sd->priv;
+	struct ov9640_priv *priv = container_of(i2c_get_clientdata(client),
+					struct ov9640_priv, subdev);
 
 	int ret = 0;
 
@@ -359,7 +360,9 @@ static int ov9640_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 static int ov9640_g_chip_ident(struct v4l2_subdev *sd,
 				struct v4l2_dbg_chip_ident *id)
 {
-	struct ov9640_priv *priv = to_ov9640_sensor(sd);
+	struct i2c_client *client = sd->priv;
+	struct ov9640_priv *priv = container_of(i2c_get_clientdata(client),
+					struct ov9640_priv, subdev);
 
 	id->ident	= priv->model;
 	id->revision	= priv->revision;
@@ -371,7 +374,7 @@ static int ov9640_g_chip_ident(struct v4l2_subdev *sd,
 static int ov9640_get_register(struct v4l2_subdev *sd,
 				struct v4l2_dbg_register *reg)
 {
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct i2c_client *client = sd->priv;
 	int ret;
 	u8 val;
 
@@ -392,7 +395,7 @@ static int ov9640_get_register(struct v4l2_subdev *sd,
 static int ov9640_set_register(struct v4l2_subdev *sd,
 				struct v4l2_dbg_register *reg)
 {
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct i2c_client *client = sd->priv;
 
 	if (reg->reg & ~0xff || reg->val & ~0xff)
 		return -EINVAL;
@@ -555,7 +558,7 @@ static int ov9640_prog_dflt(struct i2c_client *client)
 static int ov9640_s_fmt(struct v4l2_subdev *sd,
 			struct v4l2_mbus_framefmt *mf)
 {
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct i2c_client *client = sd->priv;
 	struct ov9640_reg_alt alts = {0};
 	enum v4l2_colorspace cspace;
 	enum v4l2_mbus_pixelcode code = mf->code;
@@ -651,8 +654,7 @@ static int ov9640_cropcap(struct v4l2_subdev *sd, struct v4l2_cropcap *a)
 static int ov9640_video_probe(struct soc_camera_device *icd,
 				struct i2c_client *client)
 {
-	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct ov9640_priv *priv = to_ov9640_sensor(sd);
+	struct ov9640_priv *priv = i2c_get_clientdata(client);
 	u8		pid, ver, midh, midl;
 	const char	*devname;
 	int		ret = 0;
@@ -789,8 +791,7 @@ static int ov9640_probe(struct i2c_client *client,
 
 static int ov9640_remove(struct i2c_client *client)
 {
-	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct ov9640_priv *priv = to_ov9640_sensor(sd);
+	struct ov9640_priv *priv = i2c_get_clientdata(client);
 
 	kfree(priv);
 	return 0;

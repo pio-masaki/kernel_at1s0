@@ -32,8 +32,7 @@
 	Revision History:
 	Who			When			What
 	--------	----------		----------------------------------------------
-	John			2004-9-3		porting from RT2500
-	Justin P. Mattock	11/07/2010		Fix typos
+	John		2004-9-3		porting from RT2500
 */
 #include "../rt_config.h"
 
@@ -456,10 +455,10 @@ BOOLEAN AUTH_ReqSend(struct rt_rtmp_adapter *pAd,
 	u8 *pOutBuffer = NULL;
 	unsigned long FrameLen = 0, tmp = 0;
 
-	/* Block all authentication request during WPA block period */
+	/* Block all authentication request durning WPA block period */
 	if (pAd->StaCfg.bBlockAssoc == TRUE) {
 		DBGPRINT(RT_DEBUG_TRACE,
-			 ("%s - Block Auth request during WPA block period!\n",
+			 ("%s - Block Auth request durning WPA block period!\n",
 			  pSMName));
 		pAd->Mlme.AuthMachine.CurrState = AUTH_REQ_IDLE;
 		Status = MLME_STATE_MACHINE_REJECT;
@@ -509,7 +508,8 @@ BOOLEAN AUTH_ReqSend(struct rt_rtmp_adapter *pAd,
 		RTMPSetTimer(pAuthTimer, Timeout);
 		return TRUE;
 	} else {
-		DBGPRINT_ERR("%s - MlmeAuthReqAction() sanity check failed\n", pSMName);
+		DBGPRINT_ERR(("%s - MlmeAuthReqAction() sanity check failed\n",
+			      pSMName));
 		return FALSE;
 	}
 

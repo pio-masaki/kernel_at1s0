@@ -109,11 +109,10 @@
 #include <linux/spinlock.h>
 #include <linux/io.h>
 #include <linux/uaccess.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 
 #include <asm/system.h>
 
-static DEFINE_MUTEX(nvram_mutex);
 static DEFINE_SPINLOCK(nvram_state_lock);
 static int nvram_open_cnt;	/* #times opened */
 static int nvram_open_mode;	/* special open modes */
@@ -309,7 +308,7 @@ static long nvram_ioctl(struct file *file, unsigned int cmd,
 		if (!capable(CAP_SYS_ADMIN))
 			return -EACCES;
 
-		mutex_lock(&nvram_mutex);
+		lock_kernel();
 		spin_lock_irq(&rtc_lock);
 
 		for (i = 0; i < NVRAM_BYTES; ++i)
@@ -317,7 +316,7 @@ static long nvram_ioctl(struct file *file, unsigned int cmd,
 		__nvram_set_checksum();
 
 		spin_unlock_irq(&rtc_lock);
-		mutex_unlock(&nvram_mutex);
+		unlock_kernel();
 		return 0;
 
 	case NVRAM_SETCKS:
@@ -326,11 +325,11 @@ static long nvram_ioctl(struct file *file, unsigned int cmd,
 		if (!capable(CAP_SYS_ADMIN))
 			return -EACCES;
 
-		mutex_lock(&nvram_mutex);
+		lock_kernel();
 		spin_lock_irq(&rtc_lock);
 		__nvram_set_checksum();
 		spin_unlock_irq(&rtc_lock);
-		mutex_unlock(&nvram_mutex);
+		unlock_kernel();
 		return 0;
 
 	default:

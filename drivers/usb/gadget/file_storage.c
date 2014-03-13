@@ -89,7 +89,6 @@
  *				Required if "removable" is not set, names of
  *					the files or block devices used for
  *					backing storage
- *	serial=HHHH...		Required serial number (string of hex chars)
  *	ro=b[,b...]		Default false, booleans for read-only access
  *	removable		Default false, boolean for removable media
  *	luns=N			Default N = number of filenames, number of
@@ -109,11 +108,12 @@
  *	vendor=0xVVVV		Default 0x0525 (NetChip), USB Vendor ID
  *	product=0xPPPP		Default 0xa4a5 (FSG), USB Product ID
  *	release=0xRRRR		Override the USB release number (bcdDevice)
+ *	serial=HHHH...		Override serial number (string of hex chars)
  *	buflen=N		Default N=16384, buffer size used (will be
  *					rounded down to a multiple of
  *					PAGE_CACHE_SIZE)
  *
- * If CONFIG_USB_FILE_STORAGE_TEST is not set, only the "file", "serial", "ro",
+ * If CONFIG_USB_FILE_STORAGE_TEST is not set, only the "file", "ro",
  * "removable", "luns", "nofua", "stall", and "cdrom" options are available;
  * default values are used for everything else.
  *
@@ -273,10 +273,13 @@
 
 #define DRIVER_DESC		"File-backed Storage Gadget"
 #define DRIVER_NAME		"g_file_storage"
-#define DRIVER_VERSION		"1 September 2010"
+/* DRIVER_VERSION must be at least 6 characters long, as it is used
+ * to generate a fallback serial number. */
+#define DRIVER_VERSION		"20 November 2008"
 
 static       char fsg_string_manufacturer[64];
 static const char fsg_string_product[] = DRIVER_DESC;
+static       char fsg_string_serial[13];
 static const char fsg_string_config[] = "Self-powered";
 static const char fsg_string_interface[] = "Mass Storage";
 
@@ -302,7 +305,6 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 static struct {
 	char		*file[FSG_MAX_LUNS];
-	char		*serial;
 	int		ro[FSG_MAX_LUNS];
 	int		nofua[FSG_MAX_LUNS];
 	unsigned int	num_filenames;
@@ -319,6 +321,7 @@ static struct {
 	unsigned short	vendor;
 	unsigned short	product;
 	unsigned short	release;
+	char		*serial;
 	unsigned int	buflen;
 
 	int		transport_type;
@@ -343,9 +346,6 @@ module_param_array_named(file, mod_data.file, charp, &mod_data.num_filenames,
 		S_IRUGO);
 MODULE_PARM_DESC(file, "names of backing files or devices");
 
-module_param_named(serial, mod_data.serial, charp, S_IRUGO);
-MODULE_PARM_DESC(serial, "USB serial number");
-
 module_param_array_named(ro, mod_data.ro, bool, &mod_data.num_ros, S_IRUGO);
 MODULE_PARM_DESC(ro, "true to force read-only");
 
@@ -364,6 +364,9 @@ MODULE_PARM_DESC(stall, "false to prevent bulk stalls");
 
 module_param_named(cdrom, mod_data.cdrom, bool, S_IRUGO);
 MODULE_PARM_DESC(cdrom, "true to emulate cdrom instead of disk");
+
+module_param_named(serial, mod_data.serial, charp, S_IRUGO);
+MODULE_PARM_DESC(serial, "USB serial number");
 
 /* In the non-TEST version, only the module parameters listed above
  * are available. */
@@ -783,7 +786,7 @@ static void received_cbi_adsc(struct fsg_dev *fsg, struct fsg_buffhd *bh)
 {
 	struct usb_request	*req = fsg->ep0req;
 	static u8		cbi_reset_cmnd[6] = {
-			SEND_DIAGNOSTIC, 4, 0xff, 0xff, 0xff, 0xff};
+			SC_SEND_DIAGNOSTIC, 4, 0xff, 0xff, 0xff, 0xff};
 
 	/* Error in command transfer? */
 	if (req->status || req->length != req->actual ||
@@ -1135,7 +1138,7 @@ static int do_read(struct fsg_dev *fsg)
 
 	/* Get the starting Logical Block Address and check that it's
 	 * not too big */
-	if (fsg->cmnd[0] == READ_6)
+	if (fsg->cmnd[0] == SC_READ_6)
 		lba = get_unaligned_be24(&fsg->cmnd[1]);
 	else {
 		lba = get_unaligned_be32(&fsg->cmnd[2]);
@@ -1270,7 +1273,7 @@ static int do_write(struct fsg_dev *fsg)
 
 	/* Get the starting Logical Block Address and check that it's
 	 * not too big */
-	if (fsg->cmnd[0] == WRITE_6)
+	if (fsg->cmnd[0] == SC_WRITE_6)
 		lba = get_unaligned_be24(&fsg->cmnd[1]);
 	else {
 		lba = get_unaligned_be32(&fsg->cmnd[2]);
@@ -1578,7 +1581,7 @@ static int do_inquiry(struct fsg_dev *fsg, struct fsg_buffhd *bh)
 	}
 
 	memset(buf, 0, 8);
-	buf[0] = (mod_data.cdrom ? TYPE_ROM : TYPE_DISK);
+	buf[0] = (mod_data.cdrom ? TYPE_CDROM : TYPE_DISK);
 	if (mod_data.removable)
 		buf[1] = 0x80;
 	buf[2] = 2;		// ANSI SCSI level 2
@@ -1747,11 +1750,11 @@ static int do_mode_sense(struct fsg_dev *fsg, struct fsg_buffhd *bh)
 	 * The only variable value is the WriteProtect bit.  We will fill in
 	 * the mode data length later. */
 	memset(buf, 0, 8);
-	if (mscmnd == MODE_SENSE) {
+	if (mscmnd == SC_MODE_SENSE_6) {
 		buf[2] = (curlun->ro ? 0x80 : 0x00);		// WP, DPOFUA
 		buf += 4;
 		limit = 255;
-	} else {			// MODE_SENSE_10
+	} else {			// SC_MODE_SENSE_10
 		buf[3] = (curlun->ro ? 0x80 : 0x00);		// WP, DPOFUA
 		buf += 8;
 		limit = 65535;		// Should really be mod_data.buflen
@@ -1791,7 +1794,7 @@ static int do_mode_sense(struct fsg_dev *fsg, struct fsg_buffhd *bh)
 	}
 
 	/*  Store the mode data length */
-	if (mscmnd == MODE_SENSE)
+	if (mscmnd == SC_MODE_SENSE_6)
 		buf0[0] = len - 1;
 	else
 		put_unaligned_be16(len - 2, buf0);
@@ -2316,7 +2319,7 @@ static int check_command(struct fsg_dev *fsg, int cmnd_size,
 	/* Check the LUN */
 	if (fsg->lun >= 0 && fsg->lun < fsg->nluns) {
 		fsg->curlun = curlun = &fsg->luns[fsg->lun];
-		if (fsg->cmnd[0] != REQUEST_SENSE) {
+		if (fsg->cmnd[0] != SC_REQUEST_SENSE) {
 			curlun->sense_data = SS_NO_SENSE;
 			curlun->sense_data_info = 0;
 			curlun->info_valid = 0;
@@ -2327,8 +2330,8 @@ static int check_command(struct fsg_dev *fsg, int cmnd_size,
 
 		/* INQUIRY and REQUEST SENSE commands are explicitly allowed
 		 * to use unsupported LUNs; all others may not. */
-		if (fsg->cmnd[0] != INQUIRY &&
-				fsg->cmnd[0] != REQUEST_SENSE) {
+		if (fsg->cmnd[0] != SC_INQUIRY &&
+				fsg->cmnd[0] != SC_REQUEST_SENSE) {
 			DBG(fsg, "unsupported LUN %d\n", fsg->lun);
 			return -EINVAL;
 		}
@@ -2337,8 +2340,8 @@ static int check_command(struct fsg_dev *fsg, int cmnd_size,
 	/* If a unit attention condition exists, only INQUIRY and
 	 * REQUEST SENSE commands are allowed; anything else must fail. */
 	if (curlun && curlun->unit_attention_data != SS_NO_SENSE &&
-			fsg->cmnd[0] != INQUIRY &&
-			fsg->cmnd[0] != REQUEST_SENSE) {
+			fsg->cmnd[0] != SC_INQUIRY &&
+			fsg->cmnd[0] != SC_REQUEST_SENSE) {
 		curlun->sense_data = curlun->unit_attention_data;
 		curlun->unit_attention_data = SS_NO_SENSE;
 		return -EINVAL;
@@ -2388,7 +2391,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 	down_read(&fsg->filesem);	// We're using the backing file
 	switch (fsg->cmnd[0]) {
 
-	case INQUIRY:
+	case SC_INQUIRY:
 		fsg->data_size_from_cmnd = fsg->cmnd[4];
 		if ((reply = check_command(fsg, 6, DATA_DIR_TO_HOST,
 				(1<<4), 0,
@@ -2396,7 +2399,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_inquiry(fsg, bh);
 		break;
 
-	case MODE_SELECT:
+	case SC_MODE_SELECT_6:
 		fsg->data_size_from_cmnd = fsg->cmnd[4];
 		if ((reply = check_command(fsg, 6, DATA_DIR_FROM_HOST,
 				(1<<1) | (1<<4), 0,
@@ -2404,7 +2407,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_mode_select(fsg, bh);
 		break;
 
-	case MODE_SELECT_10:
+	case SC_MODE_SELECT_10:
 		fsg->data_size_from_cmnd = get_unaligned_be16(&fsg->cmnd[7]);
 		if ((reply = check_command(fsg, 10, DATA_DIR_FROM_HOST,
 				(1<<1) | (3<<7), 0,
@@ -2412,7 +2415,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_mode_select(fsg, bh);
 		break;
 
-	case MODE_SENSE:
+	case SC_MODE_SENSE_6:
 		fsg->data_size_from_cmnd = fsg->cmnd[4];
 		if ((reply = check_command(fsg, 6, DATA_DIR_TO_HOST,
 				(1<<1) | (1<<2) | (1<<4), 0,
@@ -2420,7 +2423,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_mode_sense(fsg, bh);
 		break;
 
-	case MODE_SENSE_10:
+	case SC_MODE_SENSE_10:
 		fsg->data_size_from_cmnd = get_unaligned_be16(&fsg->cmnd[7]);
 		if ((reply = check_command(fsg, 10, DATA_DIR_TO_HOST,
 				(1<<1) | (1<<2) | (3<<7), 0,
@@ -2428,7 +2431,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_mode_sense(fsg, bh);
 		break;
 
-	case ALLOW_MEDIUM_REMOVAL:
+	case SC_PREVENT_ALLOW_MEDIUM_REMOVAL:
 		fsg->data_size_from_cmnd = 0;
 		if ((reply = check_command(fsg, 6, DATA_DIR_NONE,
 				(1<<4), 0,
@@ -2436,7 +2439,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_prevent_allow(fsg);
 		break;
 
-	case READ_6:
+	case SC_READ_6:
 		i = fsg->cmnd[4];
 		fsg->data_size_from_cmnd = (i == 0 ? 256 : i) << 9;
 		if ((reply = check_command(fsg, 6, DATA_DIR_TO_HOST,
@@ -2445,7 +2448,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_read(fsg);
 		break;
 
-	case READ_10:
+	case SC_READ_10:
 		fsg->data_size_from_cmnd =
 				get_unaligned_be16(&fsg->cmnd[7]) << 9;
 		if ((reply = check_command(fsg, 10, DATA_DIR_TO_HOST,
@@ -2454,7 +2457,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_read(fsg);
 		break;
 
-	case READ_12:
+	case SC_READ_12:
 		fsg->data_size_from_cmnd =
 				get_unaligned_be32(&fsg->cmnd[6]) << 9;
 		if ((reply = check_command(fsg, 12, DATA_DIR_TO_HOST,
@@ -2463,7 +2466,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_read(fsg);
 		break;
 
-	case READ_CAPACITY:
+	case SC_READ_CAPACITY:
 		fsg->data_size_from_cmnd = 8;
 		if ((reply = check_command(fsg, 10, DATA_DIR_TO_HOST,
 				(0xf<<2) | (1<<8), 1,
@@ -2471,7 +2474,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_read_capacity(fsg, bh);
 		break;
 
-	case READ_HEADER:
+	case SC_READ_HEADER:
 		if (!mod_data.cdrom)
 			goto unknown_cmnd;
 		fsg->data_size_from_cmnd = get_unaligned_be16(&fsg->cmnd[7]);
@@ -2481,7 +2484,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_read_header(fsg, bh);
 		break;
 
-	case READ_TOC:
+	case SC_READ_TOC:
 		if (!mod_data.cdrom)
 			goto unknown_cmnd;
 		fsg->data_size_from_cmnd = get_unaligned_be16(&fsg->cmnd[7]);
@@ -2491,7 +2494,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_read_toc(fsg, bh);
 		break;
 
-	case READ_FORMAT_CAPACITIES:
+	case SC_READ_FORMAT_CAPACITIES:
 		fsg->data_size_from_cmnd = get_unaligned_be16(&fsg->cmnd[7]);
 		if ((reply = check_command(fsg, 10, DATA_DIR_TO_HOST,
 				(3<<7), 1,
@@ -2499,7 +2502,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_read_format_capacities(fsg, bh);
 		break;
 
-	case REQUEST_SENSE:
+	case SC_REQUEST_SENSE:
 		fsg->data_size_from_cmnd = fsg->cmnd[4];
 		if ((reply = check_command(fsg, 6, DATA_DIR_TO_HOST,
 				(1<<4), 0,
@@ -2507,7 +2510,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_request_sense(fsg, bh);
 		break;
 
-	case START_STOP:
+	case SC_START_STOP_UNIT:
 		fsg->data_size_from_cmnd = 0;
 		if ((reply = check_command(fsg, 6, DATA_DIR_NONE,
 				(1<<1) | (1<<4), 0,
@@ -2515,7 +2518,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_start_stop(fsg);
 		break;
 
-	case SYNCHRONIZE_CACHE:
+	case SC_SYNCHRONIZE_CACHE:
 		fsg->data_size_from_cmnd = 0;
 		if ((reply = check_command(fsg, 10, DATA_DIR_NONE,
 				(0xf<<2) | (3<<7), 1,
@@ -2523,7 +2526,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_synchronize_cache(fsg);
 		break;
 
-	case TEST_UNIT_READY:
+	case SC_TEST_UNIT_READY:
 		fsg->data_size_from_cmnd = 0;
 		reply = check_command(fsg, 6, DATA_DIR_NONE,
 				0, 1,
@@ -2532,7 +2535,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 
 	/* Although optional, this command is used by MS-Windows.  We
 	 * support a minimal version: BytChk must be 0. */
-	case VERIFY:
+	case SC_VERIFY:
 		fsg->data_size_from_cmnd = 0;
 		if ((reply = check_command(fsg, 10, DATA_DIR_NONE,
 				(1<<1) | (0xf<<2) | (3<<7), 1,
@@ -2540,7 +2543,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_verify(fsg);
 		break;
 
-	case WRITE_6:
+	case SC_WRITE_6:
 		i = fsg->cmnd[4];
 		fsg->data_size_from_cmnd = (i == 0 ? 256 : i) << 9;
 		if ((reply = check_command(fsg, 6, DATA_DIR_FROM_HOST,
@@ -2549,7 +2552,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_write(fsg);
 		break;
 
-	case WRITE_10:
+	case SC_WRITE_10:
 		fsg->data_size_from_cmnd =
 				get_unaligned_be16(&fsg->cmnd[7]) << 9;
 		if ((reply = check_command(fsg, 10, DATA_DIR_FROM_HOST,
@@ -2558,7 +2561,7 @@ static int do_scsi_command(struct fsg_dev *fsg)
 			reply = do_write(fsg);
 		break;
 
-	case WRITE_12:
+	case SC_WRITE_12:
 		fsg->data_size_from_cmnd =
 				get_unaligned_be32(&fsg->cmnd[6]) << 9;
 		if ((reply = check_command(fsg, 12, DATA_DIR_FROM_HOST,
@@ -2571,10 +2574,10 @@ static int do_scsi_command(struct fsg_dev *fsg)
 	 * They don't mean much in this setting.  It's left as an exercise
 	 * for anyone interested to implement RESERVE and RELEASE in terms
 	 * of Posix locks. */
-	case FORMAT_UNIT:
-	case RELEASE:
-	case RESERVE:
-	case SEND_DIAGNOSTIC:
+	case SC_FORMAT_UNIT:
+	case SC_RELEASE:
+	case SC_RESERVE:
+	case SC_SEND_DIAGNOSTIC:
 		// Fall through
 
 	default:
@@ -3175,7 +3178,6 @@ static void /* __init_or_exit */ fsg_unbind(struct usb_gadget *gadget)
 	for (i = 0; i < fsg->nluns; ++i) {
 		curlun = &fsg->luns[i];
 		if (curlun->registered) {
-			device_remove_file(&curlun->dev, &dev_attr_nofua);
 			device_remove_file(&curlun->dev, &dev_attr_ro);
 			device_remove_file(&curlun->dev, &dev_attr_file);
 			fsg_lun_close(curlun);
@@ -3211,6 +3213,7 @@ static int __init check_parameters(struct fsg_dev *fsg)
 {
 	int	prot;
 	int	gcnum;
+	int	i;
 
 	/* Store the default values */
 	mod_data.transport_type = USB_PR_BULK;
@@ -3306,29 +3309,45 @@ static int __init check_parameters(struct fsg_dev *fsg)
 			if ((*ch < '0' || *ch > '9') &&
 			    (*ch < 'A' || *ch > 'F')) { /* not uppercase hex */
 				WARNING(fsg,
-					"Invalid serial string character: %c\n",
+					"Invalid serial string character: %c; "
+					"Failing back to default\n",
 					*ch);
-				goto no_serial;
+				goto fill_serial;
 			}
 		}
 		if (len > 126 ||
 		    (mod_data.transport_type == USB_PR_BULK && len < 12) ||
 		    (mod_data.transport_type != USB_PR_BULK && len > 12)) {
-			WARNING(fsg, "Invalid serial string length!\n");
-			goto no_serial;
+			WARNING(fsg,
+				"Invalid serial string length; "
+				"Failing back to default\n");
+			goto fill_serial;
 		}
 		fsg_strings[FSG_STRING_SERIAL - 1].s = mod_data.serial;
 	} else {
-		WARNING(fsg, "No serial-number string provided!\n");
- no_serial:
-		device_desc.iSerialNumber = 0;
+		WARNING(fsg,
+			"Userspace failed to provide serial number; "
+			"Failing back to default\n");
+fill_serial:
+		/* Serial number not specified or invalid, make our own.
+		 * We just encode it from the driver version string,
+		 * 12 characters to comply with both CB[I] and BBB spec.
+		 * Warning : Two devices running the same kernel will have
+		 * the same fallback serial number. */
+		for (i = 0; i < 12; i += 2) {
+			unsigned char	c = DRIVER_VERSION[i / 2];
+
+			if (!c)
+				break;
+			sprintf(&fsg_string_serial[i], "%02X", c);
+		}
 	}
 
 	return 0;
 }
 
 
-static int __init fsg_bind(struct usb_gadget *gadget)
+static int __ref fsg_bind(struct usb_gadget *gadget)
 {
 	struct fsg_dev		*fsg = the_fsg;
 	int			rc;
@@ -3392,28 +3411,25 @@ static int __init fsg_bind(struct usb_gadget *gadget)
 		dev_set_name(&curlun->dev,"%s-lun%d",
 			     dev_name(&gadget->dev), i);
 
-		kref_get(&fsg->ref);
-		rc = device_register(&curlun->dev);
-		if (rc) {
+		if ((rc = device_register(&curlun->dev)) != 0) {
 			INFO(fsg, "failed to register LUN%d: %d\n", i, rc);
-			put_device(&curlun->dev);
+			goto out;
+		}
+		if ((rc = device_create_file(&curlun->dev,
+					&dev_attr_ro)) != 0 ||
+				(rc = device_create_file(&curlun->dev,
+					&dev_attr_nofua)) != 0 ||
+				(rc = device_create_file(&curlun->dev,
+					&dev_attr_file)) != 0) {
+			device_unregister(&curlun->dev);
 			goto out;
 		}
 		curlun->registered = 1;
-
-		rc = device_create_file(&curlun->dev, &dev_attr_ro);
-		if (rc)
-			goto out;
-		rc = device_create_file(&curlun->dev, &dev_attr_nofua);
-		if (rc)
-			goto out;
-		rc = device_create_file(&curlun->dev, &dev_attr_file);
-		if (rc)
-			goto out;
+		kref_get(&fsg->ref);
 
 		if (mod_data.file[i] && *mod_data.file[i]) {
-			rc = fsg_lun_open(curlun, mod_data.file[i]);
-			if (rc)
+			if ((rc = fsg_lun_open(curlun,
+					mod_data.file[i])) != 0)
 				goto out;
 		} else if (!mod_data.removable) {
 			ERROR(fsg, "no file given for LUN%d\n", i);
@@ -3591,6 +3607,7 @@ static struct usb_gadget_driver		fsg_driver = {
 	.speed		= USB_SPEED_FULL,
 #endif
 	.function	= (char *) fsg_string_product,
+	.bind		= fsg_bind,
 	.unbind		= fsg_unbind,
 	.disconnect	= fsg_disconnect,
 	.setup		= fsg_setup,
@@ -3632,7 +3649,7 @@ static int __init fsg_init(void)
 	if ((rc = fsg_alloc()) != 0)
 		return rc;
 	fsg = the_fsg;
-	if ((rc = usb_gadget_probe_driver(&fsg_driver, fsg_bind)) != 0)
+	if ((rc = usb_gadget_register_driver(&fsg_driver)) != 0)
 		kref_put(&fsg->ref, fsg_release);
 	return rc;
 }

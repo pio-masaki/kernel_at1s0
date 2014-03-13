@@ -468,7 +468,7 @@ static void reg_r(struct gspca_dev *gspca_dev,
 			value, 0, gspca_dev->usb_buf, len,
 			500);
 	if (ret < 0) {
-		err("reg_r %04x failed %d", value, ret);
+		PDEBUG(D_ERR, "reg_r %04x failed %d", value, ret);
 		gspca_dev->usb_err = ret;
 	}
 }
@@ -488,7 +488,7 @@ static void reg_w(struct gspca_dev *gspca_dev, u16 value, u16 index)
 			500);
 	msleep(30);
 	if (ret < 0) {
-		err("reg_w %04x %04x failed %d", value, index, ret);
+		PDEBUG(D_ERR, "reg_w %04x %04x failed %d", value, index, ret);
 		gspca_dev->usb_err = ret;
 	}
 }
@@ -511,7 +511,7 @@ static void reg_wb(struct gspca_dev *gspca_dev, u16 value, u16 index,
 			1000);
 	msleep(30);
 	if (ret < 0) {
-		err("reg_wb %04x %04x failed %d", value, index, ret);
+		PDEBUG(D_ERR, "reg_wb %04x %04x failed %d", value, index, ret);
 		gspca_dev->usb_err = ret;
 	}
 }
@@ -556,7 +556,7 @@ static void i2c_write(struct sd *sd,
 			gspca_dev->usb_buf, buf - gspca_dev->usb_buf,
 			500);
 	if (ret < 0) {
-		err("i2c_write failed %d", ret);
+		PDEBUG(D_ERR, "i2c_write failed %d", ret);
 		gspca_dev->usb_err = ret;
 	}
 }
@@ -612,7 +612,7 @@ static void ucbus_write(struct gspca_dev *gspca_dev,
 				gspca_dev->usb_buf, buf - gspca_dev->usb_buf,
 				500);
 		if (ret < 0) {
-			err("ucbus_write failed %d", ret);
+			PDEBUG(D_ERR, "ucbus_write failed %d", ret);
 			gspca_dev->usb_err = ret;
 			return;
 		}
@@ -687,19 +687,10 @@ static void cmos_probe(struct gspca_dev *gspca_dev)
 		if (gspca_dev->usb_buf[0] != 0)
 			break;
 	}
-	if (i >= ARRAY_SIZE(probe_order)) {
-		err("Unknown sensor");
-		gspca_dev->usb_err = -EINVAL;
-		return;
-	}
-	sd->sensor = probe_order[i];
-	switch (sd->sensor) {
-	case SENSOR_OV7660:
-	case SENSOR_OV9630:
-		err("Sensor %s not yet treated", sensor_tb[sd->sensor].name);
-		gspca_dev->usb_err = -EINVAL;
-		break;
-	}
+	if (i >= ARRAY_SIZE(probe_order))
+		PDEBUG(D_PROBE, "Unknown sensor");
+	else
+		sd->sensor = probe_order[i];
 }
 
 static void mt9v111_init(struct gspca_dev *gspca_dev)
@@ -876,9 +867,6 @@ static int sd_init(struct gspca_dev *gspca_dev)
  */
 
 	reg_r(gspca_dev, SQ930_CTRL_GET_DEV_INFO, 8);
-	if (gspca_dev->usb_err < 0)
-		return gspca_dev->usb_err;
-
 /* it returns:
  * 03 00 12 93 0b f6 c9 00	live! ultra
  * 03 00 07 93 0b f6 ca 00	live! ultra for notebook
@@ -912,15 +900,15 @@ static int sd_init(struct gspca_dev *gspca_dev)
 	if (sd->sensor == SENSOR_MI0360) {
 
 		/* no sensor probe for icam tracer */
-		if (gspca_dev->usb_buf[5] == 0xf6)	/* if ccd */
+		if (gspca_dev->usb_buf[5] == 0xf6)	/* if CMOS */
 			sd->sensor = SENSOR_ICX098BQ;
 		else
 			cmos_probe(gspca_dev);
 	}
-	if (gspca_dev->usb_err >= 0) {
-		PDEBUG(D_PROBE, "Sensor %s", sensor_tb[sd->sensor].name);
-		global_init(sd, 1);
-	}
+
+	PDEBUG(D_PROBE, "Sensor %s", sensor_tb[sd->sensor].name);
+
+	global_init(sd, 1);
 	return gspca_dev->usb_err;
 }
 
@@ -1091,7 +1079,7 @@ static void sd_dq_callback(struct gspca_dev *gspca_dev)
 	gspca_dev->cam.bulk_nurbs = 1;
 	ret = usb_submit_urb(gspca_dev->urb[0], GFP_ATOMIC);
 	if (ret < 0)
-		err("sd_dq_callback() err %d", ret);
+		PDEBUG(D_ERR|D_PACK, "sd_dq_callback() err %d", ret);
 
 	/* wait a little time, otherwise the webcam crashes */
 	msleep(100);
@@ -1163,7 +1151,7 @@ static const struct sd_desc sd_desc = {
 #define ST(sensor, type) \
 	.driver_info = (SENSOR_ ## sensor << 8) \
 			| (type)
-static const struct usb_device_id device_table[] = {
+static const __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x041e, 0x4038), ST(MI0360, 0)},
 	{USB_DEVICE(0x041e, 0x403c), ST(LZ24BP, 0)},
 	{USB_DEVICE(0x041e, 0x403d), ST(LZ24BP, 0)},
@@ -1197,11 +1185,18 @@ static struct usb_driver sd_driver = {
 /* -- module insert / remove -- */
 static int __init sd_mod_init(void)
 {
-	return usb_register(&sd_driver);
+	int ret;
+
+	ret = usb_register(&sd_driver);
+	if (ret < 0)
+		return ret;
+	info("registered");
+	return 0;
 }
 static void __exit sd_mod_exit(void)
 {
 	usb_deregister(&sd_driver);
+	info("deregistered");
 }
 
 module_init(sd_mod_init);

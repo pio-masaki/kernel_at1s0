@@ -295,55 +295,19 @@ retry:
 		DMWARN("remove_all left %d open device(s)", dev_skipped);
 }
 
-/*
- * Set the uuid of a hash_cell that isn't already set.
- */
-static void __set_cell_uuid(struct hash_cell *hc, char *new_uuid)
-{
-	mutex_lock(&dm_hash_cells_mutex);
-	hc->uuid = new_uuid;
-	mutex_unlock(&dm_hash_cells_mutex);
-
-	list_add(&hc->uuid_list, _uuid_buckets + hash_str(new_uuid));
-}
-
-/*
- * Changes the name of a hash_cell and returns the old name for
- * the caller to free.
- */
-static char *__change_cell_name(struct hash_cell *hc, char *new_name)
-{
-	char *old_name;
-
-	/*
-	 * Rename and move the name cell.
-	 */
-	list_del(&hc->name_list);
-	old_name = hc->name;
-
-	mutex_lock(&dm_hash_cells_mutex);
-	hc->name = new_name;
-	mutex_unlock(&dm_hash_cells_mutex);
-
-	list_add(&hc->name_list, _name_buckets + hash_str(new_name));
-
-	return old_name;
-}
-
 static struct mapped_device *dm_hash_rename(struct dm_ioctl *param,
 					    const char *new)
 {
-	char *new_data, *old_name = NULL;
+	char *new_name, *old_name;
 	struct hash_cell *hc;
 	struct dm_table *table;
 	struct mapped_device *md;
-	unsigned change_uuid = (param->flags & DM_UUID_FLAG) ? 1 : 0;
 
 	/*
 	 * duplicate new.
 	 */
-	new_data = kstrdup(new, GFP_KERNEL);
-	if (!new_data)
+	new_name = kstrdup(new, GFP_KERNEL);
+	if (!new_name)
 		return ERR_PTR(-ENOMEM);
 
 	down_write(&_hash_lock);
@@ -351,19 +315,13 @@ static struct mapped_device *dm_hash_rename(struct dm_ioctl *param,
 	/*
 	 * Is new free ?
 	 */
-	if (change_uuid)
-		hc = __get_uuid_cell(new);
-	else
-		hc = __get_name_cell(new);
-
+	hc = __get_name_cell(new);
 	if (hc) {
-		DMWARN("Unable to change %s on mapped device %s to one that "
-		       "already exists: %s",
-		       change_uuid ? "uuid" : "name",
+		DMWARN("asked to rename to an already-existing name %s -> %s",
 		       param->name, new);
 		dm_put(hc->md);
 		up_write(&_hash_lock);
-		kfree(new_data);
+		kfree(new_name);
 		return ERR_PTR(-EBUSY);
 	}
 
@@ -372,30 +330,22 @@ static struct mapped_device *dm_hash_rename(struct dm_ioctl *param,
 	 */
 	hc = __get_name_cell(param->name);
 	if (!hc) {
-		DMWARN("Unable to rename non-existent device, %s to %s%s",
-		       param->name, change_uuid ? "uuid " : "", new);
+		DMWARN("asked to rename a non-existent device %s -> %s",
+		       param->name, new);
 		up_write(&_hash_lock);
-		kfree(new_data);
+		kfree(new_name);
 		return ERR_PTR(-ENXIO);
 	}
 
 	/*
-	 * Does this device already have a uuid?
+	 * rename and move the name cell.
 	 */
-	if (change_uuid && hc->uuid) {
-		DMWARN("Unable to change uuid of mapped device %s to %s "
-		       "because uuid is already set to %s",
-		       param->name, new, hc->uuid);
-		dm_put(hc->md);
-		up_write(&_hash_lock);
-		kfree(new_data);
-		return ERR_PTR(-EINVAL);
-	}
-
-	if (change_uuid)
-		__set_cell_uuid(hc, new_data);
-	else
-		old_name = __change_cell_name(hc, new_data);
+	list_del(&hc->name_list);
+	old_name = hc->name;
+	mutex_lock(&dm_hash_cells_mutex);
+	hc->name = new_name;
+	mutex_unlock(&dm_hash_cells_mutex);
+	list_add(&hc->name_list, _name_buckets + hash_str(new_name));
 
 	/*
 	 * Wake up any dm event waiters.
@@ -779,7 +729,7 @@ static int dev_remove(struct dm_ioctl *param, size_t param_size)
 	hc = __find_device_hash_cell(param);
 
 	if (!hc) {
-		DMDEBUG_LIMIT("device doesn't appear to be in the dev hash table.");
+		DMWARN("device doesn't appear to be in the dev hash table.");
 		up_write(&_hash_lock);
 		return -ENXIO;
 	}
@@ -791,7 +741,7 @@ static int dev_remove(struct dm_ioctl *param, size_t param_size)
 	 */
 	r = dm_lock_for_deletion(md);
 	if (r) {
-		DMDEBUG_LIMIT("unable to remove open device %s", hc->name);
+		DMWARN("unable to remove open device %s", hc->name);
 		up_write(&_hash_lock);
 		dm_put(md);
 		return r;
@@ -824,24 +774,21 @@ static int invalid_str(char *str, void *end)
 static int dev_rename(struct dm_ioctl *param, size_t param_size)
 {
 	int r;
-	char *new_data = (char *) param + param->data_start;
+	char *new_name = (char *) param + param->data_start;
 	struct mapped_device *md;
-	unsigned change_uuid = (param->flags & DM_UUID_FLAG) ? 1 : 0;
 
-	if (new_data < param->data ||
-	    invalid_str(new_data, (void *) param + param_size) ||
-	    strlen(new_data) > (change_uuid ? DM_UUID_LEN - 1 : DM_NAME_LEN - 1)) {
-		DMWARN("Invalid new mapped device name or uuid string supplied.");
+	if (new_name < param->data ||
+	    invalid_str(new_name, (void *) param + param_size) ||
+	    strlen(new_name) > DM_NAME_LEN - 1) {
+		DMWARN("Invalid new logical volume name supplied.");
 		return -EINVAL;
 	}
 
-	if (!change_uuid) {
-		r = check_name(new_data);
-		if (r)
-			return r;
-	}
+	r = check_name(new_name);
+	if (r)
+		return r;
 
-	md = dm_hash_rename(param, new_data);
+	md = dm_hash_rename(param, new_name);
 	if (IS_ERR(md))
 		return PTR_ERR(md);
 
@@ -938,7 +885,7 @@ static int do_resume(struct dm_ioctl *param)
 
 	hc = __find_device_hash_cell(param);
 	if (!hc) {
-		DMDEBUG_LIMIT("device doesn't appear to be in the dev hash table.");
+		DMWARN("device doesn't appear to be in the dev hash table.");
 		up_write(&_hash_lock);
 		return -ENXIO;
 	}
@@ -1265,7 +1212,7 @@ static int table_clear(struct dm_ioctl *param, size_t param_size)
 
 	hc = __find_device_hash_cell(param);
 	if (!hc) {
-		DMDEBUG_LIMIT("device doesn't appear to be in the dev hash table.");
+		DMWARN("device doesn't appear to be in the dev hash table.");
 		up_write(&_hash_lock);
 		return -ENXIO;
 	}
@@ -1501,10 +1448,14 @@ static int check_version(unsigned int cmd, struct dm_ioctl __user *user)
 	return r;
 }
 
+static void free_params(struct dm_ioctl *param)
+{
+	vfree(param);
+}
+
 static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl **param)
 {
 	struct dm_ioctl tmp, *dmi;
-	int secure_data;
 
 	if (copy_from_user(&tmp, user, sizeof(tmp) - sizeof(tmp.data)))
 		return -EFAULT;
@@ -1512,30 +1463,17 @@ static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl **param)
 	if (tmp.data_size < (sizeof(tmp) - sizeof(tmp.data)))
 		return -EINVAL;
 
-	secure_data = tmp.flags & DM_SECURE_DATA_FLAG;
-
 	dmi = vmalloc(tmp.data_size);
-	if (!dmi) {
-		if (secure_data && clear_user(user, tmp.data_size))
-			return -EFAULT;
+	if (!dmi)
 		return -ENOMEM;
+
+	if (copy_from_user(dmi, user, tmp.data_size)) {
+		vfree(dmi);
+		return -EFAULT;
 	}
-
-	if (copy_from_user(dmi, user, tmp.data_size))
-		goto bad;
-
-	/* Wipe the user buffer so we do not return it to userspace */
-	if (secure_data && clear_user(user, tmp.data_size))
-		goto bad;
 
 	*param = dmi;
 	return 0;
-
-bad:
-	if (secure_data)
-		memset(dmi, 0, tmp.data_size);
-	vfree(dmi);
-	return -EFAULT;
 }
 
 static int validate_params(uint cmd, struct dm_ioctl *param)
@@ -1543,7 +1481,6 @@ static int validate_params(uint cmd, struct dm_ioctl *param)
 	/* Always clear this flag */
 	param->flags &= ~DM_BUFFER_FULL_FLAG;
 	param->flags &= ~DM_UEVENT_GENERATED_FLAG;
-	param->flags &= ~DM_SECURE_DATA_FLAG;
 
 	/* Ignores parameters */
 	if (cmd == DM_REMOVE_ALL_CMD ||
@@ -1571,11 +1508,10 @@ static int validate_params(uint cmd, struct dm_ioctl *param)
 static int ctl_ioctl(uint command, struct dm_ioctl __user *user)
 {
 	int r = 0;
-	int wipe_buffer;
 	unsigned int cmd;
 	struct dm_ioctl *uninitialized_var(param);
 	ioctl_fn fn = NULL;
-	size_t input_param_size;
+	size_t param_size;
 
 	/* only root can play with this */
 	if (!capable(CAP_SYS_ADMIN))
@@ -1622,15 +1558,13 @@ static int ctl_ioctl(uint command, struct dm_ioctl __user *user)
 	if (r)
 		return r;
 
-	input_param_size = param->data_size;
-	wipe_buffer = param->flags & DM_SECURE_DATA_FLAG;
-
 	r = validate_params(cmd, param);
 	if (r)
 		goto out;
 
+	param_size = param->data_size;
 	param->data_size = sizeof(*param);
-	r = fn(param, input_param_size);
+	r = fn(param, param_size);
 
 	/*
 	 * Copy the results back to userland.
@@ -1638,11 +1572,8 @@ static int ctl_ioctl(uint command, struct dm_ioctl __user *user)
 	if (!r && copy_to_user(user, param, param->data_size))
 		r = -EFAULT;
 
-out:
-	if (wipe_buffer)
-		memset(param, 0, input_param_size);
-
-	vfree(param);
+ out:
+	free_params(param);
 	return r;
 }
 
@@ -1665,7 +1596,6 @@ static const struct file_operations _ctl_fops = {
 	.unlocked_ioctl	 = dm_ctl_ioctl,
 	.compat_ioctl = dm_compat_ctl_ioctl,
 	.owner	 = THIS_MODULE,
-	.llseek  = noop_llseek,
 };
 
 static struct miscdevice _dm_misc = {

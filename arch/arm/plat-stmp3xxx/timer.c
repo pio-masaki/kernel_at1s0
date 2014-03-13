@@ -89,6 +89,7 @@ static struct clocksource cksrc_stmp3xxx = {
 	.rating         = 250,
 	.read           = stmp3xxx_clock_read,
 	.mask           = CLOCKSOURCE_MASK(16),
+	.shift          = 10,
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
 };
 
@@ -105,6 +106,8 @@ static struct irqaction stmp3xxx_timer_irq = {
  */
 static void __init stmp3xxx_init_timer(void)
 {
+	cksrc_stmp3xxx.mult = clocksource_hz2mult(CLOCK_TICK_RATE,
+				cksrc_stmp3xxx.shift);
 	ckevt_timrot.mult = div_sc(CLOCK_TICK_RATE, NSEC_PER_SEC,
 				ckevt_timrot.shift);
 	ckevt_timrot.min_delta_ns = clockevent_delta2ns(2, &ckevt_timrot);
@@ -137,7 +140,7 @@ static void __init stmp3xxx_init_timer(void)
 
 	setup_irq(IRQ_TIMER0, &stmp3xxx_timer_irq);
 
-	clocksource_register_hz(&cksrc_stmp3xxx, CLOCK_TICK_RATE);
+	clocksource_register(&cksrc_stmp3xxx);
 	clockevents_register_device(&ckevt_timrot);
 }
 

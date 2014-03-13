@@ -593,7 +593,8 @@ int
 request_firmware(const struct firmware **firmware_p, const char *name,
                  struct device *device)
 {
-        return _request_firmware(firmware_p, name, device, true, false);
+        int uevent = 1;
+        return _request_firmware(firmware_p, name, device, uevent, false);
 }
 
 /**
@@ -617,7 +618,7 @@ struct firmware_work {
 	struct device *device;
 	void *context;
 	void (*cont)(const struct firmware *fw, void *context);
-	bool uevent;
+	int uevent;
 };
 
 static int request_firmware_work_func(void *arg)
@@ -660,7 +661,7 @@ static int request_firmware_work_func(void *arg)
  **/
 int
 request_firmware_nowait(
-	struct module *module, bool uevent,
+	struct module *module, int uevent,
 	const char *name, struct device *device, gfp_t gfp, void *context,
 	void (*cont)(const struct firmware *fw, void *context))
 {

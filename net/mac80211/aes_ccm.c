@@ -138,8 +138,10 @@ struct crypto_cipher *ieee80211_aes_key_setup_encrypt(const u8 key[])
 	struct crypto_cipher *tfm;
 
 	tfm = crypto_alloc_cipher("aes", 0, CRYPTO_ALG_ASYNC);
-	if (!IS_ERR(tfm))
-		crypto_cipher_setkey(tfm, key, ALG_CCMP_KEY_LEN);
+	if (IS_ERR(tfm))
+		return NULL;
+
+	crypto_cipher_setkey(tfm, key, ALG_CCMP_KEY_LEN);
 
 	return tfm;
 }
@@ -147,5 +149,6 @@ struct crypto_cipher *ieee80211_aes_key_setup_encrypt(const u8 key[])
 
 void ieee80211_aes_key_free(struct crypto_cipher *tfm)
 {
-	crypto_free_cipher(tfm);
+	if (tfm)
+		crypto_free_cipher(tfm);
 }

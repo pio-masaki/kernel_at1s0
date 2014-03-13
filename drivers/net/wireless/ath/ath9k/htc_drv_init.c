@@ -41,8 +41,6 @@ MODULE_PARM_DESC(nohwcrypt, "Disable hardware encryption");
 	.max_power = 20, \
 }
 
-#define ATH_HTC_BTCOEX_PRODUCT_ID "wb193"
-
 static struct ieee80211_channel ath9k_2ghz_channels[] = {
 	CHAN2G(2412, 0), /* Channel 1 */
 	CHAN2G(2417, 1), /* Channel 2 */
@@ -142,6 +140,9 @@ static void ath9k_deinit_priv(struct ath9k_htc_priv *priv)
 {
 	ath9k_htc_exit_debug(priv->ah);
 	ath9k_hw_deinit(priv->ah);
+	tasklet_kill(&priv->wmi_tasklet);
+	tasklet_kill(&priv->rx_tasklet);
+	tasklet_kill(&priv->tx_tasklet);
 	kfree(priv->ah);
 	priv->ah = NULL;
 }
@@ -178,8 +179,7 @@ static inline int ath9k_htc_connect_svc(struct ath9k_htc_priv *priv,
 	return htc_connect_service(priv->htc, &req, ep_id);
 }
 
-static int ath9k_init_htc_services(struct ath9k_htc_priv *priv, u16 devid,
-				   u32 drv_info)
+static int ath9k_init_htc_services(struct ath9k_htc_priv *priv, u16 devid)
 {
 	int ret;
 
@@ -243,10 +243,17 @@ static int ath9k_init_htc_services(struct ath9k_htc_priv *priv, u16 devid,
 	 * the HIF layer, shouldn't matter much.
 	 */
 
-	if (IS_AR7010_DEVICE(drv_info))
+	switch(devid) {
+	case 0x7010:
+	case 0x7015:
+	case 0x9018:
+	case 0xA704:
+	case 0x1200:
 		priv->htc->credits = 45;
-	else
+		break;
+	default:
 		priv->htc->credits = 33;
+	}
 
 	ret = htc_init(priv->htc);
 	if (ret)
@@ -285,41 +292,13 @@ static unsigned int ath9k_regread(void *hw_priv, u32 reg_offset)
 			  (u8 *) &val, sizeof(val),
 			  100);
 	if (unlikely(r)) {
-		ath_dbg(common, ATH_DBG_WMI,
-			"REGISTER READ FAILED: (0x%04x, %d)\n",
-			reg_offset, r);
+		ath_print(common, ATH_DBG_WMI,
+			  "REGISTER READ FAILED: (0x%04x, %d)\n",
+			   reg_offset, r);
 		return -EIO;
 	}
 
 	return be32_to_cpu(val);
-}
-
-static void ath9k_multi_regread(void *hw_priv, u32 *addr,
-				u32 *val, u16 count)
-{
-	struct ath_hw *ah = (struct ath_hw *) hw_priv;
-	struct ath_common *common = ath9k_hw_common(ah);
-	struct ath9k_htc_priv *priv = (struct ath9k_htc_priv *) common->priv;
-	__be32 tmpaddr[8];
-	__be32 tmpval[8];
-	int i, ret;
-
-       for (i = 0; i < count; i++) {
-	       tmpaddr[i] = cpu_to_be32(addr[i]);
-       }
-
-       ret = ath9k_wmi_cmd(priv->wmi, WMI_REG_READ_CMDID,
-			   (u8 *)tmpaddr , sizeof(u32) * count,
-			   (u8 *)tmpval, sizeof(u32) * count,
-			   100);
-	if (unlikely(ret)) {
-		ath_dbg(common, ATH_DBG_WMI,
-			"Multiple REGISTER READ FAILED (count: %d)\n", count);
-	}
-
-       for (i = 0; i < count; i++) {
-	       val[i] = be32_to_cpu(tmpval[i]);
-       }
 }
 
 static void ath9k_regwrite_single(void *hw_priv, u32 val, u32 reg_offset)
@@ -327,7 +306,7 @@ static void ath9k_regwrite_single(void *hw_priv, u32 val, u32 reg_offset)
 	struct ath_hw *ah = (struct ath_hw *) hw_priv;
 	struct ath_common *common = ath9k_hw_common(ah);
 	struct ath9k_htc_priv *priv = (struct ath9k_htc_priv *) common->priv;
-	const __be32 buf[2] = {
+	__be32 buf[2] = {
 		cpu_to_be32(reg_offset),
 		cpu_to_be32(val),
 	};
@@ -338,9 +317,9 @@ static void ath9k_regwrite_single(void *hw_priv, u32 val, u32 reg_offset)
 			  (u8 *) &val, sizeof(val),
 			  100);
 	if (unlikely(r)) {
-		ath_dbg(common, ATH_DBG_WMI,
-			"REGISTER WRITE FAILED:(0x%04x, %d)\n",
-			reg_offset, r);
+		ath_print(common, ATH_DBG_WMI,
+			  "REGISTER WRITE FAILED:(0x%04x, %d)\n",
+			  reg_offset, r);
 	}
 }
 
@@ -370,9 +349,9 @@ static void ath9k_regwrite_buffer(void *hw_priv, u32 val, u32 reg_offset)
 			  (u8 *) &rsp_status, sizeof(rsp_status),
 			  100);
 		if (unlikely(r)) {
-			ath_dbg(common, ATH_DBG_WMI,
-				"REGISTER WRITE FAILED, multi len: %d\n",
-				priv->wmi->multi_write_idx);
+			ath_print(common, ATH_DBG_WMI,
+				  "REGISTER WRITE FAILED, multi len: %d\n",
+				  priv->wmi->multi_write_idx);
 		}
 		priv->wmi->multi_write_idx = 0;
 	}
@@ -401,6 +380,15 @@ static void ath9k_enable_regwrite_buffer(void *hw_priv)
 	atomic_inc(&priv->wmi->mwrite_cnt);
 }
 
+static void ath9k_disable_regwrite_buffer(void *hw_priv)
+{
+	struct ath_hw *ah = (struct ath_hw *) hw_priv;
+	struct ath_common *common = ath9k_hw_common(ah);
+	struct ath9k_htc_priv *priv = (struct ath9k_htc_priv *) common->priv;
+
+	atomic_dec(&priv->wmi->mwrite_cnt);
+}
+
 static void ath9k_regwrite_flush(void *hw_priv)
 {
 	struct ath_hw *ah = (struct ath_hw *) hw_priv;
@@ -408,8 +396,6 @@ static void ath9k_regwrite_flush(void *hw_priv)
 	struct ath9k_htc_priv *priv = (struct ath9k_htc_priv *) common->priv;
 	u32 rsp_status;
 	int r;
-
-	atomic_dec(&priv->wmi->mwrite_cnt);
 
 	mutex_lock(&priv->wmi->multi_write_mutex);
 
@@ -420,9 +406,9 @@ static void ath9k_regwrite_flush(void *hw_priv)
 			  (u8 *) &rsp_status, sizeof(rsp_status),
 			  100);
 		if (unlikely(r)) {
-			ath_dbg(common, ATH_DBG_WMI,
-				"REGISTER WRITE FAILED, multi len: %d\n",
-				priv->wmi->multi_write_idx);
+			ath_print(common, ATH_DBG_WMI,
+				  "REGISTER WRITE FAILED, multi len: %d\n",
+				  priv->wmi->multi_write_idx);
 		}
 		priv->wmi->multi_write_idx = 0;
 	}
@@ -432,9 +418,9 @@ static void ath9k_regwrite_flush(void *hw_priv)
 
 static const struct ath_ops ath9k_common_ops = {
 	.read = ath9k_regread,
-	.multi_read = ath9k_multi_regread,
 	.write = ath9k_regwrite,
 	.enable_write_buffer = ath9k_enable_regwrite_buffer,
+	.disable_write_buffer = ath9k_disable_regwrite_buffer,
 	.write_flush = ath9k_regwrite_flush,
 };
 
@@ -495,9 +481,9 @@ static void setup_ht_cap(struct ath9k_htc_priv *priv,
 	tx_streams = ath9k_cmn_count_streams(common->tx_chainmask, 2);
 	rx_streams = ath9k_cmn_count_streams(common->rx_chainmask, 2);
 
-	ath_dbg(common, ATH_DBG_CONFIG,
-		"TX streams %d, RX streams: %d\n",
-		tx_streams, rx_streams);
+	ath_print(common, ATH_DBG_CONFIG,
+		  "TX streams %d, RX streams: %d\n",
+		  tx_streams, rx_streams);
 
 	if (tx_streams != rx_streams) {
 		ht_info->mcs.tx_params |= IEEE80211_HT_MCS_TX_RX_DIFF;
@@ -521,31 +507,37 @@ static int ath9k_init_queues(struct ath9k_htc_priv *priv)
 
 	priv->beaconq = ath9k_hw_beaconq_setup(priv->ah);
 	if (priv->beaconq == -1) {
-		ath_err(common, "Unable to setup BEACON xmit queue\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "Unable to setup BEACON xmit queue\n");
 		goto err;
 	}
 
 	priv->cabq = ath9k_htc_cabq_setup(priv);
 	if (priv->cabq == -1) {
-		ath_err(common, "Unable to setup CAB xmit queue\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "Unable to setup CAB xmit queue\n");
 		goto err;
 	}
 
 	if (!ath9k_htc_txq_setup(priv, WME_AC_BE)) {
-		ath_err(common, "Unable to setup xmit queue for BE traffic\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "Unable to setup xmit queue for BE traffic\n");
 		goto err;
 	}
 
 	if (!ath9k_htc_txq_setup(priv, WME_AC_BK)) {
-		ath_err(common, "Unable to setup xmit queue for BK traffic\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "Unable to setup xmit queue for BK traffic\n");
 		goto err;
 	}
 	if (!ath9k_htc_txq_setup(priv, WME_AC_VI)) {
-		ath_err(common, "Unable to setup xmit queue for VI traffic\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "Unable to setup xmit queue for VI traffic\n");
 		goto err;
 	}
 	if (!ath9k_htc_txq_setup(priv, WME_AC_VO)) {
-		ath_err(common, "Unable to setup xmit queue for VO traffic\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "Unable to setup xmit queue for VO traffic\n");
 		goto err;
 	}
 
@@ -563,26 +555,23 @@ static void ath9k_init_crypto(struct ath9k_htc_priv *priv)
 	/* Get the hardware key cache size. */
 	common->keymax = priv->ah->caps.keycache_size;
 	if (common->keymax > ATH_KEYMAX) {
-		ath_dbg(common, ATH_DBG_ANY,
-			"Warning, using only %u entries in %u key cache\n",
-			ATH_KEYMAX, common->keymax);
+		ath_print(common, ATH_DBG_ANY,
+			  "Warning, using only %u entries in %u key cache\n",
+			  ATH_KEYMAX, common->keymax);
 		common->keymax = ATH_KEYMAX;
 	}
-
-	if (priv->ah->misc_mode & AR_PCU_MIC_NEW_LOC_ENA)
-		common->crypt_caps |= ATH_CRYPT_CAP_MIC_COMBINED;
 
 	/*
 	 * Reset the key cache since some parts do not
 	 * reset the contents on initial power up.
 	 */
 	for (i = 0; i < common->keymax; i++)
-		ath_hw_keyreset(common, (u16) i);
+		ath9k_hw_keyreset(priv->ah, (u16) i);
 }
 
 static void ath9k_init_channels_rates(struct ath9k_htc_priv *priv)
 {
-	if (priv->ah->caps.hw_caps & ATH9K_HW_CAP_2GHZ) {
+	if (test_bit(ATH9K_MODE_11G, priv->ah->caps.wireless_modes)) {
 		priv->sbands[IEEE80211_BAND_2GHZ].channels =
 			ath9k_2ghz_channels;
 		priv->sbands[IEEE80211_BAND_2GHZ].band = IEEE80211_BAND_2GHZ;
@@ -593,7 +582,7 @@ static void ath9k_init_channels_rates(struct ath9k_htc_priv *priv)
 			ARRAY_SIZE(ath9k_legacy_rates);
 	}
 
-	if (priv->ah->caps.hw_caps & ATH9K_HW_CAP_5GHZ) {
+	if (test_bit(ATH9K_MODE_11A, priv->ah->caps.wireless_modes)) {
 		priv->sbands[IEEE80211_BAND_5GHZ].channels = ath9k_5ghz_channels;
 		priv->sbands[IEEE80211_BAND_5GHZ].band = IEEE80211_BAND_5GHZ;
 		priv->sbands[IEEE80211_BAND_5GHZ].n_channels =
@@ -612,37 +601,13 @@ static void ath9k_init_misc(struct ath9k_htc_priv *priv)
 	common->tx_chainmask = priv->ah->caps.tx_chainmask;
 	common->rx_chainmask = priv->ah->caps.rx_chainmask;
 
-	memcpy(common->bssidmask, ath_bcast_mac, ETH_ALEN);
+	if (priv->ah->caps.hw_caps & ATH9K_HW_CAP_BSSIDMASK)
+		memcpy(common->bssidmask, ath_bcast_mac, ETH_ALEN);
 
 	priv->ah->opmode = NL80211_IFTYPE_STATION;
 }
 
-static void ath9k_init_btcoex(struct ath9k_htc_priv *priv)
-{
-	int qnum;
-
-	switch (priv->ah->btcoex_hw.scheme) {
-	case ATH_BTCOEX_CFG_NONE:
-		break;
-	case ATH_BTCOEX_CFG_3WIRE:
-		priv->ah->btcoex_hw.btactive_gpio = 7;
-		priv->ah->btcoex_hw.btpriority_gpio = 6;
-		priv->ah->btcoex_hw.wlanactive_gpio = 8;
-		priv->btcoex.bt_stomp_type = ATH_BTCOEX_STOMP_LOW;
-		ath9k_hw_btcoex_init_3wire(priv->ah);
-		ath_htc_init_btcoex_work(priv);
-		qnum = priv->hwq_map[WME_AC_BE];
-		ath9k_hw_init_btcoex_hw(priv->ah, qnum);
-		break;
-	default:
-		WARN_ON(1);
-		break;
-	}
-}
-
-static int ath9k_init_priv(struct ath9k_htc_priv *priv,
-			   u16 devid, char *product,
-			   u32 drv_info)
+static int ath9k_init_priv(struct ath9k_htc_priv *priv, u16 devid)
 {
 	struct ath_hw *ah = NULL;
 	struct ath_common *common;
@@ -656,8 +621,6 @@ static int ath9k_init_priv(struct ath9k_htc_priv *priv,
 
 	ah->hw_version.devid = devid;
 	ah->hw_version.subsysid = 0; /* FIXME */
-	ah->hw_version.usbdev = drv_info;
-	ah->ah_flags |= AH_USE_EEPROM;
 	priv->ah = ah;
 
 	common = ath9k_hw_common(ah);
@@ -673,15 +636,13 @@ static int ath9k_init_priv(struct ath9k_htc_priv *priv,
 	spin_lock_init(&priv->tx_lock);
 	mutex_init(&priv->mutex);
 	mutex_init(&priv->htc_pm_lock);
-	tasklet_init(&priv->swba_tasklet, ath9k_swba_tasklet,
+	tasklet_init(&priv->wmi_tasklet, ath9k_wmi_tasklet,
 		     (unsigned long)priv);
 	tasklet_init(&priv->rx_tasklet, ath9k_rx_tasklet,
 		     (unsigned long)priv);
-	tasklet_init(&priv->tx_tasklet, ath9k_tx_tasklet,
-		     (unsigned long)priv);
-	INIT_DELAYED_WORK(&priv->ani_work, ath9k_htc_ani_work);
+	tasklet_init(&priv->tx_tasklet, ath9k_tx_tasklet, (unsigned long)priv);
+	INIT_DELAYED_WORK(&priv->ath9k_ani_work, ath9k_ani_work);
 	INIT_WORK(&priv->ps_work, ath9k_ps_work);
-	INIT_WORK(&priv->fatal_work, ath9k_fatal_work);
 
 	/*
 	 * Cache line size is used to size and align various
@@ -692,15 +653,16 @@ static int ath9k_init_priv(struct ath9k_htc_priv *priv,
 
 	ret = ath9k_hw_init(ah);
 	if (ret) {
-		ath_err(common,
-			"Unable to initialize hardware; initialization status: %d\n",
-			ret);
+		ath_print(common, ATH_DBG_FATAL,
+			  "Unable to initialize hardware; "
+			  "initialization status: %d\n", ret);
 		goto err_hw;
 	}
 
 	ret = ath9k_htc_init_debug(ah);
 	if (ret) {
-		ath_err(common, "Unable to create debugfs files\n");
+		ath_print(common, ATH_DBG_FATAL,
+			  "Unable to create debugfs files\n");
 		goto err_debug;
 	}
 
@@ -711,11 +673,6 @@ static int ath9k_init_priv(struct ath9k_htc_priv *priv,
 	ath9k_init_crypto(priv);
 	ath9k_init_channels_rates(priv);
 	ath9k_init_misc(priv);
-
-	if (product && strncmp(product, ATH_HTC_BTCOEX_PRODUCT_ID, 5) == 0) {
-		ah->btcoex_hw.scheme = ATH_BTCOEX_CFG_3WIRE;
-		ath9k_init_btcoex(priv);
-	}
 
 	return 0;
 
@@ -760,18 +717,18 @@ static void ath9k_set_hw_capab(struct ath9k_htc_priv *priv,
 	hw->extra_tx_headroom = sizeof(struct tx_frame_hdr) +
 		sizeof(struct htc_frame_hdr) + 4;
 
-	if (priv->ah->caps.hw_caps & ATH9K_HW_CAP_2GHZ)
+	if (test_bit(ATH9K_MODE_11G, priv->ah->caps.wireless_modes))
 		hw->wiphy->bands[IEEE80211_BAND_2GHZ] =
 			&priv->sbands[IEEE80211_BAND_2GHZ];
-	if (priv->ah->caps.hw_caps & ATH9K_HW_CAP_5GHZ)
+	if (test_bit(ATH9K_MODE_11A, priv->ah->caps.wireless_modes))
 		hw->wiphy->bands[IEEE80211_BAND_5GHZ] =
 			&priv->sbands[IEEE80211_BAND_5GHZ];
 
 	if (priv->ah->caps.hw_caps & ATH9K_HW_CAP_HT) {
-		if (priv->ah->caps.hw_caps & ATH9K_HW_CAP_2GHZ)
+		if (test_bit(ATH9K_MODE_11G, priv->ah->caps.wireless_modes))
 			setup_ht_cap(priv,
 				     &priv->sbands[IEEE80211_BAND_2GHZ].ht_cap);
-		if (priv->ah->caps.hw_caps & ATH9K_HW_CAP_5GHZ)
+		if (test_bit(ATH9K_MODE_11A, priv->ah->caps.wireless_modes))
 			setup_ht_cap(priv,
 				     &priv->sbands[IEEE80211_BAND_5GHZ].ht_cap);
 	}
@@ -779,18 +736,16 @@ static void ath9k_set_hw_capab(struct ath9k_htc_priv *priv,
 	SET_IEEE80211_PERM_ADDR(hw, common->macaddr);
 }
 
-static int ath9k_init_device(struct ath9k_htc_priv *priv,
-			     u16 devid, char *product, u32 drv_info)
+static int ath9k_init_device(struct ath9k_htc_priv *priv, u16 devid)
 {
 	struct ieee80211_hw *hw = priv->hw;
 	struct ath_common *common;
 	struct ath_hw *ah;
 	int error = 0;
 	struct ath_regulatory *reg;
-	char hw_name[64];
 
 	/* Bring up device */
-	error = ath9k_init_priv(priv, devid, product, drv_info);
+	error = ath9k_init_priv(priv, devid);
 	if (error != 0)
 		goto err_init;
 
@@ -828,22 +783,6 @@ static int ath9k_init_device(struct ath9k_htc_priv *priv,
 			goto err_world;
 	}
 
-	ath_dbg(common, ATH_DBG_CONFIG,
-		"WMI:%d, BCN:%d, CAB:%d, UAPSD:%d, MGMT:%d, "
-		"BE:%d, BK:%d, VI:%d, VO:%d\n",
-		priv->wmi_cmd_ep,
-		priv->beacon_ep,
-		priv->cab_ep,
-		priv->uapsd_ep,
-		priv->mgmt_ep,
-		priv->data_be_ep,
-		priv->data_bk_ep,
-		priv->data_vi_ep,
-		priv->data_vo_ep);
-
-	ath9k_hw_name(priv->ah, hw_name, sizeof(hw_name));
-	wiphy_info(hw->wiphy, "%s\n", hw_name);
-
 	ath9k_init_leds(priv);
 	ath9k_start_rfkill_poll(priv);
 
@@ -864,7 +803,7 @@ err_init:
 }
 
 int ath9k_htc_probe_device(struct htc_target *htc_handle, struct device *dev,
-			   u16 devid, char *product, u32 drv_info)
+			   u16 devid)
 {
 	struct ieee80211_hw *hw;
 	struct ath9k_htc_priv *priv;
@@ -891,11 +830,14 @@ int ath9k_htc_probe_device(struct htc_target *htc_handle, struct device *dev,
 		goto err_free;
 	}
 
-	ret = ath9k_init_htc_services(priv, devid, drv_info);
+	ret = ath9k_init_htc_services(priv, devid);
 	if (ret)
 		goto err_init;
 
-	ret = ath9k_init_device(priv, devid, product, drv_info);
+	/* The device may have been unplugged earlier. */
+	priv->op_flags &= ~OP_UNPLUGGED;
+
+	ret = ath9k_init_device(priv, devid);
 	if (ret)
 		goto err_init;
 
@@ -914,7 +856,7 @@ void ath9k_htc_disconnect_device(struct htc_target *htc_handle, bool hotunplug)
 
 		/* Check if the device has been yanked out. */
 		if (hotunplug)
-			htc_handle->drv_priv->ah->ah_flags |= AH_UNPLUGGED;
+			htc_handle->drv_priv->op_flags |= OP_UNPLUGGED;
 
 		ath9k_deinit_device(htc_handle->drv_priv);
 		ath9k_deinit_wmi(htc_handle->drv_priv);
@@ -923,23 +865,16 @@ void ath9k_htc_disconnect_device(struct htc_target *htc_handle, bool hotunplug)
 }
 
 #ifdef CONFIG_PM
-
-void ath9k_htc_suspend(struct htc_target *htc_handle)
-{
-	ath9k_htc_setpower(htc_handle->drv_priv, ATH9K_PM_FULL_SLEEP);
-}
-
 int ath9k_htc_resume(struct htc_target *htc_handle)
 {
-	struct ath9k_htc_priv *priv = htc_handle->drv_priv;
 	int ret;
 
-	ret = ath9k_htc_wait_for_target(priv);
+	ret = ath9k_htc_wait_for_target(htc_handle->drv_priv);
 	if (ret)
 		return ret;
 
-	ret = ath9k_init_htc_services(priv, priv->ah->hw_version.devid,
-				      priv->ah->hw_version.usbdev);
+	ret = ath9k_init_htc_services(htc_handle->drv_priv,
+			      htc_handle->drv_priv->ah->hw_version.devid);
 	return ret;
 }
 #endif

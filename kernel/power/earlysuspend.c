@@ -48,10 +48,10 @@ void register_early_suspend(struct early_suspend *handler)
 {
 	struct list_head *pos;
 
-        //---> check if handler == NULL
-        if(handler == NULL)
-                return;
-
+	//---> check if handler == NULL
+	if(handler == NULL)
+		return;
+	
 	mutex_lock(&early_suspend_lock);
 	list_for_each(pos, &early_suspend_handlers) {
 		struct early_suspend *e;
@@ -68,10 +68,10 @@ EXPORT_SYMBOL(register_early_suspend);
 
 void unregister_early_suspend(struct early_suspend *handler)
 {
-        //---> check if handler == NULL
-        if(handler == NULL)
-                return;
-
+	//---> check if handler == NULL
+	if(handler == NULL)
+		return;
+	
 	mutex_lock(&early_suspend_lock);
 	list_del(&handler->link);
 	mutex_unlock(&early_suspend_lock);

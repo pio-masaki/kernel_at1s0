@@ -153,7 +153,6 @@ static struct i2c_board_info __initdata snapper9260_i2c_devices[] = {
 	{
 		/* RTC */
 		I2C_BOARD_INFO("isl1208", 0x6f),
-		.irq = gpio_to_irq(AT91_PIN_PA31),
 	},
 };
 
@@ -178,6 +177,8 @@ static void __init snapper9260_board_init(void)
 }
 
 MACHINE_START(SNAPPER_9260, "Bluewater Systems Snapper 9260/9G20 module")
+	.phys_io	= AT91_BASE_SYS,
+	.io_pg_offst	= (AT91_VA_BASE_SYS >> 18) & 0xfffc,
 	.boot_params	= AT91_SDRAM_BASE + 0x100,
 	.timer		= &at91sam926x_timer,
 	.map_io		= snapper9260_map_io,

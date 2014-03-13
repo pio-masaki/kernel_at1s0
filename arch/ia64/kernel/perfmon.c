@@ -617,19 +617,17 @@ pfm_get_unmapped_area(struct file *file, unsigned long addr, unsigned long len, 
 	return get_unmapped_area(file, addr, len, pgoff, flags);
 }
 
-/* forward declaration */
-static const struct dentry_operations pfmfs_dentry_operations;
 
-static struct dentry *
-pfmfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data)
+static int
+pfmfs_get_sb(struct file_system_type *fs_type, int flags, const char *dev_name, void *data,
+	     struct vfsmount *mnt)
 {
-	return mount_pseudo(fs_type, "pfm:", NULL, &pfmfs_dentry_operations,
-			PFMFS_MAGIC);
+	return get_sb_pseudo(fs_type, "pfm:", NULL, PFMFS_MAGIC, mnt);
 }
 
 static struct file_system_type pfm_fs_type = {
 	.name     = "pfmfs",
-	.mount    = pfmfs_mount,
+	.get_sb   = pfmfs_get_sb,
 	.kill_sb  = kill_anon_super,
 };
 
@@ -832,9 +830,10 @@ pfm_rvmalloc(unsigned long size)
 	unsigned long addr;
 
 	size = PAGE_ALIGN(size);
-	mem  = vzalloc(size);
+	mem  = vmalloc(size);
 	if (mem) {
 		//printk("perfmon: CPU%d pfm_rvmalloc(%ld)=%p\n", smp_processor_id(), size, mem);
+		memset(mem, 0, size);
 		addr = (unsigned long)mem;
 		while (size > 0) {
 			pfm_reserve_page(addr);
@@ -1544,7 +1543,7 @@ pfm_exit_smpl_buffer(pfm_buffer_fmt_t *fmt)
  * any operations on the root directory. However, we need a non-trivial
  * d_name - pfm: will go nicely and kill the special-casing in procfs.
  */
-static struct vfsmount *pfmfs_mnt __read_mostly;
+static struct vfsmount *pfmfs_mnt;
 
 static int __init
 init_pfm_fs(void)
@@ -1574,7 +1573,7 @@ pfm_read(struct file *filp, char __user *buf, size_t size, loff_t *ppos)
 		return -EINVAL;
 	}
 
-	ctx = filp->private_data;
+	ctx = (pfm_context_t *)filp->private_data;
 	if (ctx == NULL) {
 		printk(KERN_ERR "perfmon: pfm_read: NULL ctx [%d]\n", task_pid_nr(current));
 		return -EINVAL;
@@ -1674,7 +1673,7 @@ pfm_poll(struct file *filp, poll_table * wait)
 		return 0;
 	}
 
-	ctx = filp->private_data;
+	ctx = (pfm_context_t *)filp->private_data;
 	if (ctx == NULL) {
 		printk(KERN_ERR "perfmon: pfm_poll: NULL ctx [%d]\n", task_pid_nr(current));
 		return 0;
@@ -1734,7 +1733,7 @@ pfm_fasync(int fd, struct file *filp, int on)
 		return -EBADF;
 	}
 
-	ctx = filp->private_data;
+	ctx = (pfm_context_t *)filp->private_data;
 	if (ctx == NULL) {
 		printk(KERN_ERR "perfmon: pfm_fasync NULL ctx [%d]\n", task_pid_nr(current));
 		return -EBADF;
@@ -1842,7 +1841,7 @@ pfm_flush(struct file *filp, fl_owner_t id)
 		return -EBADF;
 	}
 
-	ctx = filp->private_data;
+	ctx = (pfm_context_t *)filp->private_data;
 	if (ctx == NULL) {
 		printk(KERN_ERR "perfmon: pfm_flush: NULL ctx [%d]\n", task_pid_nr(current));
 		return -EBADF;
@@ -1985,7 +1984,7 @@ pfm_close(struct inode *inode, struct file *filp)
 		return -EBADF;
 	}
 	
-	ctx = filp->private_data;
+	ctx = (pfm_context_t *)filp->private_data;
 	if (ctx == NULL) {
 		printk(KERN_ERR "perfmon: pfm_close: NULL ctx [%d]\n", task_pid_nr(current));
 		return -EBADF;
@@ -2187,7 +2186,7 @@ static const struct file_operations pfm_file_ops = {
 };
 
 static int
-pfmfs_delete_dentry(const struct dentry *dentry)
+pfmfs_delete_dentry(struct dentry *dentry)
 {
 	return 1;
 }
@@ -2235,6 +2234,7 @@ pfm_alloc_file(pfm_context_t *ctx)
 	}
 	path.mnt = mntget(pfmfs_mnt);
 
+	path.dentry->d_op = &pfmfs_dentry_operations;
 	d_add(path.dentry, inode);
 
 	file = alloc_file(&path, FMODE_READ, &pfm_file_ops);
@@ -4907,7 +4907,7 @@ restart_args:
 		goto error_args;
 	}
 
-	ctx = file->private_data;
+	ctx = (pfm_context_t *)file->private_data;
 	if (unlikely(ctx == NULL)) {
 		DPRINT(("no context for fd %d\n", fd));
 		goto error_args;

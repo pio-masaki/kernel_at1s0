@@ -1,6 +1,5 @@
 source "drivers/media/video/tegra/avp/Kconfig"
 source "drivers/media/video/tegra/mediaserver/Kconfig"
-source "drivers/media/video/tegra/nvavp/Kconfig"
 
 config TEGRA_CAMERA
         bool "Enable support for tegra camera/isp hardware"
@@ -11,15 +10,6 @@ config TEGRA_CAMERA
 
           If unsure, say Y
 
-config TEGRA_DTV
-        bool "Enable support for tegra dtv interface"
-        depends on ARCH_TEGRA
-        default y
-        help
-          Enables support for the Tegra dtv interface
-
-          If unsure, say Y
-
 config VIDEO_OV5650
         tristate "OV5650 camera sensor support"
         depends on I2C && ARCH_TEGRA
@@ -27,57 +17,23 @@ config VIDEO_OV5650
           This is a driver for the Omnivision OV5650 5MP camera sensor
           for use with the tegra isp.
 
-config VIDEO_MT9P111_ANTARES
+config VIDEO_MT9P111
         tristate "MT9P111 camera sensor support"
         depends on I2C && ARCH_TEGRA
         ---help---
           This is a driver for the Aptina MT9P111 5MP rear camera sensor
 
-config VIDEO_MT9D115_ANTARES
+config VIDEO_MT9D115
         tristate "MT9D115 camera sensor support"
         depends on I2C && ARCH_TEGRA
         ---help---
           This is a driver for the Aptina MT9D115 2MP front camera sensor
-
-config VIDEO_MT9P111_SCORPIO
-        tristate "MT9P111 camera sensor support"
-        depends on I2C && ARCH_TEGRA
-        ---help---
-          This is a driver for the Aptina MT9P111 5MP rear camera sensor
-
-config VIDEO_MT9D115_SCORPIO
-        tristate "MT9D115 camera sensor support"
-        depends on I2C && ARCH_TEGRA
-        ---help---
-          This is a driver for the Aptina MT9D115 2MP front camera sensor
-
-config VIDEO_OV14810
-        tristate "OV14810 camera sensor support"
-        depends on I2C && ARCH_TEGRA
-        ---help---
-          This is a driver for the Omnivision OV14810 14MP camera sensor
-          for use with the tegra isp.
-
-
-config VIDEO_OV9726
-        tristate "OV9726 camera sensor support"
-        depends on I2C && ARCH_TEGRA
-        ---help---
-          This is a driver for the Omnivision OV9726 camera sensor
-          for use with the tegra isp.
 
 config VIDEO_OV2710
         tristate "OV2710 camera sensor support"
         depends on I2C && ARCH_TEGRA
         ---help---
           This is a driver for the Omnivision OV2710 camera sensor
-          for use with the tegra isp.
-
-config VIDEO_AR0832
-        tristate "AR0832 camera sensor support"
-        depends on I2C && ARCH_TEGRA
-        ---help---
-          This is a driver for the AR0832 camera sensor
           for use with the tegra isp.
 
 config VIDEO_SOC380
@@ -92,12 +48,6 @@ config TORCH_SSL3250A
         depends on I2C && ARCH_TEGRA
         ---help---
           This is a driver for the SSL3250A flash/torch camera device
-
-config TORCH_TPS61050
-        tristate "TPS61050 flash/torch support"
-        depends on I2C && ARCH_TEGRA
-        ---help---
-          This is a driver for the TPS61050 flash/torch camera device
 
 config VIDEO_SH532U
         tristate "SH532U focuser support"

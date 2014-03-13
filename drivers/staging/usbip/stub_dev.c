@@ -18,7 +18,6 @@
  */
 
 #include <linux/slab.h>
-#include <linux/kthread.h>
 
 #include "usbip_common.h"
 #include "stub.h"
@@ -139,8 +138,7 @@ static ssize_t store_sockfd(struct device *dev, struct device_attribute *attr,
 
 		spin_unlock(&sdev->ud.lock);
 
-		sdev->ud.tcp_rx = kthread_run(stub_rx_loop, &sdev->ud, "stub_rx");
-		sdev->ud.tcp_tx = kthread_run(stub_tx_loop, &sdev->ud, "stub_tx");
+		usbip_start_threads(&sdev->ud);
 
 		spin_lock(&sdev->ud.lock);
 		sdev->ud.status = SDEV_ST_USED;
@@ -220,10 +218,7 @@ static void stub_shutdown_connection(struct usbip_device *ud)
 	}
 
 	/* 1. stop threads */
-	if (ud->tcp_rx && !task_is_dead(ud->tcp_rx))
-		kthread_stop(ud->tcp_rx);
-	if (ud->tcp_tx && !task_is_dead(ud->tcp_tx))
-		kthread_stop(ud->tcp_tx);
+	usbip_stop_threads(ud);
 
 	/* 2. close the socket */
 	/*
@@ -263,11 +258,10 @@ static void stub_shutdown_connection(struct usbip_device *ud)
 static void stub_device_reset(struct usbip_device *ud)
 {
 	struct stub_device *sdev = container_of(ud, struct stub_device, ud);
-	struct usb_device *udev = sdev->udev;
+	struct usb_device *udev = interface_to_usbdev(sdev->interface);
 	int ret;
 
 	usbip_udbg("device reset");
-
 	ret = usb_lock_device_for_reset(udev, sdev->interface);
 	if (ret < 0) {
 		dev_err(&udev->dev, "lock for reset\n");
@@ -315,8 +309,7 @@ static void stub_device_unusable(struct usbip_device *ud)
  *
  * Allocates and initializes a new stub_device struct.
  */
-static struct stub_device *stub_device_alloc(struct usb_device *udev,
-					     struct usb_interface *interface)
+static struct stub_device *stub_device_alloc(struct usb_interface *interface)
 {
 	struct stub_device *sdev;
 	int busnum = interface_to_busnum(interface);
@@ -331,8 +324,7 @@ static struct stub_device *stub_device_alloc(struct usb_device *udev,
 		return NULL;
 	}
 
-	sdev->interface = usb_get_intf(interface);
-	sdev->udev = usb_get_dev(udev);
+	sdev->interface = interface;
 
 	/*
 	 * devid is defined with devnum when this driver is first allocated.
@@ -340,6 +332,9 @@ static struct stub_device *stub_device_alloc(struct usb_device *udev,
 	 * changes during a usbip connection.
 	 */
 	sdev->devid     = (busnum << 16) | devnum;
+
+	usbip_task_init(&sdev->ud.tcp_rx, "stub_rx", stub_rx_loop);
+	usbip_task_init(&sdev->ud.tcp_tx, "stub_tx", stub_tx_loop);
 
 	sdev->ud.side = USBIP_STUB;
 	sdev->ud.status = SDEV_ST_AVAILABLE;
@@ -432,11 +427,11 @@ static int stub_probe(struct usb_interface *interface,
 
 
 	if (busid_priv->status == STUB_BUSID_ALLOC) {
+		busid_priv->interf_count++;
 		sdev = busid_priv->sdev;
 		if (!sdev)
 			return -ENODEV;
 
-		busid_priv->interf_count++;
 		dev_info(&interface->dev,
 		 "USB/IP Stub: register a new interface "
 		 "(bus %u dev %u ifn %u)\n", udev->bus->busnum, udev->devnum,
@@ -455,12 +450,11 @@ static int stub_probe(struct usb_interface *interface,
 			return err;
 		}
 
-		usb_get_intf(interface);
 		return 0;
 	}
 
 	/* ok. this is my device. */
-	sdev = stub_device_alloc(udev, interface);
+	sdev = stub_device_alloc(interface);
 	if (!sdev)
 		return -ENOMEM;
 
@@ -482,8 +476,6 @@ static int stub_probe(struct usb_interface *interface,
 		dev_err(&interface->dev, "create sysfs files for %s\n",
 			udev_busid);
 		usb_set_intfdata(interface, NULL);
-		usb_put_intf(interface);
-
 		busid_priv->interf_count = 0;
 
 		busid_priv->sdev = NULL;
@@ -545,7 +537,7 @@ static void stub_disconnect(struct usb_interface *interface)
 	stub_remove_files(&interface->dev);
 
 	/*If usb reset called from event handler*/
-	if (busid_priv->sdev->ud.eh == current) {
+	if (busid_priv->sdev->ud.eh.thread == current) {
 		busid_priv->interf_count--;
 		return;
 	}
@@ -553,7 +545,6 @@ static void stub_disconnect(struct usb_interface *interface)
 	if (busid_priv->interf_count > 1) {
 		busid_priv->interf_count--;
 		shutdown_busid(busid_priv);
-		usb_put_intf(interface);
 		return;
 	}
 
@@ -562,9 +553,6 @@ static void stub_disconnect(struct usb_interface *interface)
 
 	/* 1. shutdown the current connection */
 	shutdown_busid(busid_priv);
-
-	usb_put_dev(sdev->udev);
-	usb_put_intf(interface);
 
 	/* 3. free sdev */
 	busid_priv->sdev = NULL;

@@ -32,8 +32,7 @@
 	Revision History:
 	Who			When		What
 	--------	----------	----------------------------------------------
-	Name			Date		Modification logs
-	Justin P. Mattock	11/07/2010	Fix some typos.
+	Name		Date		Modification logs
 
 */
 
@@ -41,25 +40,25 @@
 
 void dump_urb(struct urb *purb)
 {
-	printk(KERN_DEBUG "urb                  :0x%08lx\n", (unsigned long)purb);
-	printk(KERN_DEBUG "\tdev                   :0x%08lx\n", (unsigned long)purb->dev);
-	printk(KERN_DEBUG "\t\tdev->state          :0x%d\n", purb->dev->state);
-	printk(KERN_DEBUG "\tpipe                  :0x%08x\n", purb->pipe);
-	printk(KERN_DEBUG "\tstatus                :%d\n", purb->status);
-	printk(KERN_DEBUG "\ttransfer_flags        :0x%08x\n", purb->transfer_flags);
-	printk(KERN_DEBUG "\ttransfer_buffer       :0x%08lx\n",
+	printk("urb                  :0x%08lx\n", (unsigned long)purb);
+	printk("\tdev                   :0x%08lx\n", (unsigned long)purb->dev);
+	printk("\t\tdev->state          :0x%d\n", purb->dev->state);
+	printk("\tpipe                  :0x%08x\n", purb->pipe);
+	printk("\tstatus                :%d\n", purb->status);
+	printk("\ttransfer_flags        :0x%08x\n", purb->transfer_flags);
+	printk("\ttransfer_buffer       :0x%08lx\n",
 	       (unsigned long)purb->transfer_buffer);
-	printk(KERN_DEBUG "\ttransfer_buffer_length:%d\n", purb->transfer_buffer_length);
-	printk(KERN_DEBUG "\tactual_length         :%d\n", purb->actual_length);
-	printk(KERN_DEBUG "\tsetup_packet          :0x%08lx\n",
+	printk("\ttransfer_buffer_length:%d\n", purb->transfer_buffer_length);
+	printk("\tactual_length         :%d\n", purb->actual_length);
+	printk("\tsetup_packet          :0x%08lx\n",
 	       (unsigned long)purb->setup_packet);
-	printk(KERN_DEBUG "\tstart_frame           :%d\n", purb->start_frame);
-	printk(KERN_DEBUG "\tnumber_of_packets     :%d\n", purb->number_of_packets);
-	printk(KERN_DEBUG "\tinterval              :%d\n", purb->interval);
-	printk(KERN_DEBUG "\terror_count           :%d\n", purb->error_count);
-	printk(KERN_DEBUG "\tcontext               :0x%08lx\n",
+	printk("\tstart_frame           :%d\n", purb->start_frame);
+	printk("\tnumber_of_packets     :%d\n", purb->number_of_packets);
+	printk("\tinterval              :%d\n", purb->interval);
+	printk("\terror_count           :%d\n", purb->error_count);
+	printk("\tcontext               :0x%08lx\n",
 	       (unsigned long)purb->context);
-	printk(KERN_DEBUG "\tcomplete              :0x%08lx\n\n",
+	printk("\tcomplete              :0x%08lx\n\n",
 	       (unsigned long)purb->complete);
 }
 
@@ -280,7 +279,7 @@ static void rtusb_dataout_complete(unsigned long data)
 	    && !RTUSB_TEST_BULK_FLAG(pAd,
 				     (fRTUSB_BULK_OUT_DATA_FRAG <<
 				      BulkOutPipeId))) {
-		/* Indicate There is data available */
+		/* Indicate There is data avaliable */
 		RTUSB_SET_BULK_FLAG(pAd,
 				    (fRTUSB_BULK_OUT_DATA_NORMAL <<
 				     BulkOutPipeId));
@@ -336,7 +335,7 @@ static void rtusb_null_frame_done_tasklet(unsigned long data)
 	}
 
 	/* Always call Bulk routine, even reset bulk. */
-	/* The protection of rest bulk should be in BulkOut routine */
+	/* The protectioon of rest bulk should be in BulkOut routine */
 	RTUSBKickBulkOut(pAd);
 }
 
@@ -384,7 +383,7 @@ static void rtusb_rts_frame_done_tasklet(unsigned long data)
 	RTMP_SEM_UNLOCK(&pAd->BulkOutLock[pRTSContext->BulkOutPipeId]);
 
 	/* Always call Bulk routine, even reset bulk. */
-	/* The protection of rest bulk should be in BulkOut routine */
+	/* The protectioon of rest bulk should be in BulkOut routine */
 	RTUSBKickBulkOut(pAd);
 
 }
@@ -428,7 +427,7 @@ static void rtusb_pspoll_frame_done_tasklet(unsigned long data)
 	RTMP_SEM_UNLOCK(&pAd->BulkOutLock[0]);
 
 	/* Always call Bulk routine, even reset bulk. */
-	/* The protection of rest bulk should be in BulkOut routine */
+	/* The protectioon of rest bulk should be in BulkOut routine */
 	RTUSBKickBulkOut(pAd);
 
 }
@@ -576,7 +575,7 @@ static void rtusb_mgmt_dma_done_tasklet(unsigned long data)
 		} else {
 
 			/* Always call Bulk routine, even reset bulk. */
-			/* The protection of rest bulk should be in BulkOut routine */
+			/* The protectioon of rest bulk should be in BulkOut routine */
 			if (pAd->MgmtRing.TxSwFreeIdx <
 			    MGMT_RING_SIZE
 			    /* pMLMEContext->bWaitingBulkOut == TRUE */) {

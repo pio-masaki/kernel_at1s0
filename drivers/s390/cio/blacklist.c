@@ -79,15 +79,17 @@ static int pure_hex(char **cp, unsigned int *val, int min_digit,
 		    int max_digit, int max_val)
 {
 	int diff;
+	unsigned int value;
 
 	diff = 0;
 	*val = 0;
 
-	while (diff <= max_digit) {
-		int value = hex_to_bin(**cp);
+	while (isxdigit(**cp) && (diff <= max_digit)) {
 
-		if (value < 0)
-			break;
+		if (isdigit(**cp))
+			value = **cp - '0';
+		else
+			value = tolower(**cp) - 'a' + 10;
 		*val = *val * 16 + value;
 		(*cp)++;
 		diff++;

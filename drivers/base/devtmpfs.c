@@ -29,33 +29,33 @@
 static struct vfsmount *dev_mnt;
 
 #if defined CONFIG_DEVTMPFS_MOUNT
-static int mount_dev = 1;
+static int dev_mount = 1;
 #else
-static int mount_dev;
+static int dev_mount;
 #endif
 
 static DEFINE_MUTEX(dirlock);
 
 static int __init mount_param(char *str)
 {
-	mount_dev = simple_strtoul(str, NULL, 0);
+	dev_mount = simple_strtoul(str, NULL, 0);
 	return 1;
 }
 __setup("devtmpfs.mount=", mount_param);
 
-static struct dentry *dev_mount(struct file_system_type *fs_type, int flags,
-		      const char *dev_name, void *data)
+static int dev_get_sb(struct file_system_type *fs_type, int flags,
+		      const char *dev_name, void *data, struct vfsmount *mnt)
 {
 #ifdef CONFIG_TMPFS
-	return mount_single(fs_type, flags, data, shmem_fill_super);
+	return get_sb_single(fs_type, flags, data, shmem_fill_super, mnt);
 #else
-	return mount_single(fs_type, flags, data, ramfs_fill_super);
+	return get_sb_single(fs_type, flags, data, ramfs_fill_super, mnt);
 #endif
 }
 
 static struct file_system_type dev_fs_type = {
 	.name = "devtmpfs",
-	.mount = dev_mount,
+	.get_sb = dev_get_sb,
 	.kill_sb = kill_litter_super,
 };
 
@@ -351,7 +351,7 @@ int devtmpfs_mount(const char *mntdir)
 {
 	int err;
 
-	if (!mount_dev)
+	if (!dev_mount)
 		return 0;
 
 	if (!dev_mnt)

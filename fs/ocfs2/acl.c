@@ -24,6 +24,7 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 
+#define MLOG_MASK_PREFIX ML_INODE
 #include <cluster/masklog.h>
 
 #include "ocfs2.h"
@@ -290,17 +291,13 @@ static int ocfs2_set_acl(handle_t *handle,
 	return ret;
 }
 
-int ocfs2_check_acl(struct inode *inode, int mask, unsigned int flags)
+int ocfs2_check_acl(struct inode *inode, int mask)
 {
-	struct ocfs2_super *osb;
+	struct ocfs2_super *osb = OCFS2_SB(inode->i_sb);
 	struct buffer_head *di_bh = NULL;
 	struct posix_acl *acl;
 	int ret = -EAGAIN;
 
-	if (flags & IPERM_FLAG_RCU)
-		return -ECHILD;
-
-	osb = OCFS2_SB(inode->i_sb);
 	if (!(osb->s_mount_opt & OCFS2_MOUNT_POSIX_ACL))
 		return ret;
 
@@ -496,7 +493,7 @@ static int ocfs2_xattr_set_acl(struct dentry *dentry, const char *name,
 	if (!(osb->s_mount_opt & OCFS2_MOUNT_POSIX_ACL))
 		return -EOPNOTSUPP;
 
-	if (!inode_owner_or_capable(inode))
+	if (!is_owner_or_cap(inode))
 		return -EPERM;
 
 	if (value) {

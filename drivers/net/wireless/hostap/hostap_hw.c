@@ -2621,7 +2621,7 @@ static irqreturn_t prism2_interrupt(int irq, void *dev_id)
 	iface = netdev_priv(dev);
 	local = iface->local;
 
-	/* Detect early interrupt before driver is fully configured */
+	/* Detect early interrupt before driver is fully configued */
 	spin_lock(&local->irq_init_lock);
 	if (!dev->base_addr) {
 		if (net_ratelimit()) {
@@ -3317,13 +3317,7 @@ static void prism2_free_local_data(struct net_device *dev)
 
 	unregister_netdev(local->dev);
 
-	flush_work_sync(&local->reset_queue);
-	flush_work_sync(&local->set_multicast_list_queue);
-	flush_work_sync(&local->set_tim_queue);
-#ifndef PRISM2_NO_STATION_MODES
-	flush_work_sync(&local->info_queue);
-#endif
-	flush_work_sync(&local->comms_qual_update);
+	flush_scheduled_work();
 
 	lib80211_crypt_info_free(&local->crypt_info);
 

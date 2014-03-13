@@ -20,7 +20,7 @@
 #include <linux/fd.h>
 #include <linux/slab.h>
 #include <linux/blkdev.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/hdreg.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
@@ -222,7 +222,6 @@ extern int swim_read_sector_header(struct swim __iomem *base,
 extern int swim_read_sector_data(struct swim __iomem *base,
 				 unsigned char *data);
 
-static DEFINE_MUTEX(swim_mutex);
 static inline void set_swim_mode(struct swim __iomem *base, int enable)
 {
 	struct iwm __iomem *iwm_base;
@@ -667,9 +666,9 @@ static int floppy_unlocked_open(struct block_device *bdev, fmode_t mode)
 {
 	int ret;
 
-	mutex_lock(&swim_mutex);
+	lock_kernel();
 	ret = floppy_open(bdev, mode);
-	mutex_unlock(&swim_mutex);
+	unlock_kernel();
 
 	return ret;
 }
@@ -679,7 +678,7 @@ static int floppy_release(struct gendisk *disk, fmode_t mode)
 	struct floppy_state *fs = disk->private_data;
 	struct swim __iomem *base = fs->swd->base;
 
-	mutex_lock(&swim_mutex);
+	lock_kernel();
 	if (fs->ref_count < 0)
 		fs->ref_count = 0;
 	else if (fs->ref_count > 0)
@@ -687,7 +686,7 @@ static int floppy_release(struct gendisk *disk, fmode_t mode)
 
 	if (fs->ref_count == 0)
 		swim_motor(base, OFF);
-	mutex_unlock(&swim_mutex);
+	unlock_kernel();
 
 	return 0;
 }
@@ -705,9 +704,9 @@ static int floppy_ioctl(struct block_device *bdev, fmode_t mode,
 	case FDEJECT:
 		if (fs->ref_count != 1)
 			return -EBUSY;
-		mutex_lock(&swim_mutex);
+		lock_kernel();
 		err = floppy_eject(fs);
-		mutex_unlock(&swim_mutex);
+		unlock_kernel();
 		return err;
 
 	case FDGETPRM:
@@ -741,12 +740,11 @@ static int floppy_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 	return 0;
 }
 
-static unsigned int floppy_check_events(struct gendisk *disk,
-					unsigned int clearing)
+static int floppy_check_change(struct gendisk *disk)
 {
 	struct floppy_state *fs = disk->private_data;
 
-	return fs->ejected ? DISK_EVENT_MEDIA_CHANGE : 0;
+	return fs->ejected;
 }
 
 static int floppy_revalidate(struct gendisk *disk)
@@ -773,7 +771,7 @@ static const struct block_device_operations floppy_fops = {
 	.release	 = floppy_release,
 	.ioctl		 = floppy_ioctl,
 	.getgeo		 = floppy_getgeo,
-	.check_events	 = floppy_check_events,
+	.media_changed	 = floppy_check_change,
 	.revalidate_disk = floppy_revalidate,
 };
 

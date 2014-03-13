@@ -6,7 +6,7 @@
 ** Description: 
 **     High Resolution Time helper functions for Linux.
 **
-** Portions Copyright (c) 2010-2011 Immersion Corporation. All Rights Reserved. 
+** Portions Copyright (c) 2010 Immersion Corporation. All Rights Reserved. 
 **
 ** This file contains Original Code and/or Modifications of Original Code 
 ** as defined in and that are subject to the GNU Public License v2 - 
@@ -32,7 +32,6 @@
 ** the 5ms required rate.
 */
 
-
 #ifndef CONFIG_HIGH_RES_TIMERS
 #warning "The Kernel does not have high resolution timers enabled. Either provide a non hr-timer implementation of VibeOSKernelLinuxTime.c or re-compile your kernel with CONFIG_HIGH_RES_TIMERS=y"
 #endif
@@ -42,19 +41,13 @@
 
 #define WATCHDOG_TIMEOUT    10  /* 10 timer cycles = 50ms */
 
-/* For compatibility with older Kernels */
-#ifndef DEFINE_SEMAPHORE
-#define DEFINE_SEMAPHORE(name) \
-    struct semaphore name = __SEMAPHORE_INITIALIZER(name, 1)
-#endif
-
 /* Global variables */
 static bool g_bTimerStarted = false;
 static struct hrtimer g_tspTimer;
 static ktime_t g_ktFiveMs;
 static int g_nWatchdogCounter = 0;
 
-DEFINE_SEMAPHORE(g_hMutex);
+DECLARE_MUTEX(g_hMutex);
 
 /* Forward declarations */
 static void VibeOSKernelLinuxStartTimer(void);
@@ -162,7 +155,10 @@ static int VibeOSKernelProcessData(void* data)
 static void VibeOSKernelLinuxInitTimer(void)
 {
     /* Get a 5,000,000ns = 5ms time value */
+    //g_ktFiveMs = ktime_set(0, 5000000);
     g_ktFiveMs = ktime_set(0, 5000000);
+	
+	//DbgOut(("VibeOSKernelLinuxStartTimer: Levi print g_ktFiveMs = %d\n",g_ktFiveMs));
 
     hrtimer_init(&g_tspTimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 

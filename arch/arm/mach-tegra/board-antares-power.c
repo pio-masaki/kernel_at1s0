@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2011 NVIDIA, Inc.
+ * Copyright (C) 2010 NVIDIA, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -22,8 +22,8 @@
 #include <linux/regulator/machine.h>
 #include <linux/mfd/tps6586x.h>
 #include <linux/gpio.h>
+#include <mach/suspend.h>
 #include <linux/io.h>
-#include <linux/power/gpio-charger.h>
 
 #include <mach/iomap.h>
 #include <mach/irqs.h>
@@ -32,7 +32,7 @@
 
 #include "gpio-names.h"
 #include "fuse.h"
-#include "pm.h"
+#include "power.h"
 #include "wakeups-t2.h"
 #include "board.h"
 #include "board-antares.h"
@@ -89,10 +89,6 @@ static struct regulator_consumer_supply tps658621_ldo5_supply[] = {
 static struct regulator_consumer_supply tps658621_ldo6_supply[] = {
 	REGULATOR_SUPPLY("vdd_ldo6", NULL),
 	REGULATOR_SUPPLY("vcsi", "tegra_camera"),
-	REGULATOR_SUPPLY("vdd_dmic", "tegra-snd-wm8903.0"),
-	REGULATOR_SUPPLY("vdd_i2c", "3-0030"),
-	REGULATOR_SUPPLY("vdd_i2c", "6-0072"),
-	REGULATOR_SUPPLY("vdd_i2c", "7-0072"),
 };
 static struct regulator_consumer_supply tps658621_ldo7_supply[] = {
 	REGULATOR_SUPPLY("vdd_ldo7", NULL),
@@ -107,7 +103,7 @@ static struct regulator_consumer_supply tps658621_ldo9_supply[] = {
 	REGULATOR_SUPPLY("vdd_ldo9", NULL),
 	REGULATOR_SUPPLY("avdd_2v85", NULL),
 	REGULATOR_SUPPLY("vdd_ddr_rx", NULL),
-	REGULATOR_SUPPLY("vdd_spk_amp", "tegra-snd-wm8903.0"),
+	REGULATOR_SUPPLY("avdd_amp", NULL),
 };
 
 static struct tps6586x_settings sm0_config = {
@@ -116,10 +112,6 @@ static struct tps6586x_settings sm0_config = {
 };
 
 static struct tps6586x_settings sm1_config = {
-	/*
-	 * Current TPS6586x is known for having a voltage glitch if current load
-	 * changes from low to high in auto PWM/PFM mode for CPU's Vdd line.
-	 */
 	.sm_pwm_mode = PWM_ONLY,
 	.slew_rate = SLEW_RATE_3520UV_PER_SEC,
 };
@@ -135,7 +127,6 @@ static struct tps6586x_settings sm1_config = {
 					   REGULATOR_CHANGE_STATUS |	\
 					   REGULATOR_CHANGE_VOLTAGE),	\
 			.always_on = on,				\
-			.apply_uV = 1,					\
 		},							\
 		.num_consumer_supplies = ARRAY_SIZE(tps658621_##_id##_supply),\
 		.consumer_supplies = tps658621_##_id##_supply,		\
@@ -152,12 +143,12 @@ static struct regulator_init_data ldo0_data = REGULATOR_INIT(ldo0, 1250, 3300, O
 static struct regulator_init_data ldo1_data = REGULATOR_INIT(ldo1, 725, 1500, ON, NULL);
 static struct regulator_init_data ldo2_data = REGULATOR_INIT(ldo2, 725, 1500, OFF, NULL);
 static struct regulator_init_data ldo3_data = REGULATOR_INIT(ldo3, 1250, 3300, OFF, NULL);
-static struct regulator_init_data ldo4_data = REGULATOR_INIT(ldo4, 1700, 2475, ON, NULL);
+static struct regulator_init_data ldo4_data = REGULATOR_INIT(ldo4, 1700, 2475, OFF, NULL);
 static struct regulator_init_data ldo5_data = REGULATOR_INIT(ldo5, 1250, 3300, ON, NULL);
 static struct regulator_init_data ldo6_data = REGULATOR_INIT(ldo6, 1250, 1800, OFF, NULL);
 static struct regulator_init_data ldo7_data = REGULATOR_INIT(ldo7, 1250, 3300, OFF, NULL);
 static struct regulator_init_data ldo8_data = REGULATOR_INIT(ldo8, 1250, 3300, OFF, NULL);
-static struct regulator_init_data ldo9_data = REGULATOR_INIT(ldo9, 1250, 3300, ON, NULL);
+static struct regulator_init_data ldo9_data = REGULATOR_INIT(ldo9, 1250, 3300, OFF, NULL);
 
 static struct tps6586x_rtc_platform_data rtc_data = {
 	.irq = TEGRA_NR_IRQS + TPS6586X_INT_RTC_ALM1,
@@ -166,7 +157,7 @@ static struct tps6586x_rtc_platform_data rtc_data = {
 		.month = 1,
 		.day = 1,
 	},
-	.cl_sel = TPS6586X_RTC_CL_SEL_7_5PF
+	.cl_sel = TPS6586X_RTC_CL_SEL_7_5PF /* use lowest (external 20pF cap) */
 };
 
 #define TPS_REG(_id, _data)			\
@@ -212,18 +203,6 @@ static struct i2c_board_info __initdata antares_regulators[] = {
 	},
 };
 
-static void antares_board_suspend(int lp_state, enum suspend_stage stg)
-{
-	if ((lp_state == TEGRA_SUSPEND_LP1) && (stg == TEGRA_SUSPEND_BEFORE_CPU))
-		tegra_console_uart_suspend();
-}
-
-static void antares_board_resume(int lp_state, enum resume_stage stg)
-{
-	if ((lp_state == TEGRA_SUSPEND_LP1) && (stg == TEGRA_RESUME_AFTER_CPU))
-		tegra_console_uart_resume();
-}
-
 static struct tegra_suspend_platform_data antares_suspend_data = {
 	/*
 	 * Check power on time and crystal oscillator start time
@@ -234,10 +213,13 @@ static struct tegra_suspend_platform_data antares_suspend_data = {
 	.suspend_mode	= TEGRA_SUSPEND_LP0,
 	.core_timer	= 0x7e7e,
 	.core_off_timer = 0xf,
+	.separate_req	= true,
 	.corereq_high	= false,
 	.sysclkreq_high	= true,
-	.board_suspend = antares_board_suspend,
-	.board_resume = antares_board_resume,
+	.wake_enb	= TEGRA_WAKE_GPIO_PV2 | TEGRA_WAKE_GPIO_PY6,
+	.wake_high	= 0,
+	.wake_low	= TEGRA_WAKE_GPIO_PV2 | TEGRA_WAKE_GPIO_PY6,
+	.wake_any	= 0,
 };
 
 int __init antares_regulator_init(void)
@@ -263,33 +245,6 @@ int __init antares_regulator_init(void)
 
 	tegra_init_suspend(&antares_suspend_data);
 
-	return 0;
-}
-
-static char *antares_battery[] = {
-	"battery",
-};
-
-static struct gpio_charger_platform_data antares_charger_pdata = {
-	.name = "ac",
-	.type = POWER_SUPPLY_TYPE_MAINS,
-	.gpio = AC_PRESENT_GPIO,
-	.gpio_active_low = 1,
-	.supplied_to = antares_battery,
-	.num_supplicants = ARRAY_SIZE(antares_battery),
-};
-
-static struct platform_device antares_charger_device = {
-	.name = "gpio-charger",
-	.dev = {
-		.platform_data = &antares_charger_pdata,
-	},
-};
-
-int __init antares_charger_init(void)
-{
-	tegra_gpio_enable(AC_PRESENT_GPIO);
-	platform_device_register(&antares_charger_device);
 	return 0;
 }
 

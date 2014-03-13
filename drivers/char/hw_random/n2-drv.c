@@ -619,20 +619,15 @@ static void __devinit n2rng_driver_version(void)
 		pr_info("%s", version);
 }
 
-static const struct of_device_id n2rng_match[];
-static int __devinit n2rng_probe(struct platform_device *op)
+static int __devinit n2rng_probe(struct platform_device *op,
+				 const struct of_device_id *match)
 {
-	const struct of_device_id *match;
-	int victoria_falls;
+	int victoria_falls = (match->data != NULL);
 	int err = -ENOMEM;
 	struct n2rng *np;
 
-	match = of_match_device(n2rng_match, &op->dev);
-	if (!match)
-		return -EINVAL;
-	victoria_falls = (match->data != NULL);
-
 	n2rng_driver_version();
+
 	np = kzalloc(sizeof(*np), GFP_KERNEL);
 	if (!np)
 		goto out;
@@ -755,7 +750,7 @@ static const struct of_device_id n2rng_match[] = {
 };
 MODULE_DEVICE_TABLE(of, n2rng_match);
 
-static struct platform_driver n2rng_driver = {
+static struct of_platform_driver n2rng_driver = {
 	.driver = {
 		.name = "n2rng",
 		.owner = THIS_MODULE,
@@ -767,12 +762,12 @@ static struct platform_driver n2rng_driver = {
 
 static int __init n2rng_init(void)
 {
-	return platform_driver_register(&n2rng_driver);
+	return of_register_platform_driver(&n2rng_driver);
 }
 
 static void __exit n2rng_exit(void)
 {
-	platform_driver_unregister(&n2rng_driver);
+	of_unregister_platform_driver(&n2rng_driver);
 }
 
 module_init(n2rng_init);
