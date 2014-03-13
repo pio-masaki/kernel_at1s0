@@ -111,6 +111,41 @@ config CPU_FREQ_DEFAULT_GOV_CONSERVATIVE
 	  governor. If unsure have a look at the help section of the
 	  driver. Fallback governor will be the performance governor.
 
+config CPU_FREQ_DEFAULT_GOV_INTELLIDEMAND
+	  bool "intellidemand"
+	   select CPU_FREQ_GOV_INTELLIDEMAND
+	   help
+	Use as default governor
+
+config CPU_FREQ_DEFAULT_GOV_SAVAGEDZEN
+	  bool "savagedzen"
+	   select CPU_FREQ_GOV_SAVAGEDZEN
+	   help
+
+config CPU_FREQ_DEFAULT_GOV_LAZY
+	  bool "lazy"
+	   select CPU_FREQ_GOV_LAZY
+	   help
+	Use as default governor
+
+config CPU_FREQ_DEFAULT_GOV_LIONHEART
+	  bool "lionheart"
+	   select CPU_FREQ_GOV_LIONHEART
+	   help
+	Use as default governor
+
+config CPU_FREQ_DEFAULT_GOV_WHEATLEY
+	  bool "wheatley"
+	   select CPU_FREQ_GOV_WHEATLEY
+	   help
+	Use as default governor
+
+config CPU_FREQ_DEFAULT_GOV_SCARY
+	  bool "scary"
+	   select CPU_FREQ_GOV_SCARY
+	   help
+	Use as default governor
+
 config CPU_FREQ_DEFAULT_GOV_INTERACTIVE
 	bool "interactive"
 	select CPU_FREQ_GOV_INTERACTIVE
@@ -205,5 +240,58 @@ config CPU_FREQ_GOV_CONSERVATIVE
 	  For details, take a look at linux/Documentation/cpu-freq.
 
 	  If in doubt, say N.
+
+config CPU_FREQ_GOV_INTELLIDEMAND
+	tristate "'intellidemand' cpufreq governor"
+	depends on CPU_FREQ
+	help
+	Use as default governor
+
+config CPU_FREQ_GOV_SAVAGEDZEN
+	tristate "'savagedzen' cpufreq governor"
+	depends on CPU_FREQ
+	help
+	Use as default governor
+
+config CPU_FREQ_GOV_WHEATLEY
+	tristate "'wheatley' cpufreq governor"
+	depends on CPU_FREQ
+	help
+	Use as default governor
+
+config CPU_FREQ_GOV_LAZY
+	tristate "'lazy' cpufreq governor"
+	depends on CPU_FREQ
+	help
+	Use as default governor
+
+config CPU_FREQ_GOV_SCARY
+	tristate "'scary' cpufreq governor"
+	depends on CPU_FREQ
+	help
+	Use as default governor
+
+config CPU_FREQ_GOV_LIONHEART
+	tristate "'lionheart' cpufreq governor"
+	depends on CPU_FREQ
+	help
+	Use as default governor
+
+config CPU_FREQ_GOV_LAGFREE
+	tristate "'lagfree' cpufreq governor"
+	depends on CPU_FREQ
+	help
+	'lagfree' - this driver is rather similar to the 'ondemand'
+	governor both in its source code and its purpose, the difference is
+	its optimisation for better suitability in a battery powered
+	environment. The frequency is gracefully increased and decreased
+	rather than jumping to 100% when speed is required.
+
+	To compile this driver as a module, choose M here: the
+	module will be called cpufreq_lagfree.
+
+	For details, take a look at linux/Documentation/cpu-freq.
+
+	If in doubt, say N.
 
 endif	# CPU_FREQ
