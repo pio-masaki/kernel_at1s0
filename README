@@ -1,3 +1,8 @@
+Toshiba Thrive 7" AT1S0 Honeycomb (3.1) Kernel. Modified from Toshiba source. Branch "caspar" is an experimental branch with overclocking. It may not build, may not boot, may melt your face with awesomeness, may kill every roach in the neighborhood or it may grow fur and cluck like a chicken. I do my best to not release anything broken, but that is often the case. Please use caution with this source.
+
+And now, a word from our lawyers...
+
+
 	Linux kernel release 2.6.xx <http://kernel.org/>
 
 These are the release notes for Linux version 2.6.  Read them carefully,
