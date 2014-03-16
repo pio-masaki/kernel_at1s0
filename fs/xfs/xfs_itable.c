@@ -92,8 +92,7 @@ xfs_bulkstat_one_int(
 	 * further change.
 	 */
 	buf->bs_nlink = dic->di_nlink;
-	buf->bs_projid_lo = dic->di_projid_lo;
-	buf->bs_projid_hi = dic->di_projid_hi;
+	buf->bs_projid = dic->di_projid;
 	buf->bs_ino = ino;
 	buf->bs_mode = dic->di_mode;
 	buf->bs_uid = dic->di_uid;
@@ -204,6 +203,7 @@ xfs_bulkstat(
 	xfs_agi_t		*agi;	/* agi header data */
 	xfs_agino_t		agino;	/* inode # in allocation group */
 	xfs_agnumber_t		agno;	/* allocation group number */
+	xfs_daddr_t		bno;	/* inode cluster start daddr */
 	int			chunkidx; /* current index into inode chunk */
 	int			clustidx; /* current index into inode cluster */
 	xfs_btree_cur_t		*cur;	/* btree cursor for ialloc btree */
@@ -462,6 +462,7 @@ xfs_bulkstat(
 						 mp->m_sb.sb_inopblog);
 				}
 				ino = XFS_AGINO_TO_INO(mp, agno, agino);
+				bno = XFS_AGB_TO_DADDR(mp, agno, agbno);
 				/*
 				 * Skip if this inode is free.
 				 */

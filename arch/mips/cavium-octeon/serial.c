@@ -13,7 +13,6 @@
 #include <linux/serial_8250.h>
 #include <linux/serial_reg.h>
 #include <linux/tty.h>
-#include <linux/irq.h>
 
 #include <asm/time.h>
 
@@ -66,7 +65,7 @@ static void __init octeon_uart_set_common(struct plat_serial8250_port *p)
 		/* Make simulator output fast*/
 		p->uartclk = 115200 * 16;
 	else
-		p->uartclk = octeon_get_io_clock_rate();
+		p->uartclk = mips_hpt_frequency;
 	p->serial_in = octeon_serial_in;
 	p->serial_out = octeon_serial_out;
 }

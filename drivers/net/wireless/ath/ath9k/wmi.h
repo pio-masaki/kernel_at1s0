@@ -31,6 +31,10 @@ struct wmi_cmd_hdr {
 	__be16 seq_no;
 } __packed;
 
+struct wmi_swba {
+	u8 beacon_pending;
+} __packed;
+
 enum wmi_cmd_id {
 	WMI_ECHO_CMDID = 0x0001,
 	WMI_ACCESS_MEMORY_CMDID,
@@ -67,7 +71,6 @@ enum wmi_cmd_id {
 	WMI_TX_AGGR_ENABLE_CMDID,
 	WMI_TGT_DETACH_CMDID,
 	WMI_TGT_TXQ_ENABLE_CMDID,
-	WMI_AGGR_LIMIT_CMD = 0x0026,
 };
 
 enum wmi_event_id {
@@ -100,7 +103,7 @@ struct wmi {
 	u32 cmd_rsp_len;
 	bool stopped;
 
-	u8 beacon_pending;
+	struct sk_buff *wmi_skb;
 	spinlock_t wmi_lock;
 
 	atomic_t mwrite_cnt;
@@ -117,8 +120,7 @@ int ath9k_wmi_cmd(struct wmi *wmi, enum wmi_cmd_id cmd_id,
 		  u8 *cmd_buf, u32 cmd_len,
 		  u8 *rsp_buf, u32 rsp_len,
 		  u32 timeout);
-void ath9k_swba_tasklet(unsigned long data);
-void ath9k_fatal_work(struct work_struct *work);
+void ath9k_wmi_tasklet(unsigned long data);
 
 #define WMI_CMD(_wmi_cmd)						\
 	do {								\

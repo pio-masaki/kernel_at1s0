@@ -800,7 +800,6 @@ static const struct file_operations ftrace_profile_fops = {
 	.open		= tracing_open_generic,
 	.read		= ftrace_profile_read,
 	.write		= ftrace_profile_write,
-	.llseek		= default_llseek,
 };
 
 /* used to initialize the real stat files */
@@ -885,8 +884,10 @@ enum {
 	FTRACE_ENABLE_CALLS		= (1 << 0),
 	FTRACE_DISABLE_CALLS		= (1 << 1),
 	FTRACE_UPDATE_TRACE_FUNC	= (1 << 2),
-	FTRACE_START_FUNC_RET		= (1 << 3),
-	FTRACE_STOP_FUNC_RET		= (1 << 4),
+	FTRACE_ENABLE_MCOUNT		= (1 << 3),
+	FTRACE_DISABLE_MCOUNT		= (1 << 4),
+	FTRACE_START_FUNC_RET		= (1 << 5),
+	FTRACE_STOP_FUNC_RET		= (1 << 6),
 };
 
 static int ftrace_filtered;
@@ -1225,6 +1226,8 @@ static void ftrace_shutdown(int command)
 
 static void ftrace_startup_sysctl(void)
 {
+	int command = FTRACE_ENABLE_MCOUNT;
+
 	if (unlikely(ftrace_disabled))
 		return;
 
@@ -1232,17 +1235,23 @@ static void ftrace_startup_sysctl(void)
 	saved_ftrace_func = NULL;
 	/* ftrace_start_up is true if we want ftrace running */
 	if (ftrace_start_up)
-		ftrace_run_update_code(FTRACE_ENABLE_CALLS);
+		command |= FTRACE_ENABLE_CALLS;
+
+	ftrace_run_update_code(command);
 }
 
 static void ftrace_shutdown_sysctl(void)
 {
+	int command = FTRACE_DISABLE_MCOUNT;
+
 	if (unlikely(ftrace_disabled))
 		return;
 
 	/* ftrace_start_up is true if ftrace is running */
 	if (ftrace_start_up)
-		ftrace_run_update_code(FTRACE_DISABLE_CALLS);
+		command |= FTRACE_DISABLE_CALLS;
+
+	ftrace_run_update_code(command);
 }
 
 static cycle_t		ftrace_update_time;
@@ -1268,7 +1277,7 @@ static int ftrace_update_code(struct module *mod)
 		p->flags = 0L;
 
 		/*
-		 * Do the initial record conversion from mcount jump
+		 * Do the initial record convertion from mcount jump
 		 * to the NOP instructions.
 		 */
 		if (!ftrace_code_disable(mod, p)) {
@@ -1359,29 +1368,24 @@ enum {
 #define FTRACE_BUFF_MAX (KSYM_SYMBOL_LEN+4) /* room for wildcards */
 
 struct ftrace_iterator {
-	loff_t				pos;
-	loff_t				func_pos;
-	struct ftrace_page		*pg;
-	struct dyn_ftrace		*func;
-	struct ftrace_func_probe	*probe;
-	struct trace_parser		parser;
-	int				hidx;
-	int				idx;
-	unsigned			flags;
+	struct ftrace_page	*pg;
+	int			hidx;
+	int			idx;
+	unsigned		flags;
+	struct trace_parser	parser;
 };
 
 static void *
-t_hash_next(struct seq_file *m, loff_t *pos)
+t_hash_next(struct seq_file *m, void *v, loff_t *pos)
 {
 	struct ftrace_iterator *iter = m->private;
-	struct hlist_node *hnd = NULL;
+	struct hlist_node *hnd = v;
 	struct hlist_head *hhd;
 
-	(*pos)++;
-	iter->pos = *pos;
+	WARN_ON(!(iter->flags & FTRACE_ITER_HASH));
 
-	if (iter->probe)
-		hnd = &iter->probe->node;
+	(*pos)++;
+
  retry:
 	if (iter->hidx >= FTRACE_FUNC_HASHSIZE)
 		return NULL;
@@ -1404,12 +1408,7 @@ t_hash_next(struct seq_file *m, loff_t *pos)
 		}
 	}
 
-	if (WARN_ON_ONCE(!hnd))
-		return NULL;
-
-	iter->probe = hlist_entry(hnd, struct ftrace_func_probe, node);
-
-	return iter;
+	return hnd;
 }
 
 static void *t_hash_start(struct seq_file *m, loff_t *pos)
@@ -1418,32 +1417,26 @@ static void *t_hash_start(struct seq_file *m, loff_t *pos)
 	void *p = NULL;
 	loff_t l;
 
-	if (iter->func_pos > *pos)
-		return NULL;
+	if (!(iter->flags & FTRACE_ITER_HASH))
+		*pos = 0;
+
+	iter->flags |= FTRACE_ITER_HASH;
 
 	iter->hidx = 0;
-	for (l = 0; l <= (*pos - iter->func_pos); ) {
-		p = t_hash_next(m, &l);
+	for (l = 0; l <= *pos; ) {
+		p = t_hash_next(m, p, &l);
 		if (!p)
 			break;
 	}
-	if (!p)
-		return NULL;
-
-	/* Only set this if we have an item */
-	iter->flags |= FTRACE_ITER_HASH;
-
-	return iter;
+	return p;
 }
 
-static int
-t_hash_show(struct seq_file *m, struct ftrace_iterator *iter)
+static int t_hash_show(struct seq_file *m, void *v)
 {
 	struct ftrace_func_probe *rec;
+	struct hlist_node *hnd = v;
 
-	rec = iter->probe;
-	if (WARN_ON_ONCE(!rec))
-		return -EIO;
+	rec = hlist_entry(hnd, struct ftrace_func_probe, node);
 
 	if (rec->ops->print)
 		return rec->ops->print(m, rec->ip, rec->ops, rec->data);
@@ -1464,13 +1457,12 @@ t_next(struct seq_file *m, void *v, loff_t *pos)
 	struct dyn_ftrace *rec = NULL;
 
 	if (iter->flags & FTRACE_ITER_HASH)
-		return t_hash_next(m, pos);
+		return t_hash_next(m, v, pos);
 
 	(*pos)++;
-	iter->pos = iter->func_pos = *pos;
 
 	if (iter->flags & FTRACE_ITER_PRINTALL)
-		return t_hash_start(m, pos);
+		return NULL;
 
  retry:
 	if (iter->idx >= iter->pg->index) {
@@ -1499,19 +1491,7 @@ t_next(struct seq_file *m, void *v, loff_t *pos)
 		}
 	}
 
-	if (!rec)
-		return t_hash_start(m, pos);
-
-	iter->func = rec;
-
-	return iter;
-}
-
-static void reset_iter_read(struct ftrace_iterator *iter)
-{
-	iter->pos = 0;
-	iter->func_pos = 0;
-	iter->flags &= ~(FTRACE_ITER_PRINTALL & FTRACE_ITER_HASH);
+	return rec;
 }
 
 static void *t_start(struct seq_file *m, loff_t *pos)
@@ -1521,12 +1501,6 @@ static void *t_start(struct seq_file *m, loff_t *pos)
 	loff_t l;
 
 	mutex_lock(&ftrace_lock);
-	/*
-	 * If an lseek was done, then reset and start from beginning.
-	 */
-	if (*pos < iter->pos)
-		reset_iter_read(iter);
-
 	/*
 	 * For set_ftrace_filter reading, if we have the filter
 	 * off, we can short cut and just print out that all
@@ -1544,11 +1518,6 @@ static void *t_start(struct seq_file *m, loff_t *pos)
 	if (iter->flags & FTRACE_ITER_HASH)
 		return t_hash_start(m, pos);
 
-	/*
-	 * Unfortunately, we need to restart at ftrace_pages_start
-	 * every time we let go of the ftrace_mutex. This is because
-	 * those pointers can change without the lock.
-	 */
 	iter->pg = ftrace_pages_start;
 	iter->idx = 0;
 	for (l = 0; l <= *pos; ) {
@@ -1557,14 +1526,10 @@ static void *t_start(struct seq_file *m, loff_t *pos)
 			break;
 	}
 
-	if (!p) {
-		if (iter->flags & FTRACE_ITER_FILTER)
-			return t_hash_start(m, pos);
+	if (!p && iter->flags & FTRACE_ITER_FILTER)
+		return t_hash_start(m, pos);
 
-		return NULL;
-	}
-
-	return iter;
+	return p;
 }
 
 static void t_stop(struct seq_file *m, void *p)
@@ -1575,17 +1540,15 @@ static void t_stop(struct seq_file *m, void *p)
 static int t_show(struct seq_file *m, void *v)
 {
 	struct ftrace_iterator *iter = m->private;
-	struct dyn_ftrace *rec;
+	struct dyn_ftrace *rec = v;
 
 	if (iter->flags & FTRACE_ITER_HASH)
-		return t_hash_show(m, iter);
+		return t_hash_show(m, v);
 
 	if (iter->flags & FTRACE_ITER_PRINTALL) {
 		seq_printf(m, "#### all functions enabled ####\n");
 		return 0;
 	}
-
-	rec = iter->func;
 
 	if (!rec)
 		return 0;
@@ -1638,8 +1601,8 @@ ftrace_failures_open(struct inode *inode, struct file *file)
 
 	ret = ftrace_avail_open(inode, file);
 	if (!ret) {
-		m = file->private_data;
-		iter = m->private;
+		m = (struct seq_file *)file->private_data;
+		iter = (struct ftrace_iterator *)m->private;
 		iter->flags = FTRACE_ITER_FAILURES;
 	}
 
@@ -2413,15 +2376,13 @@ ftrace_regex_release(struct inode *inode, struct file *file, int enable)
 		ftrace_match_records(parser->buffer, parser->idx, enable);
 	}
 
+	mutex_lock(&ftrace_lock);
+	if (ftrace_start_up && ftrace_enabled)
+		ftrace_run_update_code(FTRACE_ENABLE_CALLS);
+	mutex_unlock(&ftrace_lock);
+
 	trace_parser_put(parser);
 	kfree(iter);
-
-	if (file->f_mode & FMODE_WRITE) {
-		mutex_lock(&ftrace_lock);
-		if (ftrace_start_up && ftrace_enabled)
-			ftrace_run_update_code(FTRACE_ENABLE_CALLS);
-		mutex_unlock(&ftrace_lock);
-	}
 
 	mutex_unlock(&ftrace_regex_lock);
 	return 0;
@@ -2457,7 +2418,7 @@ static const struct file_operations ftrace_filter_fops = {
 	.open = ftrace_filter_open,
 	.read = seq_read,
 	.write = ftrace_filter_write,
-	.llseek = ftrace_regex_lseek,
+	.llseek = no_llseek,
 	.release = ftrace_filter_release,
 };
 
@@ -2671,7 +2632,6 @@ static const struct file_operations ftrace_graph_fops = {
 	.read		= seq_read,
 	.write		= ftrace_graph_write,
 	.release	= ftrace_graph_release,
-	.llseek		= seq_lseek,
 };
 #endif /* CONFIG_FUNCTION_GRAPH_TRACER */
 
@@ -3329,7 +3289,7 @@ static int start_graph_tracing(void)
 	/* The cpu_boot init_task->ret_stack will never be freed */
 	for_each_online_cpu(cpu) {
 		if (!idle_task(cpu)->ret_stack)
-			ftrace_graph_init_idle_task(idle_task(cpu), cpu);
+			ftrace_graph_init_task(idle_task(cpu));
 	}
 
 	do {
@@ -3419,49 +3379,6 @@ void unregister_ftrace_graph(void)
 	mutex_unlock(&ftrace_lock);
 }
 
-static DEFINE_PER_CPU(struct ftrace_ret_stack *, idle_ret_stack);
-
-static void
-graph_init_task(struct task_struct *t, struct ftrace_ret_stack *ret_stack)
-{
-	atomic_set(&t->tracing_graph_pause, 0);
-	atomic_set(&t->trace_overrun, 0);
-	t->ftrace_timestamp = 0;
-	/* make curr_ret_stack visible before we add the ret_stack */
-	smp_wmb();
-	t->ret_stack = ret_stack;
-}
-
-/*
- * Allocate a return stack for the idle task. May be the first
- * time through, or it may be done by CPU hotplug online.
- */
-void ftrace_graph_init_idle_task(struct task_struct *t, int cpu)
-{
-	t->curr_ret_stack = -1;
-	/*
-	 * The idle task has no parent, it either has its own
-	 * stack or no stack at all.
-	 */
-	if (t->ret_stack)
-		WARN_ON(t->ret_stack != per_cpu(idle_ret_stack, cpu));
-
-	if (ftrace_graph_active) {
-		struct ftrace_ret_stack *ret_stack;
-
-		ret_stack = per_cpu(idle_ret_stack, cpu);
-		if (!ret_stack) {
-			ret_stack = kmalloc(FTRACE_RETFUNC_DEPTH
-					    * sizeof(struct ftrace_ret_stack),
-					    GFP_KERNEL);
-			if (!ret_stack)
-				return;
-			per_cpu(idle_ret_stack, cpu) = ret_stack;
-		}
-		graph_init_task(t, ret_stack);
-	}
-}
-
 /* Allocate a return stack for newly created task */
 void ftrace_graph_init_task(struct task_struct *t)
 {
@@ -3477,7 +3394,12 @@ void ftrace_graph_init_task(struct task_struct *t)
 				GFP_KERNEL);
 		if (!ret_stack)
 			return;
-		graph_init_task(t, ret_stack);
+		atomic_set(&t->tracing_graph_pause, 0);
+		atomic_set(&t->trace_overrun, 0);
+		t->ftrace_timestamp = 0;
+		/* make curr_ret_stack visable before we add the ret_stack */
+		smp_wmb();
+		t->ret_stack = ret_stack;
 	}
 }
 

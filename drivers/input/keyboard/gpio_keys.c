@@ -3,8 +3,6 @@
  *
  * Copyright 2005 Phil Blundell
  *
- * Copyright 2010-2011 NVIDIA Corporation
- *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
@@ -47,7 +45,7 @@ struct gpio_keys_drvdata {
 	unsigned int n_buttons;
 	int (*enable)(struct device *dev);
 	void (*disable)(struct device *dev);
-        struct early_suspend early_suspend;
+    struct early_suspend early_suspend;
 	struct gpio_button_data data[0];
 };
 
@@ -329,21 +327,19 @@ static void gpio_keys_report_event(struct gpio_button_data *bdata)
 	struct gpio_keys_button *button = bdata->button;
 	struct input_dev *input = bdata->input;
 	unsigned int type = button->type ?: EV_KEY;
-	int state = (gpio_get_value_cansleep(button->gpio) ? 1 : 0) ^ button->active_low;
+	int state = (gpio_get_value(button->gpio) ? 1 : 0) ^ button->active_low;
 	unsigned long flags;
-
-#if CONFIG_MACH_ANTARES
-	spin_lock_irqsave(&lock, flags);
+/*	spin_lock_irqsave(&lock, flags);
 
 
-        if (screen_off && button->code == KEY_POWER) {
-	    spin_unlock_irqrestore(&lock,flags);
-            input_event(input, type , KEY_HOME, !!state);
-            input_sync(input);
-            return;
-        }
+    if (screen_off && button->code == KEY_POWER) {
+		spin_unlock_irqrestore(&lock,flags);
+        input_event(input, type , KEY_HOME, !!state);
+        input_sync(input);
+        return;
+    }
 	spin_unlock_irqrestore(&lock,flags);
-#endif
+*/	
 	input_event(input, type, button->code, !!state);
 	input_sync(input);
 }
@@ -536,7 +532,9 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 
 		input_set_capability(input, type, button->code);
 	}
-        input_set_capability(input, EV_KEY, KEY_HOME);
+    
+    input_set_capability(input, EV_KEY, KEY_HOME);
+
 	error = sysfs_create_group(&pdev->dev.kobj, &gpio_keys_attr_group);
 	if (error) {
 		dev_err(dev, "Unable to export keys/switches, error: %d\n",
@@ -557,11 +555,12 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 	input_sync(input);
 
 	device_init_wakeup(&pdev->dev, wakeup);
-        spin_lock_init(&lock);
+	spin_lock_init(&lock);
 
-        ddata->early_suspend.suspend = gpio_keys_early_suspend;
-        ddata->early_suspend.resume = gpio_keys_early_resume;
-        register_early_suspend(&(ddata->early_suspend));
+    ddata->early_suspend.suspend = gpio_keys_early_suspend;
+    ddata->early_suspend.resume = gpio_keys_early_resume;
+    register_early_suspend(&(ddata->early_suspend));
+
 	return 0;
 
  fail3:
@@ -649,7 +648,6 @@ static int gpio_keys_resume(struct device *dev)
 
 			if (wakeup_key == button->code) {
 				unsigned int type = button->type ?: EV_KEY;
-
 				input_event(ddata->input, type, KEY_HOME, 1);
 				input_event(ddata->input, type, KEY_HOME, 0);
 				input_sync(ddata->input);

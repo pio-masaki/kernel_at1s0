@@ -144,7 +144,11 @@ static int full_duplex[MAX_UNITS] = {0, };
 /* Time in jiffies before concluding the transmitter is hung. */
 #define TX_TIMEOUT	(2 * HZ)
 
-#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
+/*
+ * This SUCKS.
+ * We need a much better method to determine if dma_addr_t is 64-bit.
+ */
+#if (defined(__i386__) && defined(CONFIG_HIGHMEM64G)) || defined(__x86_64__) || defined (__ia64__) || defined(__alpha__) || defined(__mips64__) || (defined(__mips__) && defined(CONFIG_HIGHMEM) && defined(CONFIG_64BIT_PHYS_ADDR))
 /* 64-bit dma_addr_t */
 #define ADDR_64BITS	/* This chip uses 64 bit addresses. */
 #define netdrv_addr_t __le64
@@ -298,7 +302,7 @@ enum chipset {
 };
 
 static DEFINE_PCI_DEVICE_TABLE(starfire_pci_tbl) = {
-	{ PCI_VDEVICE(ADAPTEC, 0x6915), CH_6915 },
+	{ 0x9004, 0x6915, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CH_6915 },
 	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, starfire_pci_tbl);
@@ -2074,7 +2078,11 @@ static int __init starfire_init (void)
 	printk(KERN_INFO DRV_NAME ": polling (NAPI) enabled\n");
 #endif
 
-	BUILD_BUG_ON(sizeof(dma_addr_t) != sizeof(netdrv_addr_t));
+	/* we can do this test only at run-time... sigh */
+	if (sizeof(dma_addr_t) != sizeof(netdrv_addr_t)) {
+		printk("This driver has dma_addr_t issues, please send email to maintainer\n");
+		return -ENODEV;
+	}
 
 	return pci_register_driver(&starfire_driver);
 }

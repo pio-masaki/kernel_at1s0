@@ -1191,7 +1191,7 @@ static void genesis_init(struct skge_hw *hw)
 
 static void genesis_reset(struct skge_hw *hw, int port)
 {
-	static const u8 zero[8]  = { 0 };
+	const u8 zero[8]  = { 0 };
 	u32 reg;
 
 	skge_write8(hw, SK_REG(port, GMAC_IRQ_MSK), 0);
@@ -1557,7 +1557,7 @@ static void genesis_mac_init(struct skge_hw *hw, int port)
 	int jumbo = hw->dev[port]->mtu > ETH_DATA_LEN;
 	int i;
 	u32 r;
-	static const u8 zero[6]  = { 0 };
+	const u8 zero[6]  = { 0 };
 
 	for (i = 0; i < 10; i++) {
 		skge_write16(hw, SK_REG(port, TX_MFF_CTRL1),
@@ -2764,7 +2764,7 @@ static netdev_tx_t skge_xmit_frame(struct sk_buff *skb,
 	td->dma_hi = map >> 32;
 
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
-		const int offset = skb_checksum_start_offset(skb);
+		const int offset = skb_transport_offset(skb);
 
 		/* This seems backwards, but it is what the sk98lin
 		 * does.  Looks like hardware is wrong?
@@ -3179,7 +3179,8 @@ static int skge_poll(struct napi_struct *napi, int to_do)
 
 		skb = skge_rx_get(dev, e, control, rd->status, rd->csum2);
 		if (likely(skb)) {
-			napi_gro_receive(napi, skb);
+			netif_receive_skb(skb);
+
 			++work_done;
 		}
 	}
@@ -3192,7 +3193,6 @@ static int skge_poll(struct napi_struct *napi, int to_do)
 	if (work_done < to_do) {
 		unsigned long flags;
 
-		napi_gro_flush(napi);
 		spin_lock_irqsave(&hw->hw_lock, flags);
 		__napi_complete(napi);
 		hw->intr_mask |= napimask[skge->port];
@@ -3850,11 +3850,14 @@ static struct net_device *skge_devinit(struct skge_hw *hw, int port,
 		dev->features |= NETIF_F_IP_CSUM | NETIF_F_SG;
 		skge->rx_csum = 1;
 	}
-	dev->features |= NETIF_F_GRO;
 
 	/* read the mac address */
 	memcpy_fromio(dev->dev_addr, hw->regs + B2_MAC_1 + port*8, ETH_ALEN);
 	memcpy(dev->perm_addr, dev->dev_addr, dev->addr_len);
+
+	/* device is off until link detection */
+	netif_carrier_off(dev);
+	netif_stop_queue(dev);
 
 	return dev;
 }
@@ -4009,6 +4012,8 @@ static void __devexit skge_remove(struct pci_dev *pdev)
 	if (!hw)
 		return;
 
+	flush_scheduled_work();
+
 	dev1 = hw->dev[1];
 	if (dev1)
 		unregister_netdev(dev1);
@@ -4039,14 +4044,17 @@ static void __devexit skge_remove(struct pci_dev *pdev)
 }
 
 #ifdef CONFIG_PM
-static int skge_suspend(struct device *dev)
+static int skge_suspend(struct pci_dev *pdev, pm_message_t state)
 {
-	struct pci_dev *pdev = to_pci_dev(dev);
 	struct skge_hw *hw  = pci_get_drvdata(pdev);
-	int i;
+	int i, err, wol = 0;
 
 	if (!hw)
 		return 0;
+
+	err = pci_save_state(pdev);
+	if (err)
+		return err;
 
 	for (i = 0; i < hw->ports; i++) {
 		struct net_device *dev = hw->dev[i];
@@ -4054,24 +4062,34 @@ static int skge_suspend(struct device *dev)
 
 		if (netif_running(dev))
 			skge_down(dev);
-
 		if (skge->wol)
 			skge_wol_init(skge);
+
+		wol |= skge->wol;
 	}
 
 	skge_write32(hw, B0_IMSK, 0);
 
+	pci_prepare_to_sleep(pdev);
+
 	return 0;
 }
 
-static int skge_resume(struct device *dev)
+static int skge_resume(struct pci_dev *pdev)
 {
-	struct pci_dev *pdev = to_pci_dev(dev);
 	struct skge_hw *hw  = pci_get_drvdata(pdev);
 	int i, err;
 
 	if (!hw)
 		return 0;
+
+	err = pci_back_from_sleep(pdev);
+	if (err)
+		goto out;
+
+	err = pci_restore_state(pdev);
+	if (err)
+		goto out;
 
 	err = skge_reset(hw);
 	if (err)
@@ -4093,19 +4111,12 @@ static int skge_resume(struct device *dev)
 out:
 	return err;
 }
-
-static SIMPLE_DEV_PM_OPS(skge_pm_ops, skge_suspend, skge_resume);
-#define SKGE_PM_OPS (&skge_pm_ops)
-
-#else
-
-#define SKGE_PM_OPS NULL
 #endif
 
 static void skge_shutdown(struct pci_dev *pdev)
 {
 	struct skge_hw *hw  = pci_get_drvdata(pdev);
-	int i;
+	int i, wol = 0;
 
 	if (!hw)
 		return;
@@ -4116,10 +4127,15 @@ static void skge_shutdown(struct pci_dev *pdev)
 
 		if (skge->wol)
 			skge_wol_init(skge);
+		wol |= skge->wol;
 	}
 
-	pci_wake_from_d3(pdev, device_may_wakeup(&pdev->dev));
+	if (pci_enable_wake(pdev, PCI_D3cold, wol))
+		pci_enable_wake(pdev, PCI_D3hot, wol);
+
+	pci_disable_device(pdev);
 	pci_set_power_state(pdev, PCI_D3hot);
+
 }
 
 static struct pci_driver skge_driver = {
@@ -4127,8 +4143,11 @@ static struct pci_driver skge_driver = {
 	.id_table =     skge_id_table,
 	.probe =        skge_probe,
 	.remove =       __devexit_p(skge_remove),
+#ifdef CONFIG_PM
+	.suspend = 	skge_suspend,
+	.resume = 	skge_resume,
+#endif
 	.shutdown =	skge_shutdown,
-	.driver.pm =	SKGE_PM_OPS,
 };
 
 static struct dmi_system_id skge_32bit_dma_boards[] = {

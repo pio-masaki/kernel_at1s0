@@ -23,6 +23,7 @@
 #include <linux/mfd/max8907c.h>
 #include <linux/regulator/max8907c-regulator.h>
 #include <linux/gpio.h>
+#include <mach/suspend.h>
 #include <linux/io.h>
 
 #include <mach/iomap.h>
@@ -30,7 +31,7 @@
 
 #include "gpio-names.h"
 #include "fuse.h"
-#include "pm.h"
+#include "power.h"
 #include "wakeups-t2.h"
 #include "board.h"
 
@@ -43,7 +44,6 @@ static struct regulator_consumer_supply max8907c_SD1_supply[] = {
 
 static struct regulator_consumer_supply max8907c_SD2_supply[] = {
 	REGULATOR_SUPPLY("vdd_core", NULL),
-	REGULATOR_SUPPLY("vdd_aon", NULL),
 };
 
 static struct regulator_consumer_supply max8907c_SD3_supply[] = {
@@ -238,29 +238,19 @@ static struct i2c_board_info __initdata whistler_regulators[] = {
 	},
 };
 
-static void whistler_board_suspend(int lp_state, enum suspend_stage stg)
-{
-	if ((lp_state == TEGRA_SUSPEND_LP1) && (stg == TEGRA_SUSPEND_BEFORE_CPU))
-		tegra_console_uart_suspend();
-}
-
-static void whistler_board_resume(int lp_state, enum resume_stage stg)
-{
-	if ((lp_state == TEGRA_SUSPEND_LP1) && (stg == TEGRA_RESUME_AFTER_CPU))
-		tegra_console_uart_resume();
-}
-
 static struct tegra_suspend_platform_data whistler_suspend_data = {
 	.cpu_timer	= 2000,
 	.cpu_off_timer	= 1000,
 	.suspend_mode	= TEGRA_SUSPEND_LP0,
 	.core_timer	= 0x7e,
 	.core_off_timer = 0xc00,
+	.separate_req	= false,
 	.corereq_high	= true,
 	.sysclkreq_high	= true,
-	.combined_req   = true,
-	.board_suspend = whistler_board_suspend,
-	.board_resume = whistler_board_resume,
+	.wake_enb	= TEGRA_WAKE_KBC_EVENT,
+	.wake_high	= 0,
+	.wake_low	= 0,
+	.wake_any	= TEGRA_WAKE_KBC_EVENT,
 };
 
 int __init whistler_regulator_init(void)

@@ -82,9 +82,9 @@ static void __pmac_retrigger(unsigned int irq_nr)
 	}
 }
 
-static void pmac_mask_and_ack_irq(struct irq_data *d)
+static void pmac_mask_and_ack_irq(unsigned int virq)
 {
-	unsigned int src = irq_map[d->irq].hwirq;
+	unsigned int src = irq_map[virq].hwirq;
         unsigned long bit = 1UL << (src & 0x1f);
         int i = src >> 5;
         unsigned long flags;
@@ -104,9 +104,9 @@ static void pmac_mask_and_ack_irq(struct irq_data *d)
 	raw_spin_unlock_irqrestore(&pmac_pic_lock, flags);
 }
 
-static void pmac_ack_irq(struct irq_data *d)
+static void pmac_ack_irq(unsigned int virq)
 {
-	unsigned int src = irq_map[d->irq].hwirq;
+	unsigned int src = irq_map[virq].hwirq;
         unsigned long bit = 1UL << (src & 0x1f);
         int i = src >> 5;
         unsigned long flags;
@@ -149,15 +149,15 @@ static void __pmac_set_irq_mask(unsigned int irq_nr, int nokicklost)
 /* When an irq gets requested for the first client, if it's an
  * edge interrupt, we clear any previous one on the controller
  */
-static unsigned int pmac_startup_irq(struct irq_data *d)
+static unsigned int pmac_startup_irq(unsigned int virq)
 {
 	unsigned long flags;
-	unsigned int src = irq_map[d->irq].hwirq;
+	unsigned int src = irq_map[virq].hwirq;
         unsigned long bit = 1UL << (src & 0x1f);
         int i = src >> 5;
 
 	raw_spin_lock_irqsave(&pmac_pic_lock, flags);
-	if (!irqd_is_level_type(d))
+	if ((irq_to_desc(virq)->status & IRQ_LEVEL) == 0)
 		out_le32(&pmac_irq_hw[i]->ack, bit);
         __set_bit(src, ppc_cached_irq_mask);
         __pmac_set_irq_mask(src, 0);
@@ -166,10 +166,10 @@ static unsigned int pmac_startup_irq(struct irq_data *d)
 	return 0;
 }
 
-static void pmac_mask_irq(struct irq_data *d)
+static void pmac_mask_irq(unsigned int virq)
 {
 	unsigned long flags;
-	unsigned int src = irq_map[d->irq].hwirq;
+	unsigned int src = irq_map[virq].hwirq;
 
 	raw_spin_lock_irqsave(&pmac_pic_lock, flags);
         __clear_bit(src, ppc_cached_irq_mask);
@@ -177,10 +177,10 @@ static void pmac_mask_irq(struct irq_data *d)
 	raw_spin_unlock_irqrestore(&pmac_pic_lock, flags);
 }
 
-static void pmac_unmask_irq(struct irq_data *d)
+static void pmac_unmask_irq(unsigned int virq)
 {
 	unsigned long flags;
-	unsigned int src = irq_map[d->irq].hwirq;
+	unsigned int src = irq_map[virq].hwirq;
 
 	raw_spin_lock_irqsave(&pmac_pic_lock, flags);
 	__set_bit(src, ppc_cached_irq_mask);
@@ -188,24 +188,24 @@ static void pmac_unmask_irq(struct irq_data *d)
 	raw_spin_unlock_irqrestore(&pmac_pic_lock, flags);
 }
 
-static int pmac_retrigger(struct irq_data *d)
+static int pmac_retrigger(unsigned int virq)
 {
 	unsigned long flags;
 
 	raw_spin_lock_irqsave(&pmac_pic_lock, flags);
-	__pmac_retrigger(irq_map[d->irq].hwirq);
+	__pmac_retrigger(irq_map[virq].hwirq);
 	raw_spin_unlock_irqrestore(&pmac_pic_lock, flags);
 	return 1;
 }
 
 static struct irq_chip pmac_pic = {
 	.name		= "PMAC-PIC",
-	.irq_startup	= pmac_startup_irq,
-	.irq_mask	= pmac_mask_irq,
-	.irq_ack	= pmac_ack_irq,
-	.irq_mask_ack	= pmac_mask_and_ack_irq,
-	.irq_unmask	= pmac_unmask_irq,
-	.irq_retrigger	= pmac_retrigger,
+	.startup	= pmac_startup_irq,
+	.mask		= pmac_mask_irq,
+	.ack		= pmac_ack_irq,
+	.mask_ack	= pmac_mask_and_ack_irq,
+	.unmask		= pmac_unmask_irq,
+	.retrigger	= pmac_retrigger,
 };
 
 static irqreturn_t gatwick_action(int cpl, void *dev_id)
@@ -289,6 +289,7 @@ static int pmac_pic_host_match(struct irq_host *h, struct device_node *node)
 static int pmac_pic_host_map(struct irq_host *h, unsigned int virq,
 			     irq_hw_number_t hw)
 {
+	struct irq_desc *desc = irq_to_desc(virq);
 	int level;
 
 	if (hw >= max_irqs)
@@ -299,9 +300,9 @@ static int pmac_pic_host_map(struct irq_host *h, unsigned int virq,
 	 */
 	level = !!(level_mask[hw >> 5] & (1UL << (hw & 0x1f)));
 	if (level)
-		irq_set_status_flags(virq, IRQ_LEVEL);
-	irq_set_chip_and_handler(virq, &pmac_pic,
-				 level ? handle_level_irq : handle_edge_irq);
+		desc->status |= IRQ_LEVEL;
+	set_irq_chip_and_handler(virq, &pmac_pic, level ?
+				 handle_level_irq : handle_edge_irq);
 	return 0;
 }
 
@@ -471,14 +472,12 @@ int of_irq_map_oldworld(struct device_node *device, int index,
 
 static void pmac_u3_cascade(unsigned int irq, struct irq_desc *desc)
 {
-	struct irq_chip *chip = irq_desc_get_chip(desc);
-	struct mpic *mpic = irq_desc_get_handler_data(desc);
-	unsigned int cascade_irq = mpic_get_one_irq(mpic);
+	struct mpic *mpic = desc->handler_data;
 
+	unsigned int cascade_irq = mpic_get_one_irq(mpic);
 	if (cascade_irq != NO_IRQ)
 		generic_handle_irq(cascade_irq);
-
-	chip->irq_eoi(&desc->irq_data);
+	desc->chip->eoi(irq);
 }
 
 static void __init pmac_pic_setup_mpic_nmi(struct mpic *mpic)
@@ -590,8 +589,8 @@ static int __init pmac_pic_probe_mpic(void)
 		of_node_put(slave);
 		return 0;
 	}
-	irq_set_handler_data(cascade, mpic2);
-	irq_set_chained_handler(cascade, pmac_u3_cascade);
+	set_irq_data(cascade, mpic2);
+	set_irq_chained_handler(cascade, pmac_u3_cascade);
 
 	of_node_put(slave);
 	return 0;
@@ -708,7 +707,7 @@ static int pmacpic_resume(struct sys_device *sysdev)
 	mb();
 	for (i = 0; i < max_real_irqs; ++i)
 		if (test_bit(i, sleep_save_mask))
-			pmac_unmask_irq(irq_get_irq_data(i));
+			pmac_unmask_irq(i);
 
 	return 0;
 }

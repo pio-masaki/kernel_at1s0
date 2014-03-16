@@ -1,5 +1,5 @@
 /*
- * dw_spi_pci.c - PCI interface driver for DW SPI Core
+ * mrst_spi_pci.c - PCI interface driver for DW SPI Core
  *
  * Copyright (c) 2009, Intel Corporation.
  *
@@ -20,15 +20,14 @@
 #include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
+#include <linux/spi/dw_spi.h>
 #include <linux/spi/spi.h>
-
-#include "dw_spi.h"
 
 #define DRIVER_NAME "dw_spi_pci"
 
 struct dw_spi_pci {
-	struct pci_dev	*pdev;
-	struct dw_spi	dws;
+	struct pci_dev		*pdev;
+	struct dw_spi		dws;
 };
 
 static int __devinit spi_pci_probe(struct pci_dev *pdev,
@@ -73,17 +72,9 @@ static int __devinit spi_pci_probe(struct pci_dev *pdev,
 	dws->parent_dev = &pdev->dev;
 	dws->bus_num = 0;
 	dws->num_cs = 4;
+	dws->max_freq = 25000000;	/* for Moorestwon */
 	dws->irq = pdev->irq;
-
-	/*
-	 * Specific handling for Intel MID paltforms, like dma setup,
-	 * clock rate, FIFO depth.
-	 */
-	if (pdev->device == 0x0800) {
-		ret = dw_spi_mid_init(dws);
-		if (ret)
-			goto err_unmap;
-	}
+	dws->fifo_len = 40;		/* FIFO has 40 words buffer */
 
 	ret = dw_spi_add_host(dws);
 	if (ret)
@@ -149,7 +140,7 @@ static int spi_resume(struct pci_dev *pdev)
 #endif
 
 static const struct pci_device_id pci_ids[] __devinitdata = {
-	/* Intel MID platform SPI controller 0 */
+	/* Intel Moorestown platform SPI controller 0 */
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, 0x0800) },
 	{},
 };

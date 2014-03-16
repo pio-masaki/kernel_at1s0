@@ -39,6 +39,7 @@
 #include <linux/parser.h>
 #include <linux/notifier.h>
 #include <linux/seq_file.h>
+#include <linux/smp_lock.h>
 #include <linux/usb/hcd.h>
 #include <asm/byteorder.h>
 #include "usb.h"
@@ -275,7 +276,6 @@ static struct inode *usbfs_get_inode (struct super_block *sb, int mode, dev_t de
 	struct inode *inode = new_inode(sb);
 
 	if (inode) {
-		inode->i_ino = get_next_ino();
 		inode->i_mode = mode;
 		inode->i_uid = current_fsuid();
 		inode->i_gid = current_fsgid();
@@ -343,19 +343,17 @@ static int usbfs_empty (struct dentry *dentry)
 {
 	struct list_head *list;
 
-	spin_lock(&dentry->d_lock);
+	spin_lock(&dcache_lock);
+
 	list_for_each(list, &dentry->d_subdirs) {
 		struct dentry *de = list_entry(list, struct dentry, d_u.d_child);
-
-		spin_lock_nested(&de->d_lock, DENTRY_D_LOCK_NESTED);
 		if (usbfs_positive(de)) {
-			spin_unlock(&de->d_lock);
-			spin_unlock(&dentry->d_lock);
+			spin_unlock(&dcache_lock);
 			return 0;
 		}
-		spin_unlock(&de->d_lock);
 	}
-	spin_unlock(&dentry->d_lock);
+
+	spin_unlock(&dcache_lock);
 	return 1;
 }
 
@@ -575,16 +573,16 @@ static void fs_remove_file (struct dentry *dentry)
 
 /* --------------------------------------------------------------------- */
 
-static struct dentry *usb_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data)
+static int usb_get_sb(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
 {
-	return mount_single(fs_type, flags, data, usbfs_fill_super);
+	return get_sb_single(fs_type, flags, data, usbfs_fill_super, mnt);
 }
 
 static struct file_system_type usb_fs_type = {
 	.owner =	THIS_MODULE,
 	.name =		"usbfs",
-	.mount =	usb_mount,
+	.get_sb =	usb_get_sb,
 	.kill_sb =	kill_litter_super,
 };
 

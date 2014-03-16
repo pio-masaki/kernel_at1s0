@@ -30,7 +30,6 @@ extern char system_call_common[];
 #define XER_OV		0x40000000U
 #define XER_CA		0x20000000U
 
-#ifdef CONFIG_PPC_FPU
 /*
  * Functions in ldstfp.S
  */
@@ -42,7 +41,6 @@ extern int do_lvx(int rn, unsigned long ea);
 extern int do_stvx(int rn, unsigned long ea);
 extern int do_lxvd2x(int rn, unsigned long ea);
 extern int do_stxvd2x(int rn, unsigned long ea);
-#endif
 
 /*
  * Determine whether a conditional branch instruction would branch.
@@ -292,7 +290,6 @@ static int __kprobes write_mem(unsigned long val, unsigned long ea, int nb,
 	return write_mem_unaligned(val, ea, nb, regs);
 }
 
-#ifdef CONFIG_PPC_FPU
 /*
  * Check the address and alignment, and call func to do the actual
  * load or store.
@@ -354,7 +351,6 @@ static int __kprobes do_fp_store(int rn, int (*func)(int, unsigned long),
 	}
 	return err;
 }
-#endif
 
 #ifdef CONFIG_ALTIVEC
 /* For Altivec/VMX, no need to worry about alignment */
@@ -1397,7 +1393,6 @@ int __kprobes emulate_step(struct pt_regs *regs, unsigned int instr)
 				regs->gpr[rd] = byterev_4(val);
 			goto ldst_done;
 
-#ifdef CONFIG_PPC_CPU
 		case 535:	/* lfsx */
 		case 567:	/* lfsux */
 			if (!(regs->msr & MSR_FP))
@@ -1429,7 +1424,6 @@ int __kprobes emulate_step(struct pt_regs *regs, unsigned int instr)
 			ea = xform_ea(instr, regs, u);
 			err = do_fp_store(rd, do_stfd, ea, 8, regs);
 			goto ldst_done;
-#endif
 
 #ifdef __powerpc64__
 		case 660:	/* stdbrx */
@@ -1540,7 +1534,6 @@ int __kprobes emulate_step(struct pt_regs *regs, unsigned int instr)
 		} while (++rd < 32);
 		goto instr_done;
 
-#ifdef CONFIG_PPC_FPU
 	case 48:	/* lfs */
 	case 49:	/* lfsu */
 		if (!(regs->msr & MSR_FP))
@@ -1572,7 +1565,6 @@ int __kprobes emulate_step(struct pt_regs *regs, unsigned int instr)
 		ea = dform_ea(instr, regs);
 		err = do_fp_store(rd, do_stfd, ea, 8, regs);
 		goto ldst_done;
-#endif
 
 #ifdef __powerpc64__
 	case 58:	/* ld[u], lwa */

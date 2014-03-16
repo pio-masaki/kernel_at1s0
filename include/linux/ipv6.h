@@ -341,9 +341,7 @@ struct ipv6_pinfo {
 				odstopts:1,
                                 rxflow:1,
 				rxtclass:1,
-				rxpmtu:1,
-				rxorigdstaddr:1;
-				/* 2 bits hole */
+				rxpmtu:1;
 		} bits;
 		__u16		all;
 	} rxopt;
@@ -364,7 +362,7 @@ struct ipv6_pinfo {
 
 	__u32			dst_cookie;
 
-	struct ipv6_mc_socklist	__rcu *ipv6_mc_list;
+	struct ipv6_mc_socklist	*ipv6_mc_list;
 	struct ipv6_ac_socklist	*ipv6_ac_list;
 	struct ipv6_fl_socklist *ipv6_fl_list;
 

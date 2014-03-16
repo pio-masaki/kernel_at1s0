@@ -36,7 +36,7 @@ static unsigned long max_gap;
  * Shows a simple page count of reserved and used pages in the system.
  * For discontig machines, it does this on a per-pgdat basis.
  */
-void show_mem(unsigned int filter)
+void show_mem(void)
 {
 	int i, total_reserved = 0;
 	int total_shared = 0, total_cached = 0;

@@ -8,6 +8,7 @@
 #include <linux/hdreg.h>
 #include <linux/slab.h>
 #include <linux/syscalls.h>
+#include <linux/smp_lock.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
 
@@ -743,13 +744,13 @@ long compat_blkdev_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 		bdi->ra_pages = (arg * 512) / PAGE_CACHE_SIZE;
 		return 0;
 	case BLKGETSIZE:
-		size = i_size_read(bdev->bd_inode);
+		size = bdev->bd_inode->i_size;
 		if ((size >> 9) > ~0UL)
 			return -EFBIG;
 		return compat_put_ulong(arg, size >> 9);
 
 	case BLKGETSIZE64_32:
-		return compat_put_u64(arg, i_size_read(bdev->bd_inode));
+		return compat_put_u64(arg, bdev->bd_inode->i_size);
 
 	case BLKTRACESETUP32:
 	case BLKTRACESTART: /* compatible */

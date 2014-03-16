@@ -281,8 +281,7 @@ const struct file_operations cryptocop_fops = {
 	.owner		= THIS_MODULE,
 	.open		= cryptocop_open,
 	.release	= cryptocop_release,
-	.unlocked_ioctl = cryptocop_ioctl,
-	.llseek		= noop_llseek,
+	.unlocked_ioctl = cryptocop_ioctl
 };
 
 
@@ -3140,9 +3139,9 @@ cryptocop_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
        struct inode *inode = file->f_path.dentry->d_inode;
        long ret;
 
-       mutex_lock(&cryptocop_mutex);
+       lock_kernel();
        ret = cryptocop_ioctl_unlocked(inode, filp, cmd, arg);
-       mutex_unlock(&cryptocop_mutex);
+       unlock_kernel();
 
        return ret;
 }

@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2010, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -284,38 +284,40 @@ static void ACPI_SYSTEM_XFACE acpi_ev_notify_dispatch(void *context)
  * RETURN:      ACPI_INTERRUPT_HANDLED
  *
  * DESCRIPTION: Invoked directly from the SCI handler when a global lock
- *              release interrupt occurs.  If there's a thread waiting for
- *              the global lock, signal it.
+ *              release interrupt occurs. Attempt to acquire the global lock,
+ *              if successful, signal the thread waiting for the lock.
  *
  * NOTE: Assumes that the semaphore can be signaled from interrupt level. If
  * this is not possible for some reason, a separate thread will have to be
  * scheduled to do this.
  *
  ******************************************************************************/
-static u8 acpi_ev_global_lock_pending;
 
 static u32 acpi_ev_global_lock_handler(void *context)
 {
-	acpi_status status;
-	acpi_cpu_flags flags;
+	u8 acquired = FALSE;
 
-	flags = acpi_os_acquire_lock(acpi_ev_global_lock_pending_lock);
+	/*
+	 * Attempt to get the lock.
+	 *
+	 * If we don't get it now, it will be marked pending and we will
+	 * take another interrupt when it becomes free.
+	 */
+	ACPI_ACQUIRE_GLOBAL_LOCK(acpi_gbl_FACS, acquired);
+	if (acquired) {
 
-	if (!acpi_ev_global_lock_pending) {
-		goto out;
+		/* Got the lock, now wake all threads waiting for it */
+
+		acpi_gbl_global_lock_acquired = TRUE;
+		/* Send a unit to the semaphore */
+
+		if (ACPI_FAILURE
+		    (acpi_os_signal_semaphore
+		     (acpi_gbl_global_lock_semaphore, 1))) {
+			ACPI_ERROR((AE_INFO,
+				    "Could not signal Global Lock semaphore"));
+		}
 	}
-
-	/* Send a unit to the semaphore */
-
-	status = acpi_os_signal_semaphore(acpi_gbl_global_lock_semaphore, 1);
-	if (ACPI_FAILURE(status)) {
-		ACPI_ERROR((AE_INFO, "Could not signal Global Lock semaphore"));
-	}
-
-	acpi_ev_global_lock_pending = FALSE;
-
- out:
-	acpi_os_release_lock(acpi_ev_global_lock_pending_lock, flags);
 
 	return (ACPI_INTERRUPT_HANDLED);
 }
@@ -413,7 +415,6 @@ static int acpi_ev_global_lock_acquired;
 
 acpi_status acpi_ev_acquire_global_lock(u16 timeout)
 {
-	acpi_cpu_flags flags;
 	acpi_status status = AE_OK;
 	u8 acquired = FALSE;
 
@@ -466,47 +467,32 @@ acpi_status acpi_ev_acquire_global_lock(u16 timeout)
 		return_ACPI_STATUS(AE_OK);
 	}
 
-	flags = acpi_os_acquire_lock(acpi_ev_global_lock_pending_lock);
+	/* Attempt to acquire the actual hardware lock */
 
-	do {
+	ACPI_ACQUIRE_GLOBAL_LOCK(acpi_gbl_FACS, acquired);
+	if (acquired) {
 
-		/* Attempt to acquire the actual hardware lock */
+		/* We got the lock */
 
-		ACPI_ACQUIRE_GLOBAL_LOCK(acpi_gbl_FACS, acquired);
-		if (acquired) {
-			acpi_gbl_global_lock_acquired = TRUE;
-
-			ACPI_DEBUG_PRINT((ACPI_DB_EXEC,
-					  "Acquired hardware Global Lock\n"));
-			break;
-		}
-
-		acpi_ev_global_lock_pending = TRUE;
-
-		acpi_os_release_lock(acpi_ev_global_lock_pending_lock, flags);
-
-		/*
-		 * Did not get the lock. The pending bit was set above, and we
-		 * must wait until we get the global lock released interrupt.
-		 */
 		ACPI_DEBUG_PRINT((ACPI_DB_EXEC,
-				  "Waiting for hardware Global Lock\n"));
+				  "Acquired hardware Global Lock\n"));
 
-		/*
-		 * Wait for handshake with the global lock interrupt handler.
-		 * This interface releases the interpreter if we must wait.
-		 */
-		status = acpi_ex_system_wait_semaphore(
-						acpi_gbl_global_lock_semaphore,
-						ACPI_WAIT_FOREVER);
+		acpi_gbl_global_lock_acquired = TRUE;
+		return_ACPI_STATUS(AE_OK);
+	}
 
-		flags = acpi_os_acquire_lock(acpi_ev_global_lock_pending_lock);
+	/*
+	 * Did not get the lock. The pending bit was set above, and we must now
+	 * wait until we get the global lock released interrupt.
+	 */
+	ACPI_DEBUG_PRINT((ACPI_DB_EXEC, "Waiting for hardware Global Lock\n"));
 
-	} while (ACPI_SUCCESS(status));
-
-	acpi_ev_global_lock_pending = FALSE;
-
-	acpi_os_release_lock(acpi_ev_global_lock_pending_lock, flags);
+	/*
+	 * Wait for handshake with the global lock interrupt handler.
+	 * This interface releases the interpreter if we must wait.
+	 */
+	status = acpi_ex_system_wait_semaphore(acpi_gbl_global_lock_semaphore,
+					       ACPI_WAIT_FOREVER);
 
 	return_ACPI_STATUS(status);
 }
@@ -567,7 +553,7 @@ acpi_status acpi_ev_release_global_lock(void)
 	acpi_gbl_global_lock_acquired = FALSE;
 
 	/* Release the local GL mutex */
-	acpi_ev_global_lock_thread_id = 0;
+	acpi_ev_global_lock_thread_id = NULL;
 	acpi_ev_global_lock_acquired = 0;
 	acpi_os_release_mutex(acpi_gbl_global_lock_mutex->mutex.os_mutex);
 	return_ACPI_STATUS(status);

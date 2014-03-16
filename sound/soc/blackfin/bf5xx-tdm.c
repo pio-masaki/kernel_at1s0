@@ -210,13 +210,13 @@ static int bf5xx_tdm_set_channel_map(struct snd_soc_dai *dai,
 #ifdef CONFIG_PM
 static int bf5xx_tdm_suspend(struct snd_soc_dai *dai)
 {
-	struct sport_device *sport = snd_soc_dai_get_drvdata(dai);
+	struct sport_device *sport = dai->private_data;
 
 	if (!dai->active)
 		return 0;
-	if (dai->capture_active)
+	if (dai->capture.active)
 		sport_rx_stop(sport);
-	if (dai->playback_active)
+	if (dai->playback.active)
 		sport_tx_stop(sport);
 	return 0;
 }
@@ -224,7 +224,7 @@ static int bf5xx_tdm_suspend(struct snd_soc_dai *dai)
 static int bf5xx_tdm_resume(struct snd_soc_dai *dai)
 {
 	int ret;
-	struct sport_device *sport = snd_soc_dai_get_drvdata(dai);
+	struct sport_device *sport = dai->private_data;
 
 	if (!dai->active)
 		return 0;
@@ -235,13 +235,13 @@ static int bf5xx_tdm_resume(struct snd_soc_dai *dai)
 		ret = -EBUSY;
 	}
 
-	ret = sport_config_rx(sport, 0, 0x1F, 0, 0);
+	ret = sport_config_rx(sport, IRFS, 0x1F, 0, 0);
 	if (ret) {
 		pr_err("SPORT is busy!\n");
 		ret = -EBUSY;
 	}
 
-	ret = sport_config_tx(sport, 0, 0x1F, 0, 0);
+	ret = sport_config_tx(sport, ITFS, 0x1F, 0, 0);
 	if (ret) {
 		pr_err("SPORT is busy!\n");
 		ret = -EBUSY;
@@ -262,7 +262,9 @@ static struct snd_soc_dai_ops bf5xx_tdm_dai_ops = {
 	.set_channel_map   = bf5xx_tdm_set_channel_map,
 };
 
-static struct snd_soc_dai_driver bf5xx_tdm_dai = {
+struct snd_soc_dai bf5xx_tdm_dai = {
+	.name = "bf5xx-tdm",
+	.id = 0,
 	.suspend = bf5xx_tdm_suspend,
 	.resume = bf5xx_tdm_resume,
 	.playback = {
@@ -277,6 +279,7 @@ static struct snd_soc_dai_driver bf5xx_tdm_dai = {
 		.formats = SNDRV_PCM_FMTBIT_S32_LE,},
 	.ops = &bf5xx_tdm_dai_ops,
 };
+EXPORT_SYMBOL_GPL(bf5xx_tdm_dai);
 
 static int __devinit bfin_tdm_probe(struct platform_device *pdev)
 {
@@ -303,21 +306,21 @@ static int __devinit bfin_tdm_probe(struct platform_device *pdev)
 		goto sport_config_err;
 	}
 
-	ret = sport_config_rx(sport_handle, 0, 0x1F, 0, 0);
+	ret = sport_config_rx(sport_handle, IRFS, 0x1F, 0, 0);
 	if (ret) {
 		pr_err("SPORT is busy!\n");
 		ret = -EBUSY;
 		goto sport_config_err;
 	}
 
-	ret = sport_config_tx(sport_handle, 0, 0x1F, 0, 0);
+	ret = sport_config_tx(sport_handle, ITFS, 0x1F, 0, 0);
 	if (ret) {
 		pr_err("SPORT is busy!\n");
 		ret = -EBUSY;
 		goto sport_config_err;
 	}
 
-	ret = snd_soc_register_dai(&pdev->dev, &bf5xx_tdm_dai);
+	ret = snd_soc_register_dai(&bf5xx_tdm_dai);
 	if (ret) {
 		pr_err("Failed to register DAI: %d\n", ret);
 		goto sport_config_err;
@@ -334,7 +337,7 @@ sport_config_err:
 static int __devexit bfin_tdm_remove(struct platform_device *pdev)
 {
 	peripheral_free_list(&sport_req[sport_num][0]);
-	snd_soc_unregister_dai(&pdev->dev);
+	snd_soc_unregister_dai(&bf5xx_tdm_dai);
 
 	return 0;
 }

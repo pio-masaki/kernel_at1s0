@@ -802,8 +802,11 @@ static const struct mmc_host_ops via_sdc_ops = {
 
 static void via_reset_pcictrl(struct via_crdr_mmc_host *host)
 {
+	void __iomem *addrbase;
 	unsigned long flags;
 	u8 gatt;
+
+	addrbase = host->pcictrl_mmiobase;
 
 	spin_lock_irqsave(&host->lock, flags);
 
@@ -1047,7 +1050,8 @@ static void via_init_mmc_host(struct via_crdr_mmc_host *host)
 	mmc->ops = &via_sdc_ops;
 
 	/*Hardware cannot do scatter lists*/
-	mmc->max_segs = 1;
+	mmc->max_hw_segs = 1;
+	mmc->max_phys_segs = 1;
 
 	mmc->max_blk_size = VIA_CRDR_MAX_BLOCK_LENGTH;
 	mmc->max_blk_count = VIA_CRDR_MAX_BLOCK_COUNT;
@@ -1087,13 +1091,14 @@ static int __devinit via_sd_probe(struct pci_dev *pcidev,
 	struct mmc_host *mmc;
 	struct via_crdr_mmc_host *sdhost;
 	u32 base, len;
-	u8  gatt;
+	u8 rev, gatt;
 	int ret;
 
+	pci_read_config_byte(pcidev, PCI_CLASS_REVISION, &rev);
 	pr_info(DRV_NAME
 		": VIA SDMMC controller found at %s [%04x:%04x] (rev %x)\n",
 		pci_name(pcidev), (int)pcidev->vendor, (int)pcidev->device,
-		(int)pcidev->revision);
+		(int)rev);
 
 	ret = pci_enable_device(pcidev);
 	if (ret)

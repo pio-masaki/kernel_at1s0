@@ -49,6 +49,9 @@ void __init kirkwood_mpp_conf(unsigned int *mpp_list)
 	if (!variant_mask)
 		return;
 
+	/* Initialize gpiolib. */
+	orion_gpio_init();
+
 	printk(KERN_DEBUG "initial MPP regs:");
 	for (i = 0; i < MPP_NR_REGS; i++) {
 		mpp_ctrl[i] = readl(MPP_CTRL(i));
@@ -56,7 +59,7 @@ void __init kirkwood_mpp_conf(unsigned int *mpp_list)
 	}
 	printk("\n");
 
-	for ( ; *mpp_list; mpp_list++) {
+	while (*mpp_list) {
 		unsigned int num = MPP_NUM(*mpp_list);
 		unsigned int sel = MPP_SEL(*mpp_list);
 		int shift, gpio_mode;
@@ -85,6 +88,8 @@ void __init kirkwood_mpp_conf(unsigned int *mpp_list)
 		if (sel != 0)
 			gpio_mode = 0;
 		orion_gpio_set_valid(num, gpio_mode);
+
+		mpp_list++;
 	}
 
 	printk(KERN_DEBUG "  final MPP regs:");

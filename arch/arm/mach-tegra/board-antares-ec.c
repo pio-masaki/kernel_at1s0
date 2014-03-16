@@ -4,7 +4,7 @@
 #include <linux/resource.h>
 
 #include <linux/io.h>
-#include <linux/mfd/nvtec-antares.h>
+#include <linux/mfd/nvtec.h>
 
 #include <mach/iomap.h>
 #include <mach/irqs.h>
@@ -12,7 +12,11 @@
 #include "gpio-names.h"
 #include "board.h"
 
-#define EC_REQUEST_GPIO    TEGRA_GPIO_PBB1
+//#define EC_REQUEST_GPIO    TEGRA_GPIO_PBB1
+/* Daniel Wang add for scorpio >>> */
+#define EC_REQUEST_GPIO_1  TEGRA_GPIO_PBB1
+#define EC_REQUEST_GPIO_2  TEGRA_GPIO_PBB4
+/* Daniel Wang add for scorpio <<< */
 #define AP_WAKE_GPIO       TEGRA_GPIO_PA0
 #define AC_IN_GPIO         TEGRA_GPIO_PV3
 #define BATT_LOW_GPIO      TEGRA_GPIO_PW3
@@ -44,7 +48,9 @@ static struct nvtec_subdev_info nvtec_devs[] = {
 static struct nvtec_platform_data nvtec_pdata = {
     .num_subdevs = ARRAY_SIZE(nvtec_devs),
     .subdevs = nvtec_devs,
-    .request_pin = EC_REQUEST_GPIO,
+    .request_pin_1 = EC_REQUEST_GPIO_1,		/* Daniel Wang add for scorpio */
+    .request_pin_2 = EC_REQUEST_GPIO_2, 	/* Daniel Wang add for scorpio */
+    //.request_pin = EC_REQUEST_GPIO,    
     .ap_wake_pin = AP_WAKE_GPIO,
 };
 
@@ -58,9 +64,15 @@ static struct i2c_board_info __initdata antares_ec[] = {
 
 int __init antares_ec_init(void)
 {
-    tegra_gpio_enable(EC_REQUEST_GPIO);
-    gpio_request(EC_REQUEST_GPIO, "ec_request");
-    gpio_direction_output(EC_REQUEST_GPIO, 1);
+    /* Daniel Wang add for scorpio >>> */
+    tegra_gpio_enable(EC_REQUEST_GPIO_1);
+    gpio_request(EC_REQUEST_GPIO_1, "ec_request_1");
+    gpio_direction_output(EC_REQUEST_GPIO_1, 1);
+
+    tegra_gpio_enable(EC_REQUEST_GPIO_2);
+    gpio_request(EC_REQUEST_GPIO_2, "ec_request_2");
+    gpio_direction_output(EC_REQUEST_GPIO_2, 1);
+    /* Daniel Wang add for scorpio <<< */
 
     tegra_gpio_enable(AP_WAKE_GPIO);
     gpio_request(AP_WAKE_GPIO, "ap_wake");

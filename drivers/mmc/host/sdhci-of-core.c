@@ -13,7 +13,6 @@
  * your option) any later version.
  */
 
-#include <linux/err.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/io.h>
@@ -21,12 +20,8 @@
 #include <linux/delay.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
-#include <linux/of_address.h>
-#include <linux/of_irq.h>
 #include <linux/mmc/host.h>
-#ifdef CONFIG_PPC
 #include <asm/machdep.h>
-#endif
 #include "sdhci-of.h"
 #include "sdhci.h"
 
@@ -117,29 +112,19 @@ static bool __devinit sdhci_of_wp_inverted(struct device_node *np)
 		return true;
 
 	/* Old device trees don't have the wp-inverted property. */
-#ifdef CONFIG_PPC
 	return machine_is(mpc837x_rdb) || machine_is(mpc837x_mds);
-#else
-	return false;
-#endif
 }
 
-static const struct of_device_id sdhci_of_match[];
-static int __devinit sdhci_of_probe(struct platform_device *ofdev)
+static int __devinit sdhci_of_probe(struct platform_device *ofdev,
+				 const struct of_device_id *match)
 {
-	const struct of_device_id *match;
 	struct device_node *np = ofdev->dev.of_node;
-	struct sdhci_of_data *sdhci_of_data;
+	struct sdhci_of_data *sdhci_of_data = match->data;
 	struct sdhci_host *host;
 	struct sdhci_of_host *of_host;
-	const __be32 *clk;
+	const u32 *clk;
 	int size;
 	int ret;
-
-	match = of_match_device(sdhci_of_match, &ofdev->dev);
-	if (!match)
-		return -EINVAL;
-	sdhci_of_data = match->data;
 
 	if (!of_device_is_available(np))
 		return -ENODEV;
@@ -181,7 +166,7 @@ static int __devinit sdhci_of_probe(struct platform_device *ofdev)
 
 	clk = of_get_property(np, "clock-frequency", &size);
 	if (clk && size == sizeof(*clk) && *clk)
-		of_host->clock = be32_to_cpup(clk);
+		of_host->clock = *clk;
 
 	ret = sdhci_add_host(host);
 	if (ret)
@@ -223,7 +208,7 @@ static const struct of_device_id sdhci_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, sdhci_of_match);
 
-static struct platform_driver sdhci_of_driver = {
+static struct of_platform_driver sdhci_of_driver = {
 	.driver = {
 		.name = "sdhci-of",
 		.owner = THIS_MODULE,
@@ -237,13 +222,13 @@ static struct platform_driver sdhci_of_driver = {
 
 static int __init sdhci_of_init(void)
 {
-	return platform_driver_register(&sdhci_of_driver);
+	return of_register_platform_driver(&sdhci_of_driver);
 }
 module_init(sdhci_of_init);
 
 static void __exit sdhci_of_exit(void)
 {
-	platform_driver_unregister(&sdhci_of_driver);
+	of_unregister_platform_driver(&sdhci_of_driver);
 }
 module_exit(sdhci_of_exit);
 

@@ -21,14 +21,17 @@
  *
  **************************************************************************
  *
- * The Intel Audio Codec '97 specification is available at:
- * http://download.intel.com/support/motherboards/desktop/sb/ac97_r23.pdf
+ * The Intel Audio Codec '97 specification is available at the Intel
+ * audio homepage: http://developer.intel.com/ial/scalableplatforms/audio/
+ *
+ * The specification itself is currently available at:
+ * ftp://download.intel.com/ial/scalableplatforms/ac97r22.pdf
  *
  **************************************************************************
  *
  * History
  * May 02, 2003 Liam Girdwood <lrg@slimlogic.co.uk>
- *	Removed non existent WM9700
+ *	Removed non existant WM9700
  *	Added support for WM9705, WM9708, WM9709, WM9710, WM9711
  *	WM9712 and WM9717
  * Mar 28, 2002 Randolph Bentson <bentson@holmsjoen.com>
@@ -441,7 +444,7 @@ static void ac97_set_mixer(struct ac97_codec *codec, unsigned int oss_mixer, uns
 }
 
 /* read or write the recmask, the ac97 can really have left and right recording
-   inputs independently set, but OSS doesn't seem to want us to express that to
+   inputs independantly set, but OSS doesn't seem to want us to express that to
    the user. the caller guarantees that we have a supported bit set, and they
    must be holding the card's spinlock */
 static int ac97_recmask_io(struct ac97_codec *codec, int rw, int mask) 
@@ -754,7 +757,7 @@ int ac97_probe_codec(struct ac97_codec *codec)
 	if((codec->codec_ops == &null_ops) && (f & 4))
 		codec->codec_ops = &default_digital_ops;
 	
-	/* A device which thinks its a modem but isn't */
+	/* A device which thinks its a modem but isnt */
 	if(codec->flags & AC97_DELUDED_MODEM)
 		codec->modem = 0;
 		

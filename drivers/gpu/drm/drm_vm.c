@@ -523,7 +523,14 @@ static int drm_mmap_dma(struct file *filp, struct vm_area_struct *vma)
 	return 0;
 }
 
-static resource_size_t drm_core_get_reg_ofs(struct drm_device *dev)
+resource_size_t drm_core_get_map_ofs(struct drm_local_map * map)
+{
+	return map->offset;
+}
+
+EXPORT_SYMBOL(drm_core_get_map_ofs);
+
+resource_size_t drm_core_get_reg_ofs(struct drm_device *dev)
 {
 #ifdef __alpha__
 	return dev->hose->dense_mem_base - dev->hose->mem_space->start;
@@ -531,6 +538,8 @@ static resource_size_t drm_core_get_reg_ofs(struct drm_device *dev)
 	return 0;
 #endif
 }
+
+EXPORT_SYMBOL(drm_core_get_reg_ofs);
 
 /**
  * mmap DMA memory.
@@ -618,7 +627,7 @@ int drm_mmap_locked(struct file *filp, struct vm_area_struct *vma)
 #endif
 	case _DRM_FRAME_BUFFER:
 	case _DRM_REGISTERS:
-		offset = drm_core_get_reg_ofs(dev);
+		offset = dev->driver->get_reg_ofs(dev);
 		vma->vm_flags |= VM_IO;	/* not in core dump */
 		vma->vm_page_prot = drm_io_prot(map->type, vma);
 #if !defined(__arm__)

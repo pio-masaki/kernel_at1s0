@@ -459,7 +459,6 @@ static const struct file_operations zcore_memmap_fops = {
 	.read		= zcore_memmap_read,
 	.open		= zcore_memmap_open,
 	.release	= zcore_memmap_release,
-	.llseek		= no_llseek,
 };
 
 static ssize_t zcore_reipl_write(struct file *filp, const char __user *buf,
@@ -487,7 +486,6 @@ static const struct file_operations zcore_reipl_fops = {
 	.write		= zcore_reipl_write,
 	.open		= zcore_reipl_open,
 	.release	= zcore_reipl_release,
-	.llseek		= no_llseek,
 };
 
 #ifdef CONFIG_32BIT

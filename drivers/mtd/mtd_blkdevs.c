@@ -29,6 +29,7 @@
 #include <linux/blkdev.h>
 #include <linux/blkpg.h>
 #include <linux/spinlock.h>
+#include <linux/smp_lock.h>
 #include <linux/hdreg.h>
 #include <linux/init.h>
 #include <linux/mutex.h>
@@ -40,7 +41,7 @@
 static LIST_HEAD(blktrans_majors);
 static DEFINE_MUTEX(blktrans_ref_mutex);
 
-static void blktrans_dev_release(struct kref *kref)
+void blktrans_dev_release(struct kref *kref)
 {
 	struct mtd_blktrans_dev *dev =
 		container_of(kref, struct mtd_blktrans_dev, ref);
@@ -67,7 +68,7 @@ unlock:
 	return dev;
 }
 
-static void blktrans_dev_put(struct mtd_blktrans_dev *dev)
+void blktrans_dev_put(struct mtd_blktrans_dev *dev)
 {
 	mutex_lock(&blktrans_ref_mutex);
 	kref_put(&dev->ref, blktrans_dev_release);
@@ -119,48 +120,19 @@ static int do_blktrans_request(struct mtd_blktrans_ops *tr,
 	}
 }
 
-int mtd_blktrans_cease_background(struct mtd_blktrans_dev *dev)
-{
-	if (kthread_should_stop())
-		return 1;
-
-	return dev->bg_stop;
-}
-EXPORT_SYMBOL_GPL(mtd_blktrans_cease_background);
-
 static int mtd_blktrans_thread(void *arg)
 {
 	struct mtd_blktrans_dev *dev = arg;
-	struct mtd_blktrans_ops *tr = dev->tr;
 	struct request_queue *rq = dev->rq;
 	struct request *req = NULL;
-	int background_done = 0;
 
 	spin_lock_irq(rq->queue_lock);
 
 	while (!kthread_should_stop()) {
 		int res;
 
-		dev->bg_stop = false;
 		if (!req && !(req = blk_fetch_request(rq))) {
-			if (tr->background && !background_done) {
-				spin_unlock_irq(rq->queue_lock);
-				mutex_lock(&dev->lock);
-				tr->background(dev);
-				mutex_unlock(&dev->lock);
-				spin_lock_irq(rq->queue_lock);
-				/*
-				 * Do background processing just once per idle
-				 * period.
-				 */
-				background_done = !dev->bg_stop;
-				continue;
-			}
 			set_current_state(TASK_INTERRUPTIBLE);
-
-			if (kthread_should_stop())
-				set_current_state(TASK_RUNNING);
-
 			spin_unlock_irq(rq->queue_lock);
 			schedule();
 			spin_lock_irq(rq->queue_lock);
@@ -177,8 +149,6 @@ static int mtd_blktrans_thread(void *arg)
 
 		if (!__blk_end_request_cur(req, res))
 			req = NULL;
-
-		background_done = 0;
 	}
 
 	if (req)
@@ -199,62 +169,61 @@ static void mtd_blktrans_request(struct request_queue *rq)
 	if (!dev)
 		while ((req = blk_fetch_request(rq)) != NULL)
 			__blk_end_request_all(req, -ENODEV);
-	else {
-		dev->bg_stop = true;
+	else
 		wake_up_process(dev->thread);
-	}
 }
 
 static int blktrans_open(struct block_device *bdev, fmode_t mode)
 {
 	struct mtd_blktrans_dev *dev = blktrans_dev_get(bdev->bd_disk);
-	int ret = 0;
+	int ret;
 
 	if (!dev)
 		return -ERESTARTSYS; /* FIXME: busy loop! -arnd*/
 
+	lock_kernel();
 	mutex_lock(&dev->lock);
 
-	if (dev->open++)
+	if (!dev->mtd) {
+		ret = -ENXIO;
 		goto unlock;
-
-	kref_get(&dev->ref);
-	__module_get(dev->tr->owner);
-
-	if (dev->mtd) {
-		ret = dev->tr->open ? dev->tr->open(dev) : 0;
-		__get_mtd_device(dev->mtd);
 	}
 
+	ret = !dev->open++ && dev->tr->open ? dev->tr->open(dev) : 0;
+
+	/* Take another reference on the device so it won't go away till
+		last release */
+	if (!ret)
+		kref_get(&dev->ref);
 unlock:
 	mutex_unlock(&dev->lock);
 	blktrans_dev_put(dev);
+	unlock_kernel();
 	return ret;
 }
 
 static int blktrans_release(struct gendisk *disk, fmode_t mode)
 {
 	struct mtd_blktrans_dev *dev = blktrans_dev_get(disk);
-	int ret = 0;
+	int ret = -ENXIO;
 
 	if (!dev)
 		return ret;
 
+	lock_kernel();
 	mutex_lock(&dev->lock);
 
-	if (--dev->open)
+	/* Release one reference, we sure its not the last one here*/
+	kref_put(&dev->ref, blktrans_dev_release);
+
+	if (!dev->mtd)
 		goto unlock;
 
-	kref_put(&dev->ref, blktrans_dev_release);
-	module_put(dev->tr->owner);
-
-	if (dev->mtd) {
-		ret = dev->tr->release ? dev->tr->release(dev) : 0;
-		__put_mtd_device(dev->mtd);
-	}
+	ret = !--dev->open && dev->tr->release ? dev->tr->release(dev) : 0;
 unlock:
 	mutex_unlock(&dev->lock);
 	blktrans_dev_put(dev);
+	unlock_kernel();
 	return ret;
 }
 
@@ -287,6 +256,7 @@ static int blktrans_ioctl(struct block_device *bdev, fmode_t mode,
 	if (!dev)
 		return ret;
 
+	lock_kernel();
 	mutex_lock(&dev->lock);
 
 	if (!dev->mtd)
@@ -301,6 +271,7 @@ static int blktrans_ioctl(struct block_device *bdev, fmode_t mode,
 	}
 unlock:
 	mutex_unlock(&dev->lock);
+	unlock_kernel();
 	blktrans_dev_put(dev);
 	return ret;
 }
@@ -408,12 +379,14 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 	new->rq->queuedata = new;
 	blk_queue_logical_block_size(new->rq, tr->blksize);
 
-	if (tr->discard) {
-		queue_flag_set_unlocked(QUEUE_FLAG_DISCARD, new->rq);
-		new->rq->limits.max_discard_sectors = UINT_MAX;
-	}
+	if (tr->discard)
+		queue_flag_set_unlocked(QUEUE_FLAG_DISCARD,
+					new->rq);
 
 	gd->queue = new->rq;
+
+	__get_mtd_device(new->mtd);
+	__module_get(tr->owner);
 
 	/* Create processing thread */
 	/* TODO: workqueue ? */
@@ -437,12 +410,15 @@ int add_mtd_blktrans_dev(struct mtd_blktrans_dev *new)
 	}
 	return 0;
 error4:
+	module_put(tr->owner);
+	__put_mtd_device(new->mtd);
 	blk_cleanup_queue(new->rq);
 error3:
 	put_disk(new->disk);
 error2:
 	list_del(&new->list);
 error1:
+	kfree(new);
 	return ret;
 }
 
@@ -472,15 +448,17 @@ int del_mtd_blktrans_dev(struct mtd_blktrans_dev *old)
 	blk_start_queue(old->rq);
 	spin_unlock_irqrestore(&old->queue_lock, flags);
 
-	/* If the device is currently open, tell trans driver to close it,
-		then put mtd device, and don't touch it again */
+	/* Ask trans driver for release to the mtd device */
 	mutex_lock(&old->lock);
-	if (old->open) {
-		if (old->tr->release)
-			old->tr->release(old);
-		__put_mtd_device(old->mtd);
+	if (old->open && old->tr->release) {
+		old->tr->release(old);
+		old->open = 0;
 	}
 
+	__put_mtd_device(old->mtd);
+	module_put(old->tr->owner);
+
+	/* At that point, we don't touch the mtd anymore */
 	old->mtd = NULL;
 
 	mutex_unlock(&old->lock);
@@ -530,15 +508,12 @@ int register_mtd_blktrans(struct mtd_blktrans_ops *tr)
 	mutex_lock(&mtd_table_mutex);
 
 	ret = register_blkdev(tr->major, tr->name);
-	if (ret < 0) {
+	if (ret) {
 		printk(KERN_WARNING "Unable to register %s block device on major %d: %d\n",
 		       tr->name, tr->major, ret);
 		mutex_unlock(&mtd_table_mutex);
 		return ret;
 	}
-
-	if (ret)
-		tr->major = ret;
 
 	tr->blkshift = ffs(tr->blksize) - 1;
 

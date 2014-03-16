@@ -58,3 +58,4 @@ void __init s3c24xx_ts_set_platdata(struct s3c2410_ts_mach_info *pd)
 
 	s3c_device_ts.dev.platform_data = npd;
 }
+EXPORT_SYMBOL(s3c24xx_ts_set_platdata);

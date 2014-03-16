@@ -176,7 +176,7 @@ extern void mgr_exit(void);
  *      mgr_handle:     Handle to the Manager Object
  *      dcd_handle:     Ptr to receive the DCD Handle.
  *  Returns:
- *      0:        Success
+ *      0:        Sucess
  *      -EPERM:      Failure to get the Handle
  *  Requires:
  *      MGR is initialized.
@@ -192,10 +192,10 @@ extern int mgr_get_dcd_handle(struct mgr_object
  *  ======== mgr_init ========
  *  Purpose:
  *      Initialize MGR's private state, keeping a reference count on each
- *      call. Initializes the DCD.
+ *      call. Intializes the DCD.
  *  Parameters:
  *  Returns:
- *      TRUE if initialized; FALSE if error occurred.
+ *      TRUE if initialized; FALSE if error occured.
  *  Requires:
  *  Ensures:
  *      TRUE: A requirement for the other public MGR functions.

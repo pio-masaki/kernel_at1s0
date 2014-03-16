@@ -302,7 +302,7 @@ nosy_open(struct inode *inode, struct file *file)
 
 	file->private_data = client;
 
-	return nonseekable_open(inode, file);
+	return 0;
 fail:
 	kfree(client);
 	lynx_put(lynx);

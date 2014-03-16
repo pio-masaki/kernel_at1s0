@@ -4,8 +4,6 @@
  * License terms: GNU General Public License (GPL) version 2
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ":%s(): " fmt, __func__
-
 #include <linux/stddef.h>
 #include <linux/spinlock.h>
 #include <linux/slab.h>
@@ -31,9 +29,9 @@ struct cfrfml {
 	spinlock_t sync;
 };
 
-static void cfrfml_release(struct cflayer *layer)
+static void cfrfml_release(struct kref *kref)
 {
-	struct cfsrvl *srvl = container_of(layer, struct cfsrvl, layer);
+	struct cfsrvl *srvl = container_of(kref, struct cfsrvl, ref);
 	struct cfrfml *rfml = container_obj(&srvl->layer);
 
 	if (rfml->incomplete_frm)
@@ -46,10 +44,13 @@ struct cflayer *cfrfml_create(u8 channel_id, struct dev_info *dev_info,
 					int mtu_size)
 {
 	int tmp;
-	struct cfrfml *this = kzalloc(sizeof(struct cfrfml), GFP_ATOMIC);
+	struct cfrfml *this =
+		kzalloc(sizeof(struct cfrfml), GFP_ATOMIC);
 
-	if (!this)
+	if (!this) {
+		pr_warning("CAIF: %s(): Out of memory\n", __func__);
 		return NULL;
+	}
 
 	cfsrvl_init(&this->serv, channel_id, dev_info, false);
 	this->serv.release = cfrfml_release;
@@ -177,7 +178,9 @@ out:
 			cfpkt_destroy(rfml->incomplete_frm);
 		rfml->incomplete_frm = NULL;
 
-		pr_info("Connection error %d triggered on RFM link\n", err);
+		pr_info("CAIF: %s(): "
+				"Connection error %d triggered on RFM link\n",
+				__func__, err);
 
 		/* Trigger connection error upon failure.*/
 		layr->up->ctrlcmd(layr->up, CAIF_CTRLCMD_REMOTE_SHUTDOWN_IND,
@@ -190,7 +193,7 @@ out:
 
 static int cfrfml_transmit_segment(struct cfrfml *rfml, struct cfpkt *pkt)
 {
-	caif_assert(cfpkt_getlen(pkt) < rfml->fragment_size);
+	caif_assert(cfpkt_getlen(pkt) >= rfml->fragment_size);
 
 	/* Add info for MUX-layer to route the packet out. */
 	cfpkt_info(pkt)->channel_id = rfml->serv.layer.id;
@@ -277,7 +280,9 @@ static int cfrfml_transmit(struct cflayer *layr, struct cfpkt *pkt)
 out:
 
 	if (err != 0) {
-		pr_info("Connection error %d triggered on RFM link\n", err);
+		pr_info("CAIF: %s(): "
+				"Connection error %d triggered on RFM link\n",
+				__func__, err);
 		/* Trigger connection error upon failure.*/
 
 		layr->up->ctrlcmd(layr->up, CAIF_CTRLCMD_REMOTE_SHUTDOWN_IND,

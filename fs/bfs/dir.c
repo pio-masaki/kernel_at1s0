@@ -97,7 +97,7 @@ static int bfs_create(struct inode *dir, struct dentry *dentry, int mode,
 	if (!inode)
 		return -ENOSPC;
 	mutex_lock(&info->bfs_lock);
-	ino = find_first_zero_bit(info->si_imap, info->si_lasti + 1);
+	ino = find_first_zero_bit(info->si_imap, info->si_lasti);
 	if (ino > info->si_lasti) {
 		mutex_unlock(&info->bfs_lock);
 		iput(inode);
@@ -176,7 +176,7 @@ static int bfs_link(struct dentry *old, struct inode *dir,
 	inc_nlink(inode);
 	inode->i_ctime = CURRENT_TIME_SEC;
 	mark_inode_dirty(inode);
-	ihold(inode);
+	atomic_inc(&inode->i_count);
 	d_instantiate(new, inode);
 	mutex_unlock(&info->bfs_lock);
 	return 0;

@@ -521,7 +521,7 @@ static void check_supported_cpu(void *_rc)
 
 	*rc = -ENODEV;
 
-	if (__this_cpu_read(cpu_info.x86_vendor) != X86_VENDOR_AMD)
+	if (current_cpu_data.x86_vendor != X86_VENDOR_AMD)
 		return;
 
 	eax = cpuid_eax(CPUID_PROCESSOR_SIGNATURE);
@@ -630,7 +630,8 @@ static void print_basics(struct powernow_k8_data *data)
 					data->powernow_table[j].frequency/1000);
 			} else {
 				printk(KERN_INFO PFX
-					"fid 0x%x (%d MHz), vid 0x%x\n",
+					"   %d : fid 0x%x (%d MHz), vid 0x%x\n",
+					j,
 					data->powernow_table[j].index & 0xff,
 					data->powernow_table[j].frequency/1000,
 					data->powernow_table[j].index >> 8);
@@ -1275,7 +1276,7 @@ static int __cpuinit powernowk8_cpu_init(struct cpufreq_policy *pol)
 
 	if (powernow_k8_cpu_init_acpi(data)) {
 		/*
-		 * Use the PSB BIOS structure. This is only available on
+		 * Use the PSB BIOS structure. This is only availabe on
 		 * an UP version, and is deprecated by AMD.
 		 */
 		if (num_online_cpus() != 1) {
@@ -1376,7 +1377,7 @@ static int __devexit powernowk8_cpu_exit(struct cpufreq_policy *pol)
 static void query_values_on_cpu(void *_err)
 {
 	int *err = _err;
-	struct powernow_k8_data *data = __this_cpu_read(powernow_data);
+	struct powernow_k8_data *data = __get_cpu_var(powernow_data);
 
 	*err = query_current_values_with_pending_wait(data);
 }
@@ -1536,7 +1537,6 @@ static struct notifier_block cpb_nb = {
 static int __cpuinit powernowk8_init(void)
 {
 	unsigned int i, supported_cpus = 0, cpu;
-	int rv;
 
 	for_each_online_cpu(i) {
 		int rc;
@@ -1555,13 +1555,13 @@ static int __cpuinit powernowk8_init(void)
 
 		cpb_capable = true;
 
+		register_cpu_notifier(&cpb_nb);
+
 		msrs = msrs_alloc();
 		if (!msrs) {
 			printk(KERN_ERR "%s: Error allocating msrs!\n", __func__);
 			return -ENOMEM;
 		}
-
-		register_cpu_notifier(&cpb_nb);
 
 		rdmsr_on_cpus(cpu_online_mask, MSR_K7_HWCR, msrs);
 
@@ -1574,13 +1574,7 @@ static int __cpuinit powernowk8_init(void)
 			(cpb_enabled ? "on" : "off"));
 	}
 
-	rv = cpufreq_register_driver(&cpufreq_amd64_driver);
-	if (rv < 0 && boot_cpu_has(X86_FEATURE_CPB)) {
-		unregister_cpu_notifier(&cpb_nb);
-		msrs_free(msrs);
-		msrs = NULL;
-	}
-	return rv;
+	return cpufreq_register_driver(&cpufreq_amd64_driver);
 }
 
 /* driver entry point for term */

@@ -574,7 +574,7 @@ int lbs_mesh_bt_set_inverted(struct lbs_private *priv, bool inverted)
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.hdr.size = cpu_to_le16(sizeof(cmd));
 	cmd.action = cpu_to_le16(CMD_ACT_BT_ACCESS_SET_INVERT);
-	cmd.id = cpu_to_le32(!!inverted);
+	cmd.id = !!inverted;
 
 	ret = lbs_cmd_with_response(priv, CMD_BT_ACCESS, &cmd);
 
@@ -918,6 +918,7 @@ static ssize_t mesh_id_get(struct device *dev, struct device_attribute *attr,
 			   char *buf)
 {
 	struct mrvl_mesh_defaults defs;
+	int maxlen;
 	int ret;
 
 	ret = mesh_get_default_parameters(dev, &defs);
@@ -930,11 +931,13 @@ static ssize_t mesh_id_get(struct device *dev, struct device_attribute *attr,
 		defs.meshie.val.mesh_id_len = IEEE80211_MAX_SSID_LEN;
 	}
 
-	memcpy(buf, defs.meshie.val.mesh_id, defs.meshie.val.mesh_id_len);
-	buf[defs.meshie.val.mesh_id_len] = '\n';
-	buf[defs.meshie.val.mesh_id_len + 1] = '\0';
+	/* SSID not null terminated: reserve room for \0 + \n */
+	maxlen = defs.meshie.val.mesh_id_len + 2;
+	maxlen = (PAGE_SIZE > maxlen) ? maxlen : PAGE_SIZE;
 
-	return defs.meshie.val.mesh_id_len + 1;
+	defs.meshie.val.mesh_id[defs.meshie.val.mesh_id_len] = '\0';
+
+	return snprintf(buf, maxlen, "%s\n", defs.meshie.val.mesh_id);
 }
 
 /**

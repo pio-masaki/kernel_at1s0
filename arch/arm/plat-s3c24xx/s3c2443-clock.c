@@ -271,7 +271,7 @@ static struct clk init_clocks[] = {
 		.ctrlbit	= S3C2443_HCLKCON_DMA5,
 	}, {
 		.name		= "hsmmc",
-		.id		= 1,
+		.id		= 0,
 		.parent		= &clk_h,
 		.enable		= s3c2443_clkcon_enable_h,
 		.ctrlbit	= S3C2443_HCLKCON_HSMMC,

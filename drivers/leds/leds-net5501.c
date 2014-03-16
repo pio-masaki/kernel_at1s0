@@ -19,7 +19,7 @@
 
 #include <asm/geode.h>
 
-static const struct gpio_led net5501_leds[] = {
+static struct gpio_led net5501_leds[] = {
 	{
 		.name = "error",
 		.gpio = 6,
@@ -92,5 +92,3 @@ unmap:
 }
 
 arch_initcall(soekris_init);
-
-MODULE_LICENSE("GPL");

@@ -134,7 +134,7 @@ int pohmelfs_copy_config(struct pohmelfs_sb *psb)
 		goto out_unlock;
 
 	/*
-	 * Run over all entries in given config group and try to create and
+	 * Run over all entries in given config group and try to crate and
 	 * initialize those, which do not exist in superblock list.
 	 * Skip all existing entries.
 	 */
@@ -301,8 +301,10 @@ static int pohmelfs_cn_dump(struct cn_msg *msg)
 
 	mutex_lock(&pohmelfs_config_lock);
 
-	list_for_each_entry(g, &pohmelfs_config_list, group_entry)
-		total_msg += g->num_entry;
+	list_for_each_entry(g, &pohmelfs_config_list, group_entry) {
+		if (g)
+			total_msg += g->num_entry;
+	}
 	if (total_msg == 0) {
 		if (pohmelfs_send_reply(err, 0, POHMELFS_NOINFO_ACK, msg, NULL))
 			err = -ENOMEM;
@@ -310,16 +312,15 @@ static int pohmelfs_cn_dump(struct cn_msg *msg)
 	}
 
 	list_for_each_entry(g, &pohmelfs_config_list, group_entry) {
-		list_for_each_entry_safe(c, tmp, &g->config_list,
-					 config_entry) {
-			struct pohmelfs_ctl *sc = &c->state.ctl;
-			if (pohmelfs_send_reply(err, total_msg - i,
-						POHMELFS_CTLINFO_ACK, msg,
-						sc)) {
-				err = -ENOMEM;
-				goto out_unlock;
+		if (g) {
+			list_for_each_entry_safe(c, tmp, &g->config_list, config_entry) {
+				struct pohmelfs_ctl *sc = &c->state.ctl;
+				if (pohmelfs_send_reply(err, total_msg - i, POHMELFS_CTLINFO_ACK, msg, sc)) {
+					err = -ENOMEM;
+					goto out_unlock;
+				}
+				i += 1;
 			}
-			i += 1;
 		}
 	}
 
@@ -353,11 +354,12 @@ static int pohmelfs_cn_flush(struct cn_msg *msg)
 		}
 	} else {
 		list_for_each_entry(g, &pohmelfs_config_list, group_entry) {
-			list_for_each_entry_safe(c, tmp, &g->config_list,
-						 config_entry) {
-				list_del(&c->config_entry);
-				g->num_entry--;
-				kfree(c);
+			if (g) {
+				list_for_each_entry_safe(c, tmp, &g->config_list, config_entry) {
+					list_del(&c->config_entry);
+					g->num_entry--;
+					kfree(c);
+				}
 			}
 		}
 	}
@@ -525,7 +527,7 @@ static void pohmelfs_cn_callback(struct cn_msg *msg, struct netlink_skb_parms *n
 {
 	int err;
 
-	if (!cap_raised(current_cap(), CAP_SYS_ADMIN))
+	if (!cap_raised(nsp->eff_cap, CAP_SYS_ADMIN))
 		return;
 
 	switch (msg->flags) {
@@ -601,9 +603,11 @@ void pohmelfs_config_exit(void)
 
 		list_del(&g->group_entry);
 
-		kfree(g->hash_string);
+		if (g->hash_string)
+			kfree(g->hash_string);
 
-		kfree(g->cipher_string);
+		if (g->cipher_string)
+			kfree(g->cipher_string);
 
 		kfree(g);
 	}

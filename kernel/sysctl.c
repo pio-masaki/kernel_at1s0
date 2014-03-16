@@ -24,7 +24,6 @@
 #include <linux/slab.h>
 #include <linux/sysctl.h>
 #include <linux/signal.h>
-#include <linux/printk.h>
 #include <linux/proc_fs.h>
 #include <linux/security.h>
 #include <linux/ctype.h>
@@ -118,7 +117,6 @@ static int neg_one = -1;
 static int zero;
 static int __maybe_unused one = 1;
 static int __maybe_unused two = 2;
-static int __maybe_unused three = 3;
 static unsigned long one_ul = 1;
 static int one_hundred = 100;
 #ifdef CONFIG_PRINTK
@@ -164,6 +162,8 @@ extern int no_unaligned_warning;
 extern int unaligned_dump_stack;
 #endif
 
+extern struct ratelimit_state printk_ratelimit_state;
+
 #ifdef CONFIG_PROC_SYSCTL
 static int proc_do_cad_pid(struct ctl_table *table, int write,
 		  void __user *buffer, size_t *lenp, loff_t *ppos);
@@ -171,14 +171,8 @@ static int proc_taint(struct ctl_table *table, int write,
 			       void __user *buffer, size_t *lenp, loff_t *ppos);
 #endif
 
-#ifdef CONFIG_PRINTK
-static int proc_dmesg_restrict(struct ctl_table *table, int write,
-				void __user *buffer, size_t *lenp, loff_t *ppos);
-#endif
-
 #ifdef CONFIG_MAGIC_SYSRQ
-/* Note: sysrq code uses it's own private copy */
-static int __sysrq_enabled = SYSRQ_DEFAULT_ENABLE;
+static int __sysrq_enabled; /* Note: sysrq code ises it's own private copy */
 
 static int sysrq_sysctl_handler(ctl_table *table, int write,
 				void __user *buffer, size_t *lenp,
@@ -201,9 +195,9 @@ static int sysrq_sysctl_handler(ctl_table *table, int write,
 static struct ctl_table root_table[];
 static struct ctl_table_root sysctl_table_root;
 static struct ctl_table_header root_table_header = {
-	{{.count = 1,
+	.count = 1,
 	.ctl_table = root_table,
-	.ctl_entry = LIST_HEAD_INIT(sysctl_table_root.default_set.list),}},
+	.ctl_entry = LIST_HEAD_INIT(sysctl_table_root.default_set.list),
 	.root = &sysctl_table_root,
 	.set = &sysctl_table_root.default_set,
 };
@@ -254,6 +248,10 @@ static struct ctl_table root_table[] = {
 		.mode		= 0555,
 		.child		= dev_table,
 	},
+/*
+ * NOTE: do not add new entries to this table unless you have read
+ * Documentation/sysctl/ctl_unnumbered.txt
+ */
 	{ }
 };
 
@@ -264,6 +262,8 @@ static int min_wakeup_granularity_ns;			/* 0 usecs */
 static int max_wakeup_granularity_ns = NSEC_PER_SEC;	/* 1 second */
 static int min_sched_tunable_scaling = SCHED_TUNABLESCALING_NONE;
 static int max_sched_tunable_scaling = SCHED_TUNABLESCALING_END-1;
+static int min_sched_shares_ratelimit = 100000; /* 100 usec */
+static int max_sched_shares_ratelimit = NSEC_PER_SEC; /* 1 second */
 #endif
 
 #ifdef CONFIG_COMPACTION
@@ -308,6 +308,15 @@ static struct ctl_table kern_table[] = {
 		.extra2		= &max_wakeup_granularity_ns,
 	},
 	{
+		.procname	= "sched_shares_ratelimit",
+		.data		= &sysctl_sched_shares_ratelimit,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= sched_proc_update_handler,
+		.extra1		= &min_sched_shares_ratelimit,
+		.extra2		= &max_sched_shares_ratelimit,
+	},
+	{
 		.procname	= "sched_tunable_scaling",
 		.data		= &sysctl_sched_tunable_scaling,
 		.maxlen		= sizeof(enum sched_tunable_scaling),
@@ -315,6 +324,14 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= sched_proc_update_handler,
 		.extra1		= &min_sched_tunable_scaling,
 		.extra2		= &max_sched_tunable_scaling,
+	},
+	{
+		.procname	= "sched_shares_thresh",
+		.data		= &sysctl_sched_shares_thresh,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
 	},
 	{
 		.procname	= "sched_migration_cost",
@@ -333,13 +350,6 @@ static struct ctl_table kern_table[] = {
 	{
 		.procname	= "sched_time_avg",
 		.data		= &sysctl_sched_time_avg,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
-	},
-	{
-		.procname	= "sched_shares_window",
-		.data		= &sysctl_sched_shares_window,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
@@ -368,17 +378,13 @@ static struct ctl_table kern_table[] = {
 		.mode		= 0644,
 		.proc_handler	= sched_rt_handler,
 	},
-#ifdef CONFIG_SCHED_AUTOGROUP
 	{
-		.procname	= "sched_autogroup_enabled",
-		.data		= &sysctl_sched_autogroup_enabled,
+		.procname	= "sched_compat_yield",
+		.data		= &sysctl_sched_compat_yield,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
-		.extra2		= &one,
+		.proc_handler	= proc_dointvec,
 	},
-#endif
 #ifdef CONFIG_PROVE_LOCKING
 	{
 		.procname	= "prove_locking",
@@ -699,24 +705,6 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &zero,
 		.extra2		= &ten_thousand,
 	},
-	{
-		.procname	= "dmesg_restrict",
-		.data		= &dmesg_restrict,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
-		.extra2		= &one,
-	},
-	{
-		.procname	= "kptr_restrict",
-		.data		= &kptr_restrict,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dmesg_restrict,
-		.extra1		= &zero,
-		.extra2		= &two,
-	},
 #endif
 	{
 		.procname	= "ngroups_max",
@@ -751,21 +739,21 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &zero,
 		.extra2		= &one,
 	},
-	{
-		.procname       = "nmi_watchdog",
-		.data           = &watchdog_enabled,
-		.maxlen         = sizeof (int),
-		.mode           = 0644,
-		.proc_handler   = proc_dowatchdog_enabled,
-	},
 #endif
-#if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_X86)
+#if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_X86) && !defined(CONFIG_LOCKUP_DETECTOR)
 	{
 		.procname       = "unknown_nmi_panic",
 		.data           = &unknown_nmi_panic,
 		.maxlen         = sizeof (int),
 		.mode           = 0644,
 		.proc_handler   = proc_dointvec,
+	},
+	{
+		.procname       = "nmi_watchdog",
+		.data           = &nmi_watchdog_enabled,
+		.maxlen         = sizeof (int),
+		.mode           = 0644,
+		.proc_handler   = proc_nmi_enabled,
 	},
 #endif
 #if defined(CONFIG_X86)
@@ -948,7 +936,7 @@ static struct ctl_table kern_table[] = {
 		.data		= &sysctl_perf_event_sample_rate,
 		.maxlen		= sizeof(sysctl_perf_event_sample_rate),
 		.mode		= 0644,
-		.proc_handler	= perf_proc_update_handler,
+		.proc_handler	= proc_dointvec,
 	},
 #endif
 #ifdef CONFIG_KMEMCHECK
@@ -969,6 +957,10 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= proc_dointvec,
 	},
 #endif
+/*
+ * NOTE: do not add new entries to this table unless you have read
+ * Documentation/sysctl/ctl_unnumbered.txt
+ */
 	{ }
 };
 
@@ -978,18 +970,14 @@ static struct ctl_table vm_table[] = {
 		.data		= &sysctl_overcommit_memory,
 		.maxlen		= sizeof(sysctl_overcommit_memory),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
-		.extra2		= &two,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "panic_on_oom",
 		.data		= &sysctl_panic_on_oom,
 		.maxlen		= sizeof(sysctl_panic_on_oom),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
-		.extra2		= &two,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "oom_kill_allocating_task",
@@ -1017,8 +1005,7 @@ static struct ctl_table vm_table[] = {
 		.data		= &page_cluster,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "dirty_background_ratio",
@@ -1066,8 +1053,7 @@ static struct ctl_table vm_table[] = {
 		.data		= &dirty_expire_interval,
 		.maxlen		= sizeof(dirty_expire_interval),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &zero,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "nr_pdflush_threads",
@@ -1143,8 +1129,6 @@ static struct ctl_table vm_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= drop_caches_sysctl_handler,
-		.extra1		= &one,
-		.extra2		= &three,
 	},
 #ifdef CONFIG_COMPACTION
 	{
@@ -1344,6 +1328,11 @@ static struct ctl_table vm_table[] = {
 		.extra2		= &one,
 	},
 #endif
+
+/*
+ * NOTE: do not add new entries to this table unless you have read
+ * Documentation/sysctl/ctl_unnumbered.txt
+ */
 	{ }
 };
 
@@ -1359,28 +1348,28 @@ static struct ctl_table fs_table[] = {
 		.data		= &inodes_stat,
 		.maxlen		= 2*sizeof(int),
 		.mode		= 0444,
-		.proc_handler	= proc_nr_inodes,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "inode-state",
 		.data		= &inodes_stat,
 		.maxlen		= 7*sizeof(int),
 		.mode		= 0444,
-		.proc_handler	= proc_nr_inodes,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "file-nr",
 		.data		= &files_stat,
-		.maxlen		= sizeof(files_stat),
+		.maxlen		= 3*sizeof(int),
 		.mode		= 0444,
 		.proc_handler	= proc_nr_files,
 	},
 	{
 		.procname	= "file-max",
 		.data		= &files_stat.max_files,
-		.maxlen		= sizeof(files_stat.max_files),
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_doulongvec_minmax,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "nr_open",
@@ -1396,7 +1385,7 @@ static struct ctl_table fs_table[] = {
 		.data		= &dentry_stat,
 		.maxlen		= 6*sizeof(int),
 		.mode		= 0444,
-		.proc_handler	= proc_nr_dentry,
+		.proc_handler	= proc_dointvec,
 	},
 	{
 		.procname	= "overflowuid",
@@ -1499,6 +1488,10 @@ static struct ctl_table fs_table[] = {
 		.proc_handler	= &pipe_proc_fn,
 		.extra1		= &pipe_min_size,
 	},
+/*
+ * NOTE: do not add new entries to this table unless you have read
+ * Documentation/sysctl/ctl_unnumbered.txt
+ */
 	{ }
 };
 
@@ -1582,16 +1575,11 @@ void sysctl_head_get(struct ctl_table_header *head)
 	spin_unlock(&sysctl_lock);
 }
 
-static void free_head(struct rcu_head *rcu)
-{
-	kfree(container_of(rcu, struct ctl_table_header, rcu));
-}
-
 void sysctl_head_put(struct ctl_table_header *head)
 {
 	spin_lock(&sysctl_lock);
 	if (!--head->count)
-		call_rcu(&head->rcu, free_head);
+		kfree(head);
 	spin_unlock(&sysctl_lock);
 }
 
@@ -1705,7 +1693,12 @@ static int test_perm(int mode, int op)
 
 int sysctl_perm(struct ctl_table_root *root, struct ctl_table *table, int op)
 {
+	int error;
 	int mode;
+
+	error = security_sysctl(table, op & (MAY_READ | MAY_WRITE | MAY_EXEC));
+	if (error)
+		return error;
 
 	if (root->permissions)
 		mode = root->permissions(root, current->nsproxy, table);
@@ -1963,10 +1956,10 @@ void unregister_sysctl_table(struct ctl_table_header * header)
 	start_unregistering(header);
 	if (!--header->parent->count) {
 		WARN_ON(1);
-		call_rcu(&header->parent->rcu, free_head);
+		kfree(header->parent);
 	}
 	if (!--header->count)
-		call_rcu(&header->rcu, free_head);
+		kfree(header);
 	spin_unlock(&sysctl_lock);
 }
 
@@ -2406,17 +2399,6 @@ static int proc_taint(struct ctl_table *table, int write,
 
 	return err;
 }
-
-#ifdef CONFIG_PRINTK
-static int proc_dmesg_restrict(struct ctl_table *table, int write,
-				void __user *buffer, size_t *lenp, loff_t *ppos)
-{
-	if (write && !capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	return proc_dointvec_minmax(table, write, buffer, lenp, ppos);
-}
-#endif
 
 struct do_proc_dointvec_minmax_conv_param {
 	int *min;
@@ -2919,7 +2901,7 @@ int proc_do_large_bitmap(struct ctl_table *table, int write,
 	}
 }
 
-#else /* CONFIG_PROC_SYSCTL */
+#else /* CONFIG_PROC_FS */
 
 int proc_dostring(struct ctl_table *table, int write,
 		  void __user *buffer, size_t *lenp, loff_t *ppos)
@@ -2971,7 +2953,7 @@ int proc_doulongvec_ms_jiffies_minmax(struct ctl_table *table, int write,
 }
 
 
-#endif /* CONFIG_PROC_SYSCTL */
+#endif /* CONFIG_PROC_FS */
 
 /*
  * No sense putting this after each symbol definition, twice,

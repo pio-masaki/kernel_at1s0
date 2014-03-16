@@ -538,17 +538,15 @@ static int sh_mobile_i2c_hook_irqs(struct platform_device *dev, int hook)
 {
 	struct resource *res;
 	int ret = -ENXIO;
-	int n, k = 0;
+	int q, m;
+	int k = 0;
+	int n = 0;
 
 	while ((res = platform_get_resource(dev, IORESOURCE_IRQ, k))) {
 		for (n = res->start; hook && n <= res->end; n++) {
 			if (request_irq(n, sh_mobile_i2c_isr, IRQF_DISABLED,
-					dev_name(&dev->dev), dev)) {
-				for (n--; n >= res->start; n--)
-					free_irq(n, dev);
-
+					dev_name(&dev->dev), dev))
 				goto rollback;
-			}
 		}
 		k++;
 	}
@@ -556,17 +554,16 @@ static int sh_mobile_i2c_hook_irqs(struct platform_device *dev, int hook)
 	if (hook)
 		return k > 0 ? 0 : -ENOENT;
 
+	k--;
 	ret = 0;
 
  rollback:
-	k--;
+	for (q = k; k >= 0; k--) {
+		for (m = n; m >= res->start; m--)
+			free_irq(m, dev);
 
-	while (k >= 0) {
-		res = platform_get_resource(dev, IORESOURCE_IRQ, k);
-		for (n = res->start; n <= res->end; n++)
-			free_irq(n, dev);
-
-		k--;
+		res = platform_get_resource(dev, IORESOURCE_IRQ, k - 1);
+		m = res->end;
 	}
 
 	return ret;

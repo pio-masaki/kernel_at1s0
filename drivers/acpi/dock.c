@@ -725,7 +725,6 @@ static void dock_notify(acpi_handle handle, u32 event, void *data)
 			complete_dock(ds);
 			dock_event(ds, event, DOCK_EVENT);
 			dock_lock(ds, 1);
-			acpi_update_all_gpes();
 			break;
 		}
 		if (dock_present(ds) || dock_in_progress(ds))
@@ -930,7 +929,7 @@ static struct attribute_group dock_attribute_group = {
  * allocated and initialize a new dock station device.  Find all devices
  * that are on the dock station, and register for dock event notifications.
  */
-static int __init dock_add(acpi_handle handle)
+static int dock_add(acpi_handle handle)
 {
 	int ret, id;
 	struct dock_station ds, *dock_station;
@@ -1024,7 +1023,7 @@ static int dock_remove(struct dock_station *ds)
  *
  * This is called by acpi_walk_namespace to look for dock stations.
  */
-static __init acpi_status
+static acpi_status
 find_dock(acpi_handle handle, u32 lvl, void *context, void **rv)
 {
 	if (is_dock(handle))
@@ -1033,7 +1032,7 @@ find_dock(acpi_handle handle, u32 lvl, void *context, void **rv)
 	return AE_OK;
 }
 
-static __init acpi_status
+static acpi_status
 find_bay(acpi_handle handle, u32 lvl, void *context, void **rv)
 {
 	/* If bay is a dock, it's already handled */

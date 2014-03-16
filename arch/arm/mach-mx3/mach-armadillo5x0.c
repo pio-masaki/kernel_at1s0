@@ -49,8 +49,10 @@
 
 #include <mach/common.h>
 #include <mach/iomux-mx3.h>
+#include <mach/mmc.h>
 #include <mach/ipu.h>
 #include <mach/mx3fb.h>
+#include <mach/mxc_ehci.h>
 #include <mach/ulpi.h>
 
 #include "devices-imx31.h"
@@ -133,6 +135,7 @@ static int armadillo5x0_pins[] = {
 };
 
 /* USB */
+#if defined(CONFIG_USB_ULPI)
 
 #define OTG_RESET IOMUX_TO_GPIO(MX31_PIN_STXD4)
 #define USBH2_RESET IOMUX_TO_GPIO(MX31_PIN_SCK6)
@@ -175,10 +178,8 @@ static int usbotg_init(struct platform_device *pdev)
 	gpio_set_value(OTG_RESET, 0/*LOW*/);
 	mdelay(5);
 	gpio_set_value(OTG_RESET, 1/*HIGH*/);
-	mdelay(10);
 
-	return mx31_initialize_usb_hw(pdev->id, MXC_EHCI_POWER_PINS_ENABLED |
-			MXC_EHCI_INTERFACE_DIFF_UNI);
+	return 0;
 
 otg_free_reset:
 	gpio_free(OTG_RESET);
@@ -234,10 +235,8 @@ static int usbh2_init(struct platform_device *pdev)
 	gpio_set_value(USBH2_RESET, 0/*LOW*/);
 	mdelay(5);
 	gpio_set_value(USBH2_RESET, 1/*HIGH*/);
-	mdelay(10);
 
-	return mx31_initialize_usb_hw(pdev->id, MXC_EHCI_POWER_PINS_ENABLED |
-			MXC_EHCI_INTERFACE_DIFF_UNI);
+	return 0;
 
 h2_free_reset:
 	gpio_free(USBH2_RESET);
@@ -246,15 +245,18 @@ h2_free_cs:
 	return err;
 }
 
-static struct mxc_usbh_platform_data usbotg_pdata __initdata = {
+static struct mxc_usbh_platform_data usbotg_pdata = {
 	.init	= usbotg_init,
 	.portsc	= MXC_EHCI_MODE_ULPI | MXC_EHCI_UTMI_8BIT,
+	.flags	= MXC_EHCI_POWER_PINS_ENABLED | MXC_EHCI_INTERFACE_DIFF_UNI,
 };
 
-static struct mxc_usbh_platform_data usbh2_pdata __initdata = {
+static struct mxc_usbh_platform_data usbh2_pdata = {
 	.init	= usbh2_init,
 	.portsc	= MXC_EHCI_MODE_ULPI | MXC_EHCI_UTMI_8BIT,
+	.flags	= MXC_EHCI_POWER_PINS_ENABLED | MXC_EHCI_INTERFACE_DIFF_UNI,
 };
+#endif /* CONFIG_USB_ULPI */
 
 /* RTC over I2C*/
 #define ARMADILLO5X0_RTC_GPIO	IOMUX_TO_GPIO(MX31_PIN_SRXD4)
@@ -451,7 +453,7 @@ static void armadillo5x0_sdhc1_exit(struct device *dev, void *data)
 	gpio_free(IOMUX_TO_GPIO(MX31_PIN_ATA_RESET_B));
 }
 
-static const struct imxmmc_platform_data sdhc_pdata __initconst = {
+static struct imxmmc_platform_data sdhc_pdata = {
 	.get_ro = armadillo5x0_sdhc1_get_ro,
 	.init = armadillo5x0_sdhc1_init,
 	.exit = armadillo5x0_sdhc1_exit,
@@ -518,7 +520,7 @@ static void __init armadillo5x0_init(void)
 	gpio_direction_input(MX31_PIN_GPIO1_0);
 
 	/* Register SDHC */
-	imx31_add_mxc_mmc(0, &sdhc_pdata);
+	mxc_register_device(&mxcsdhc_device0, &sdhc_pdata);
 
 	/* Register FB */
 	mxc_register_device(&mx3_ipu, &mx3_ipu_data);
@@ -547,15 +549,15 @@ static void __init armadillo5x0_init(void)
 	i2c_register_board_info(1, &armadillo5x0_i2c_rtc, 1);
 
 	/* USB */
+#if defined(CONFIG_USB_ULPI)
+	usbotg_pdata.otg = otg_ulpi_create(&mxc_ulpi_access_ops,
+			ULPI_OTG_DRVVBUS | ULPI_OTG_DRVVBUS_EXT);
+	usbh2_pdata.otg = otg_ulpi_create(&mxc_ulpi_access_ops,
+			ULPI_OTG_DRVVBUS | ULPI_OTG_DRVVBUS_EXT);
 
-	usbotg_pdata.otg = imx_otg_ulpi_create(ULPI_OTG_DRVVBUS |
-			ULPI_OTG_DRVVBUS_EXT);
-	if (usbotg_pdata.otg)
-		imx31_add_mxc_ehci_otg(&usbotg_pdata);
-	usbh2_pdata.otg = imx_otg_ulpi_create(ULPI_OTG_DRVVBUS |
-			ULPI_OTG_DRVVBUS_EXT);
-	if (usbh2_pdata.otg)
-		imx31_add_mxc_ehci_hs(2, &usbh2_pdata);
+	mxc_register_device(&mxc_otg_host, &usbotg_pdata);
+	mxc_register_device(&mxc_usbh2, &usbh2_pdata);
+#endif
 }
 
 static void __init armadillo5x0_timer_init(void)
@@ -569,10 +571,11 @@ static struct sys_timer armadillo5x0_timer = {
 
 MACHINE_START(ARMADILLO5X0, "Armadillo-500")
 	/* Maintainer: Alberto Panizzo  */
-	.boot_params = MX3x_PHYS_OFFSET + 0x100,
-	.map_io = mx31_map_io,
-	.init_early = imx31_init_early,
-	.init_irq = mx31_init_irq,
-	.timer = &armadillo5x0_timer,
-	.init_machine = armadillo5x0_init,
+	.phys_io	= MX31_AIPS1_BASE_ADDR,
+	.io_pg_offst	= (MX31_AIPS1_BASE_ADDR_VIRT >> 18) & 0xfffc,
+	.boot_params	= MX3x_PHYS_OFFSET + 0x100,
+	.map_io		= mx31_map_io,
+	.init_irq	= mx31_init_irq,
+	.timer		= &armadillo5x0_timer,
+	.init_machine	= armadillo5x0_init,
 MACHINE_END

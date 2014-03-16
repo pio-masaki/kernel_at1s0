@@ -28,8 +28,6 @@
 #include <linux/rmap.h>
 #include <linux/mmu_notifier.h>
 #include <linux/perf_event.h>
-#include <linux/audit.h>
-#include <linux/khugepaged.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
@@ -254,15 +252,7 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 	down_write(&mm->mmap_sem);
 
 #ifdef CONFIG_COMPAT_BRK
-	/*
-	 * CONFIG_COMPAT_BRK can still be overridden by setting
-	 * randomize_va_space to 2, which will still cause mm->start_brk
-	 * to be arbitrarily shifted
-	 */
-	if (current->brk_randomized)
-		min_brk = mm->start_brk;
-	else
-		min_brk = mm->end_data;
+	min_brk = mm->end_code;
 #else
 	min_brk = mm->start_brk;
 #endif
@@ -597,8 +587,6 @@ again:			remove_next = 1 + (end > next->vm_end);
 		}
 	}
 
-	vma_adjust_trans_huge(vma, start, end, adjust_next);
-
 	/*
 	 * When changing only vma->vm_end, we don't really need anon_vma
 	 * lock. This is a fairly rare case by itself, but the anon_vma
@@ -826,7 +814,6 @@ struct vm_area_struct *vma_merge(struct mm_struct *mm,
 				end, prev->vm_pgoff, NULL);
 		if (err)
 			return NULL;
-		khugepaged_enter_vma_merge(prev);
 		return prev;
 	}
 
@@ -845,7 +832,6 @@ struct vm_area_struct *vma_merge(struct mm_struct *mm,
 				next->vm_pgoff - pglen, NULL);
 		if (err)
 			return NULL;
-		khugepaged_enter_vma_merge(area);
 		return area;
 	}
 
@@ -1122,7 +1108,6 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 	unsigned long retval = -EBADF;
 
 	if (!(flags & MAP_ANONYMOUS)) {
-		audit_mmap_fd(fd, flags);
 		if (unlikely(flags & MAP_HUGETLB))
 			return -EINVAL;
 		file = fget(fd);
@@ -1767,17 +1752,13 @@ int expand_upwards(struct vm_area_struct *vma, unsigned long address)
 		size = address - vma->vm_start;
 		grow = (address - vma->vm_end) >> PAGE_SHIFT;
 
-		error = -ENOMEM;
-		if (vma->vm_pgoff + (size >> PAGE_SHIFT) >= vma->vm_pgoff) {
-			error = acct_stack_growth(vma, size, grow);
-			if (!error) {
-				vma->vm_end = address;
-				perf_event_mmap(vma);
-			}
+		error = acct_stack_growth(vma, size, grow);
+		if (!error) {
+			vma->vm_end = address;
+			perf_event_mmap(vma);
 		}
 	}
 	vma_unlock_anon_vma(vma);
-	khugepaged_enter_vma_merge(vma);
 	return error;
 }
 #endif /* CONFIG_STACK_GROWSUP || CONFIG_IA64 */
@@ -1817,18 +1798,14 @@ static int expand_downwards(struct vm_area_struct *vma,
 		size = vma->vm_end - address;
 		grow = (vma->vm_start - address) >> PAGE_SHIFT;
 
-		error = -ENOMEM;
-		if (grow <= vma->vm_pgoff) {
-			error = acct_stack_growth(vma, size, grow);
-			if (!error) {
-				vma->vm_start = address;
-				vma->vm_pgoff -= grow;
-				perf_event_mmap(vma);
-			}
+		error = acct_stack_growth(vma, size, grow);
+		if (!error) {
+			vma->vm_start = address;
+			vma->vm_pgoff -= grow;
+			perf_event_mmap(vma);
 		}
 	}
 	vma_unlock_anon_vma(vma);
-	khugepaged_enter_vma_merge(vma);
 	return error;
 }
 

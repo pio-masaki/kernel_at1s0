@@ -17,7 +17,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/err.h>
 #include <linux/platform_device.h>
@@ -37,10 +36,9 @@ int __init mxc_register_device(struct platform_device *pdev, void *data)
 	return ret;
 }
 
-struct platform_device *__init imx_add_platform_device_dmamask(
-		const char *name, int id,
+struct platform_device *__init imx_add_platform_device(const char *name, int id,
 		const struct resource *res, unsigned int num_resources,
-		const void *data, size_t size_data, u64 dmamask)
+		const void *data, size_t size_data)
 {
 	int ret = -ENOMEM;
 	struct platform_device *pdev;
@@ -48,23 +46,6 @@ struct platform_device *__init imx_add_platform_device_dmamask(
 	pdev = platform_device_alloc(name, id);
 	if (!pdev)
 		goto err;
-
-	if (dmamask) {
-		/*
-		 * This memory isn't freed when the device is put,
-		 * I don't have a nice idea for that though.  Conceptually
-		 * dma_mask in struct device should not be a pointer.
-		 * See http://thread.gmane.org/gmane.linux.kernel.pci/9081
-		 */
-		pdev->dev.dma_mask =
-			kmalloc(sizeof(*pdev->dev.dma_mask), GFP_KERNEL);
-		if (!pdev->dev.dma_mask)
-			/* ret is still -ENOMEM; */
-			goto err;
-
-		*pdev->dev.dma_mask = dmamask;
-		pdev->dev.coherent_dma_mask = dmamask;
-	}
 
 	if (res) {
 		ret = platform_device_add_resources(pdev, res, num_resources);
@@ -81,8 +62,6 @@ struct platform_device *__init imx_add_platform_device_dmamask(
 	ret = platform_device_add(pdev);
 	if (ret) {
 err:
-		if (dmamask)
-			kfree(pdev->dev.dma_mask);
 		platform_device_put(pdev);
 		return ERR_PTR(ret);
 	}

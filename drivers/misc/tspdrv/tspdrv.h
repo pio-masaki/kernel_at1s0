@@ -30,6 +30,7 @@
 #define _TSPDRV_H
 
 /* Constants */
+#define VIB_SECOND_SOURCEx 
 #define MODULE_NAME                         "tspdrv"
 #define TSPDRV                              "/dev/"MODULE_NAME
 #define TSPDRV_MAGIC_NUMBER                 0x494D4D52
@@ -41,6 +42,9 @@
 #define TSPDRV_ENABLE_AMP                   _IO(TSPDRV_MAGIC_NUMBER & 0xFF, 3)
 #define TSPDRV_DISABLE_AMP                  _IO(TSPDRV_MAGIC_NUMBER & 0xFF, 4)
 #define TSPDRV_GET_NUM_ACTUATORS            _IO(TSPDRV_MAGIC_NUMBER & 0xFF, 5)
+#ifdef VIB_SECOND_SOURCE
+#define TSPDRV_GET_VIBRATOR_PIN		    _IO(TSPDRV_MAGIC_NUMBER & 0xFF, 6)
+#endif
 #define VIBE_MAX_DEVICE_NAME_LENGTH			64
 #define SPI_HEADER_SIZE                     3   /* DO NOT CHANGE - SPI buffer header size */
 #define VIBE_OUTPUT_SAMPLE_SIZE             50  /* DO NOT CHANGE - maximum number of samples */
@@ -86,7 +90,7 @@ typedef struct
 
 /* Kernel Debug Macros */
 #ifdef __KERNEL__
-    #ifdef VIBE_DEBUG
+	#ifdef VIBE_DEBUG
         #define DbgOut(_x_) printk _x_
     #else   /* VIBE_DEBUG */
         #define DbgOut(_x_)

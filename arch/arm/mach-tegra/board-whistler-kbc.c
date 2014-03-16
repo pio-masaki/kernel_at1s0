@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2011 NVIDIA, Inc.
+ * Copyright (C) 2010 NVIDIA, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -48,32 +48,19 @@
 #endif
 
 #ifdef CONFIG_INPUT_ALPS_GPIO_SCROLLWHEEL
-static const u32 whistler_keymap[] = {
-	KEY(0, 0, KEY_POWER),
-	KEY(0, 1, KEY_RESERVED),
-	KEY(1, 0, KEY_HOME),
-	KEY(1, 1, KEY_BACK),
-	KEY(2, 0, KEY_RESERVED),
-	KEY(2, 1, KEY_MENU),
+static int plain_kbd_keycode[] = {
+	KEY_POWER,	KEY_RESERVED,
+	KEY_HOME,	KEY_BACK,
+	KEY_RESERVED,	KEY_MENU,
 };
 #else
-static const u32 whistler_keymap[] = {
-	KEY(0, 0, KEY_POWER),
-	KEY(0, 1, KEY_RESERVED),
-	KEY(1, 0, KEY_HOME),
-	KEY(1, 1, KEY_BACK),
-	KEY(2, 0, KEY_RESERVED),
-	KEY(2, 1, KEY_MENU),
-	KEY(3, 0, KEY_RESERVED),
-	KEY(3, 1, KEY_RESERVED),
+static int plain_kbd_keycode[] = {
+	KEY_POWER,      KEY_RESERVED, KEY_RESERVED, KEY_RESERVED,
+	KEY_HOME,       KEY_BACK,     KEY_RESERVED, KEY_RESERVED,
+	KEY_RESERVED,   KEY_RESERVED, KEY_RESERVED, KEY_RESERVED,
+	KEY_VOLUMEDOWN, KEY_VOLUMEUP, KEY_RESERVED, KEY_RESERVED,
 };
 #endif
-
-static const struct matrix_keymap_data whistler_keymap_data = {
-	.keymap = whistler_keymap,
-	.keymap_size = ARRAY_SIZE(whistler_keymap),
-};
-
 static struct tegra_kbc_wake_key whistler_wake_cfg[] = {
 	[0] = {
 		.row = 0,
@@ -84,11 +71,13 @@ static struct tegra_kbc_wake_key whistler_wake_cfg[] = {
 static struct tegra_kbc_platform_data whistler_kbc_platform_data = {
 	.debounce_cnt = 20,
 	.repeat_cnt = 50 * 32,
-	.wake_cnt = 1,
+	.scan_timeout_cnt = 3000 * 32,
+	.plain_keycode = plain_kbd_keycode,
+	.fn_keycode = NULL,
+	.is_filter_keys = false,
+	.is_wake_on_any_key = false,
+	.wake_key_cnt = 1,
 	.wake_cfg = &whistler_wake_cfg[0],
-	.keymap_data = &whistler_keymap_data,
-	.use_fn_map = false,
-	.wakeup = true,
 };
 
 static struct resource whistler_kbc_resources[] = {
@@ -120,16 +109,25 @@ int __init whistler_kbc_init(void)
 	int i;
 
 	pr_info("KBC: whistler_kbc_init\n");
+
+	/* Setup the pin configuration information. */
+	for (i = 0; i < KBC_MAX_GPIO; i++) {
+		data->pin_cfg[i].num = 0;
+		data->pin_cfg[i].pin_type = kbc_pin_unused;
+	}
+
 	for (i = 0; i < WHISTLER_ROW_COUNT; i++) {
 		data->pin_cfg[i].num = i;
-		data->pin_cfg[i].is_row = true;
-		data->pin_cfg[i].en = true;
+		data->pin_cfg[i].pin_type = kbc_pin_row;
 	}
 	for (i = 0; i < WHISTLER_COL_COUNT; i++) {
-		data->pin_cfg[i + KBC_PIN_GPIO_16].num = i;
-		data->pin_cfg[i + KBC_PIN_GPIO_16].en = true;
+		data->pin_cfg[i + WHISTLER_ROW_COUNT].num = i;
+		data->pin_cfg[i + WHISTLER_ROW_COUNT].pin_type = kbc_pin_col;
 	}
 
 	platform_device_register(&whistler_kbc_device);
 	return 0;
 }
+
+
+

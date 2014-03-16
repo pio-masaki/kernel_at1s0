@@ -1218,7 +1218,7 @@ static int ds_remove(struct vio_dev *vdev)
 	return 0;
 }
 
-static const struct vio_device_id ds_match[] = {
+static struct vio_device_id __initdata ds_match[] = {
 	{
 		.type = "domain-services-port",
 	},

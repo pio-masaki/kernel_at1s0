@@ -636,7 +636,7 @@ struct tlock *txLock(tid_t tid, struct inode *ip, struct metapage * mp,
 	 * the inode of the page and available to all anonymous
 	 * transactions until txCommit() time at which point
 	 * they are transferred to the transaction tlock list of
-	 * the committing transaction of the inode)
+	 * the commiting transaction of the inode)
 	 */
 	if (xtid == 0) {
 		tlck->tid = tid;
@@ -1279,7 +1279,7 @@ int txCommit(tid_t tid,		/* transaction identifier */
 	 * lazy commit thread finishes processing
 	 */
 	if (tblk->xflag & COMMIT_DELETE) {
-		ihold(tblk->u.ip);
+		atomic_inc(&tblk->u.ip->i_count);
 		/*
 		 * Avoid a rare deadlock
 		 *

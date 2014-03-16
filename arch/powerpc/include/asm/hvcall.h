@@ -122,7 +122,7 @@
 #define H_DABRX_KERNEL		(1UL<<(63-62))
 #define H_DABRX_USER		(1UL<<(63-63))
 
-/* Each control block has to be on a 4K boundary */
+/* Each control block has to be on a 4K bondary */
 #define H_CB_ALIGNMENT          4096
 
 /* pSeries hypervisor opcodes */
@@ -232,9 +232,7 @@
 #define H_GET_EM_PARMS		0x2B8
 #define H_SET_MPP		0x2D0
 #define H_GET_MPP		0x2D4
-#define H_HOME_NODE_ASSOCIATIVITY 0x2EC
-#define H_BEST_ENERGY		0x2F4
-#define MAX_HCALL_OPCODE	H_BEST_ENERGY
+#define MAX_HCALL_OPCODE	H_GET_MPP
 
 #ifndef __ASSEMBLY__
 

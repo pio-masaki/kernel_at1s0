@@ -37,18 +37,19 @@
 #include <linux/ptrace.h>
 #include <linux/fs_struct.h>
 #include <linux/gfp.h>
-#include <linux/syscore_ops.h>
 
 #include <linux/compat.h>
 #include <linux/syscalls.h>
 #include <linux/kprobes.h>
 #include <linux/user_namespace.h>
 
-#include <linux/kmsg_dump.h>
-
 #include <asm/uaccess.h>
 #include <asm/io.h>
 #include <asm/unistd.h>
+
+#include <linux/file.h>
+#include <linux/fcntl.h>
+#include <asm/uaccess.h>
 
 #ifndef SET_UNALIGN_CTL
 # define SET_UNALIGN_CTL(a,b)	(-EINVAL)
@@ -80,6 +81,43 @@
 #ifndef SET_TSC_CTL
 # define SET_TSC_CTL(a)		(-EINVAL)
 #endif
+
+#define MISC_DEVICE_NODE        "/dev/block/mmcblk0p5"
+
+struct bootloader_message {
+	char command[32];
+	char status[32];
+	char recovery[512];
+};
+
+static void write_recovery_cmd(void)
+{
+	struct file *file;
+	loff_t pos = 0;
+	int fd = -1;
+	struct bootloader_message factory_reset;
+
+	mm_segment_t old_fs = get_fs();
+	set_fs(KERNEL_DS);
+
+	memset(&factory_reset, 0, sizeof(factory_reset));
+	strlcpy(factory_reset.command, "boot-recovery", sizeof(factory_reset.command));
+	strlcpy(factory_reset.recovery, "recovery\n", sizeof(factory_reset.recovery));
+
+	fd = sys_open(MISC_DEVICE_NODE, O_RDWR | O_SYNC, 0);
+	if (fd >= 0)
+	{
+		sys_write(fd, (char *) &factory_reset, sizeof(factory_reset));
+		file = fget(fd);
+		if (file)
+		{
+			vfs_write(file, (char *) &factory_reset, sizeof(factory_reset), &pos);
+			fput(file);
+		}
+		sys_close(fd);
+	}
+	set_fs(old_fs);
+}
 
 /*
  * this is where the system-wide overflow UID and GID are defined, for
@@ -120,33 +158,16 @@ EXPORT_SYMBOL(cad_pid);
 void (*pm_power_off_prepare)(void);
 
 /*
- * Returns true if current's euid is same as p's uid or euid,
- * or has CAP_SYS_NICE to p's user_ns.
- *
- * Called with rcu_read_lock, creds are safe
- */
-static bool set_one_prio_perm(struct task_struct *p)
-{
-	const struct cred *cred = current_cred(), *pcred = __task_cred(p);
-
-	if (pcred->user->user_ns == cred->user->user_ns &&
-	    (pcred->uid  == cred->euid ||
-	     pcred->euid == cred->euid))
-		return true;
-	if (ns_capable(pcred->user->user_ns, CAP_SYS_NICE))
-		return true;
-	return false;
-}
-
-/*
  * set the priority of a task
  * - the caller must hold the RCU read lock
  */
 static int set_one_prio(struct task_struct *p, int niceval, int error)
 {
+	const struct cred *cred = current_cred(), *pcred = __task_cred(p);
 	int no_nice;
 
-	if (!set_one_prio_perm(p)) {
+	if (pcred->uid  != cred->euid &&
+	    pcred->euid != cred->euid && !capable(CAP_SYS_NICE)) {
 		error = -EPERM;
 		goto out;
 	}
@@ -305,7 +326,6 @@ out_unlock:
  */
 void emergency_restart(void)
 {
-	kmsg_dump(KMSG_DUMP_EMERG);
 	machine_emergency_restart();
 }
 EXPORT_SYMBOL_GPL(emergency_restart);
@@ -316,7 +336,6 @@ void kernel_restart_prepare(char *cmd)
 	system_state = SYSTEM_RESTART;
 	device_shutdown();
 	sysdev_shutdown();
-	syscore_shutdown();
 }
 
 /**
@@ -334,7 +353,6 @@ void kernel_restart(char *cmd)
 		printk(KERN_EMERG "Restarting system.\n");
 	else
 		printk(KERN_EMERG "Restarting system with command '%s'.\n", cmd);
-	kmsg_dump(KMSG_DUMP_RESTART);
 	machine_restart(cmd);
 }
 EXPORT_SYMBOL_GPL(kernel_restart);
@@ -355,9 +373,7 @@ void kernel_halt(void)
 {
 	kernel_shutdown_prepare(SYSTEM_HALT);
 	sysdev_shutdown();
-	syscore_shutdown();
 	printk(KERN_EMERG "System halted.\n");
-	kmsg_dump(KMSG_DUMP_HALT);
 	machine_halt();
 }
 
@@ -375,9 +391,7 @@ void kernel_power_off(void)
 		pm_power_off_prepare();
 	disable_nonboot_cpus();
 	sysdev_shutdown();
-	syscore_shutdown();
 	printk(KERN_EMERG "Power down.\n");
-	kmsg_dump(KMSG_DUMP_POWEROFF);
 	machine_power_off();
 }
 EXPORT_SYMBOL_GPL(kernel_power_off);
@@ -446,6 +460,10 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 			break;
 		}
 		buffer[sizeof(buffer) - 1] = '\0';
+
+		// for factory reset
+		if (!strcmp(buffer, "recovery"))
+			write_recovery_cmd();
 
 		kernel_restart(buffer);
 		break;
@@ -523,7 +541,7 @@ SYSCALL_DEFINE2(setregid, gid_t, rgid, gid_t, egid)
 	if (rgid != (gid_t) -1) {
 		if (old->gid == rgid ||
 		    old->egid == rgid ||
-		    nsown_capable(CAP_SETGID))
+		    capable(CAP_SETGID))
 			new->gid = rgid;
 		else
 			goto error;
@@ -532,7 +550,7 @@ SYSCALL_DEFINE2(setregid, gid_t, rgid, gid_t, egid)
 		if (old->gid == egid ||
 		    old->egid == egid ||
 		    old->sgid == egid ||
-		    nsown_capable(CAP_SETGID))
+		    capable(CAP_SETGID))
 			new->egid = egid;
 		else
 			goto error;
@@ -567,7 +585,7 @@ SYSCALL_DEFINE1(setgid, gid_t, gid)
 	old = current_cred();
 
 	retval = -EPERM;
-	if (nsown_capable(CAP_SETGID))
+	if (capable(CAP_SETGID))
 		new->gid = new->egid = new->sgid = new->fsgid = gid;
 	else if (gid == old->gid || gid == old->sgid)
 		new->egid = new->fsgid = gid;
@@ -634,7 +652,7 @@ SYSCALL_DEFINE2(setreuid, uid_t, ruid, uid_t, euid)
 		new->uid = ruid;
 		if (old->uid != ruid &&
 		    old->euid != ruid &&
-		    !nsown_capable(CAP_SETUID))
+		    !capable(CAP_SETUID))
 			goto error;
 	}
 
@@ -643,7 +661,7 @@ SYSCALL_DEFINE2(setreuid, uid_t, ruid, uid_t, euid)
 		if (old->uid != euid &&
 		    old->euid != euid &&
 		    old->suid != euid &&
-		    !nsown_capable(CAP_SETUID))
+		    !capable(CAP_SETUID))
 			goto error;
 	}
 
@@ -691,7 +709,7 @@ SYSCALL_DEFINE1(setuid, uid_t, uid)
 	old = current_cred();
 
 	retval = -EPERM;
-	if (nsown_capable(CAP_SETUID)) {
+	if (capable(CAP_SETUID)) {
 		new->suid = new->uid = uid;
 		if (uid != old->uid) {
 			retval = set_user(new);
@@ -733,7 +751,7 @@ SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 	old = current_cred();
 
 	retval = -EPERM;
-	if (!nsown_capable(CAP_SETUID)) {
+	if (!capable(CAP_SETUID)) {
 		if (ruid != (uid_t) -1 && ruid != old->uid &&
 		    ruid != old->euid  && ruid != old->suid)
 			goto error;
@@ -797,7 +815,7 @@ SYSCALL_DEFINE3(setresgid, gid_t, rgid, gid_t, egid, gid_t, sgid)
 	old = current_cred();
 
 	retval = -EPERM;
-	if (!nsown_capable(CAP_SETGID)) {
+	if (!capable(CAP_SETGID)) {
 		if (rgid != (gid_t) -1 && rgid != old->gid &&
 		    rgid != old->egid  && rgid != old->sgid)
 			goto error;
@@ -857,7 +875,7 @@ SYSCALL_DEFINE1(setfsuid, uid_t, uid)
 
 	if (uid == old->uid  || uid == old->euid  ||
 	    uid == old->suid || uid == old->fsuid ||
-	    nsown_capable(CAP_SETUID)) {
+	    capable(CAP_SETUID)) {
 		if (uid != old_fsuid) {
 			new->fsuid = uid;
 			if (security_task_fix_setuid(new, old, LSM_SETID_FS) == 0)
@@ -890,7 +908,7 @@ SYSCALL_DEFINE1(setfsgid, gid_t, gid)
 
 	if (gid == old->gid  || gid == old->egid  ||
 	    gid == old->sgid || gid == old->fsgid ||
-	    nsown_capable(CAP_SETGID)) {
+	    capable(CAP_SETGID)) {
 		if (gid != old_fsgid) {
 			new->fsgid = gid;
 			goto change_okay;
@@ -1107,10 +1125,8 @@ SYSCALL_DEFINE0(setsid)
 	err = session;
 out:
 	write_unlock_irq(&tasklist_lock);
-	if (err > 0) {
+	if (err > 0)
 		proc_sid_connector(group_leader);
-		sched_autogroup_create_attach(group_leader);
-	}
 	return err;
 }
 
@@ -1198,9 +1214,8 @@ SYSCALL_DEFINE2(sethostname, char __user *, name, int, len)
 	int errno;
 	char tmp[__NEW_UTS_LEN];
 
-	if (!ns_capable(current->nsproxy->uts_ns->user_ns, CAP_SYS_ADMIN))
+	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
-
 	if (len < 0 || len > __NEW_UTS_LEN)
 		return -EINVAL;
 	down_write(&uts_sem);
@@ -1248,7 +1263,7 @@ SYSCALL_DEFINE2(setdomainname, char __user *, name, int, len)
 	int errno;
 	char tmp[__NEW_UTS_LEN];
 
-	if (!ns_capable(current->nsproxy->uts_ns->user_ns, CAP_SYS_ADMIN))
+	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	if (len < 0 || len > __NEW_UTS_LEN)
 		return -EINVAL;
@@ -1363,8 +1378,6 @@ int do_prlimit(struct task_struct *tsk, unsigned int resource,
 	rlim = tsk->signal->rlim + resource;
 	task_lock(tsk->group_leader);
 	if (new_rlim) {
-		/* Keep the capable check against init_user_ns until
-		   cgroups can contain all limits */
 		if (new_rlim->rlim_max > rlim->rlim_max &&
 				!capable(CAP_SYS_RESOURCE))
 			retval = -EPERM;
@@ -1408,22 +1421,18 @@ static int check_prlimit_permission(struct task_struct *task)
 {
 	const struct cred *cred = current_cred(), *tcred;
 
-	if (current == task)
-		return 0;
-
 	tcred = __task_cred(task);
-	if (cred->user->user_ns == tcred->user->user_ns &&
-	    (cred->uid == tcred->euid &&
-	     cred->uid == tcred->suid &&
-	     cred->uid == tcred->uid  &&
-	     cred->gid == tcred->egid &&
-	     cred->gid == tcred->sgid &&
-	     cred->gid == tcred->gid))
-		return 0;
-	if (ns_capable(tcred->user->user_ns, CAP_SYS_RESOURCE))
-		return 0;
+	if ((cred->uid != tcred->euid ||
+	     cred->uid != tcred->suid ||
+	     cred->uid != tcred->uid  ||
+	     cred->gid != tcred->egid ||
+	     cred->gid != tcred->sgid ||
+	     cred->gid != tcred->gid) &&
+	     !capable(CAP_SYS_RESOURCE)) {
+		return -EPERM;
+	}
 
-	return -EPERM;
+	return 0;
 }
 
 SYSCALL_DEFINE4(prlimit64, pid_t, pid, unsigned int, resource,

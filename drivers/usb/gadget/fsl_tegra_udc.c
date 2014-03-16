@@ -53,13 +53,7 @@ int fsl_udc_clk_init(struct platform_device *pdev)
 	}
 
 	clk_enable(emc_clk);
-#ifdef CONFIG_ARCH_TEGRA_2x_SOC
-	/* Set DDR busy hints to 150MHz. For Tegra 2x SOC, DDR rate is half of EMC rate */
-	clk_set_rate(emc_clk, 300000000);
-#else
-	/* Set DDR busy hints to 100MHz. For Tegra 3x SOC DDR rate equals to EMC rate */
-	clk_set_rate(emc_clk, 100000000);
-#endif
+	clk_set_rate(emc_clk, 400000000);
 
 	/* we have to remap the registers ourselves as fsl_udc does not
 	 * export them for us.
@@ -80,7 +74,7 @@ int fsl_udc_clk_init(struct platform_device *pdev)
 		instance = 0;
 
 	phy = tegra_usb_phy_open(instance, udc_base, pdata->phy_config,
-					TEGRA_USB_PHY_MODE_DEVICE, pdata->usb_phy_type);
+						TEGRA_USB_PHY_MODE_DEVICE, pdata->usb_phy_type);
 	if (IS_ERR(phy)) {
 		dev_err(&pdev->dev, "Can't open phy\n");
 		err = PTR_ERR(phy);
@@ -137,34 +131,4 @@ void fsl_udc_clk_resume(bool is_dpd)
 	clk_enable(sclk_clk);
 	clk_enable(udc_clk);
 	tegra_usb_phy_power_on(phy,  is_dpd);
-}
-
-void fsl_udc_clk_enable(void)
-{
-	clk_enable(udc_clk);
-}
-
-void fsl_udc_clk_disable(void)
-{
-	clk_disable(udc_clk);
-}
-
-bool fsl_udc_charger_detect(void)
-{
-	return tegra_usb_phy_charger_detect(phy);
-}
-
-void fsl_udc_dtd_prepare(void)
-{
-	/* When we are programming two DTDs very close to each other,
-	 * the second DTD is being prefetched before it is actually written
-	 * to DDR. To prevent this, we disable prefetcher before programming
-	 * any new DTD and re-enable it before priming endpoint.
-	 */
-	tegra_usb_phy_memory_prefetch_off(phy);
-}
-
-void fsl_udc_ep_barrier(void)
-{
-	tegra_usb_phy_memory_prefetch_on(phy);
 }

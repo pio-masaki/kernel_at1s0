@@ -435,11 +435,12 @@ static int idedisk_prep_fn(struct request_queue *q, struct request *rq)
 	if (!(rq->cmd_flags & REQ_FLUSH))
 		return BLKPREP_OK;
 
-	cmd = kzalloc(sizeof(*cmd), GFP_ATOMIC);
+	cmd = kmalloc(sizeof(*cmd), GFP_ATOMIC);
 
 	/* FIXME: map struct ide_taskfile on rq->cmd[] */
 	BUG_ON(cmd == NULL);
 
+	memset(cmd, 0, sizeof(*cmd));
 	if (ata_id_flush_ext_enabled(drive->id) &&
 	    (drive->capacity64 >= (1UL << 28)))
 		cmd->tf.command = ATA_CMD_FLUSH_EXT;
@@ -515,10 +516,10 @@ static int ide_do_setfeature(ide_drive_t *drive, u8 feature, u8 nsect)
 	return ide_no_data_taskfile(drive, &cmd);
 }
 
-static void update_flush(ide_drive_t *drive)
+static void update_ordered(ide_drive_t *drive)
 {
 	u16 *id = drive->id;
-	unsigned flush = 0;
+	unsigned ordered = QUEUE_ORDERED_NONE;
 
 	if (drive->dev_flags & IDE_DFLAG_WCACHE) {
 		unsigned long long capacity;
@@ -542,12 +543,13 @@ static void update_flush(ide_drive_t *drive)
 		       drive->name, barrier ? "" : "not ");
 
 		if (barrier) {
-			flush = REQ_FLUSH;
+			ordered = QUEUE_ORDERED_DRAIN_FLUSH;
 			blk_queue_prep_rq(drive->queue, idedisk_prep_fn);
 		}
-	}
+	} else
+		ordered = QUEUE_ORDERED_DRAIN;
 
-	blk_queue_flush(drive->queue, flush);
+	blk_queue_ordered(drive->queue, ordered);
 }
 
 ide_devset_get_flag(wcache, IDE_DFLAG_WCACHE);
@@ -570,7 +572,7 @@ static int set_wcache(ide_drive_t *drive, int arg)
 		}
 	}
 
-	update_flush(drive);
+	update_ordered(drive);
 
 	return err;
 }

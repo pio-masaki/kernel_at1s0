@@ -23,7 +23,7 @@ config RFKILL_LEDS
 	default y
 
 config RFKILL_INPUT
-	bool "RF switch input support" if EXPERT
+	bool "RF switch input support" if EMBEDDED
 	depends on RFKILL
 	depends on INPUT = y || RFKILL = INPUT
-	default y if !EXPERT
+	default y if !EMBEDDED

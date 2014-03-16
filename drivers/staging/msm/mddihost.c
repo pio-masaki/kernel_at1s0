@@ -67,7 +67,7 @@ void mddi_init(void)
 
 	mddi_host_initialized = TRUE;
 
-	sema_init(&mddi_host_mutex, 1);
+	init_MUTEX(&mddi_host_mutex);
 
 	if (!mddi_host_powered) {
 		down(&mddi_host_mutex);

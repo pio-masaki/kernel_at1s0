@@ -134,8 +134,7 @@ static void __kprobes singlestep(struct kprobe *p, struct pt_regs *regs,
 				 struct kprobe_ctlblk *kcb)
 {
 	regs->ARM_pc += 4;
-	if (p->ainsn.insn_check_cc(regs->ARM_cpsr))
-		p->ainsn.insn_handler(p, regs);
+	p->ainsn.insn_handler(p, regs);
 }
 
 /*

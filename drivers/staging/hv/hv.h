@@ -92,49 +92,49 @@ static const struct hv_guid VMBUS_SERVICE_ID = {
 
 
 struct hv_input_signal_event_buffer {
-	u64 align8;
-	struct hv_input_signal_event event;
+	u64 Align8;
+	struct hv_input_signal_event Event;
 };
 
 struct hv_context {
 	/* We only support running on top of Hyper-V
 	* So at this point this really can only contain the Hyper-V ID
 	*/
-	u64 guestid;
+	u64 GuestId;
 
-	void *hypercall_page;
+	void *HypercallPage;
 
-	bool synic_initialized;
+	bool SynICInitialized;
 
 	/*
 	 * This is used as an input param to HvCallSignalEvent hypercall. The
 	 * input param is immutable in our usage and must be dynamic mem (vs
 	 * stack or global). */
-	struct hv_input_signal_event_buffer *signal_event_buffer;
+	struct hv_input_signal_event_buffer *SignalEventBuffer;
 	/* 8-bytes aligned of the buffer above */
-	struct hv_input_signal_event *signal_event_param;
+	struct hv_input_signal_event *SignalEventParam;
 
-	void *synic_message_page[MAX_NUM_CPUS];
-	void *synic_event_page[MAX_NUM_CPUS];
+	void *synICMessagePage[MAX_NUM_CPUS];
+	void *synICEventPage[MAX_NUM_CPUS];
 };
 
-extern struct hv_context hv_context;
+extern struct hv_context gHvContext;
 
 
 /* Hv Interface */
 
-extern int hv_init(void);
+extern int HvInit(void);
 
-extern void hv_cleanup(void);
+extern void HvCleanup(void);
 
-extern u16 hv_post_message(union hv_connection_id connection_id,
-			 enum hv_message_type message_type,
-			 void *payload, size_t payload_size);
+extern u16 HvPostMessage(union hv_connection_id connectionId,
+			 enum hv_message_type messageType,
+			 void *payload, size_t payloadSize);
 
-extern u16 hv_signal_event(void);
+extern u16 HvSignalEvent(void);
 
-extern void hv_synic_init(void *irqarg);
+extern void HvSynicInit(void *irqarg);
 
-extern void hv_synic_cleanup(void *arg);
+extern void HvSynicCleanup(void *arg);
 
 #endif /* __HV_H__ */

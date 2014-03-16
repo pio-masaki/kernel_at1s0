@@ -543,10 +543,7 @@ static int iwm_mlme_assoc_complete(struct iwm_priv *iwm, u8 *buf,
 	switch (le32_to_cpu(complete->status)) {
 	case UMAC_ASSOC_COMPLETE_SUCCESS:
 		chan = ieee80211_get_channel(wiphy,
-			ieee80211_channel_to_frequency(complete->channel,
-				complete->band == UMAC_BAND_2GHZ ?
-					IEEE80211_BAND_2GHZ :
-					IEEE80211_BAND_5GHZ));
+			ieee80211_channel_to_frequency(complete->channel));
 		if (!chan || chan->flags & IEEE80211_CHAN_DISABLED) {
 			/* Associated to a unallowed channel, disassociate. */
 			__iwm_invalidate_mlme_profile(iwm);
@@ -844,7 +841,7 @@ static int iwm_mlme_update_bss_table(struct iwm_priv *iwm, u8 *buf,
 		goto err;
 	}
 
-	freq = ieee80211_channel_to_frequency(umac_bss->channel, band->band);
+	freq = ieee80211_channel_to_frequency(umac_bss->channel);
 	channel = ieee80211_get_channel(wiphy, freq);
 	signal = umac_bss->rssi * 100;
 
@@ -1198,8 +1195,11 @@ static int iwm_ntf_wifi_if_wrapper(struct iwm_priv *iwm, u8 *buf,
 	IWM_DBG_NTF(iwm, DBG, "WIFI_IF_WRAPPER cmd is delivered to UMAC: "
 		    "oid is 0x%x\n", hdr->oid);
 
-	set_bit(hdr->oid, &iwm->wifi_ntfy[0]);
-	wake_up_interruptible(&iwm->wifi_ntfy_queue);
+	if (hdr->oid <= WIFI_IF_NTFY_MAX) {
+		set_bit(hdr->oid, &iwm->wifi_ntfy[0]);
+		wake_up_interruptible(&iwm->wifi_ntfy_queue);
+	} else
+		return -EINVAL;
 
 	switch (hdr->oid) {
 	case UMAC_WIFI_IF_CMD_SET_PROFILE:

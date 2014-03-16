@@ -52,20 +52,11 @@ struct framerates {
 	int nrates;
 };
 
-/* control definition */
-struct gspca_ctrl {
-	s16 val;	/* current value */
-	s16 def;	/* default value */
-	s16 min, max;	/* minimum and maximum values */
-};
-
 /* device information - set at probe time */
 struct cam {
 	const struct v4l2_pix_format *cam_mode;	/* size nmodes */
-	const struct framerates *mode_framerates; /* must have size nmodes,
+	const struct framerates *mode_framerates; /* must have size nmode,
 						   * just like cam_mode */
-	struct gspca_ctrl *ctrls;	/* control table - size nctrls */
-					/* may be NULL */
 	u32 bulk_size;		/* buffer size when image transfer by bulk */
 	u32 input_flags;	/* value for ENUM_INPUT status flags */
 	u8 nmodes;		/* size of cam_mode */
@@ -93,7 +84,7 @@ typedef int (*cam_reg_op) (struct gspca_dev *,
 				struct v4l2_dbg_register *);
 typedef int (*cam_ident_op) (struct gspca_dev *,
 				struct v4l2_dbg_chip_ident *);
-typedef void (*cam_streamparm_op) (struct gspca_dev *,
+typedef int (*cam_streamparm_op) (struct gspca_dev *,
 				  struct v4l2_streamparm *);
 typedef int (*cam_qmnu_op) (struct gspca_dev *,
 			struct v4l2_querymenu *);
@@ -108,7 +99,6 @@ struct ctrl {
 	struct v4l2_queryctrl qctrl;
 	int (*set)(struct gspca_dev *, __s32);
 	int (*get)(struct gspca_dev *, __s32 *);
-	cam_v_op set_control;
 };
 
 /* subdriver description */
@@ -116,7 +106,7 @@ struct sd_desc {
 /* information */
 	const char *name;	/* sub-driver name */
 /* controls */
-	const struct ctrl *ctrls;	/* static control definition */
+	const struct ctrl *ctrls;
 	int nctrls;
 /* mandatory operations */
 	cam_cf_op config;	/* called on probe */
@@ -205,12 +195,14 @@ struct gspca_dev {
 
 	wait_queue_head_t wq;		/* wait queue */
 	struct mutex usb_lock;		/* usb exchange protection */
+	struct mutex read_lock;		/* read protection */
 	struct mutex queue_lock;	/* ISOC queue protection */
 	int usb_err;			/* USB error - protected by usb_lock */
 	u16 pkt_size;			/* ISOC packet size */
 #ifdef CONFIG_PM
 	char frozen;			/* suspend - resume */
 #endif
+	char users;			/* number of opens */
 	char present;			/* device connected */
 	char nbufread;			/* number of buffers for read() */
 	char memory;			/* memory type (V4L2_MEMORY_xxx) */

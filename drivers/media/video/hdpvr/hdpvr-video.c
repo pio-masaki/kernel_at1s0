@@ -26,7 +26,7 @@
 #include <media/v4l2-ioctl.h>
 #include "hdpvr.h"
 
-#define BULK_URB_TIMEOUT   90 /* 0.09 seconds */
+#define BULK_URB_TIMEOUT 1250 /* 1.25 seconds */
 
 #define print_buffer_status() { \
 		v4l2_dbg(MSG_BUFFER, hdpvr_debug, &dev->v4l2_dev,	\
@@ -338,6 +338,8 @@ static int hdpvr_stop_streaming(struct hdpvr_device *dev)
 					     dev->bulk_in_endpointAddr),
 			     buf, dev->bulk_in_size, &actual_length,
 			     BULK_URB_TIMEOUT)) {
+		/* wait */
+		msleep(5);
 		v4l2_dbg(MSG_BUFFER, hdpvr_debug, &dev->v4l2_dev,
 			 "%2d: got %d bytes\n", c, actual_length);
 	}
@@ -1220,9 +1222,12 @@ static void hdpvr_device_release(struct video_device *vdev)
 	v4l2_device_unregister(&dev->v4l2_dev);
 
 	/* deregister I2C adapter */
-#if defined(CONFIG_I2C) || (CONFIG_I2C_MODULE)
+#ifdef CONFIG_I2C
 	mutex_lock(&dev->i2c_mutex);
-	i2c_del_adapter(&dev->i2c_adapter);
+	if (dev->i2c_adapter)
+		i2c_del_adapter(dev->i2c_adapter);
+	kfree(dev->i2c_adapter);
+	dev->i2c_adapter = NULL;
 	mutex_unlock(&dev->i2c_mutex);
 #endif /* CONFIG_I2C */
 

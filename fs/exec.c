@@ -54,7 +54,6 @@
 #include <linux/fsnotify.h>
 #include <linux/fs_struct.h>
 #include <linux/pipe_fs_i.h>
-#include <linux/oom.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -65,12 +64,6 @@ int core_uses_pid;
 char core_pattern[CORENAME_MAX_SIZE] = "core";
 unsigned int core_pipe_limit;
 int suid_dumpable = 0;
-
-struct core_name {
-	char *corename;
-	int used, size;
-};
-static atomic_t call_count = ATOMIC_INIT(1);
 
 /* The maximal length of core_pattern is also specified in sysctl.c */
 
@@ -115,16 +108,13 @@ SYSCALL_DEFINE1(uselib, const char __user *, library)
 	struct file *file;
 	char *tmp = getname(library);
 	int error = PTR_ERR(tmp);
-	static const struct open_flags uselib_flags = {
-		.open_flag = O_LARGEFILE | O_RDONLY | __FMODE_EXEC,
-		.acc_mode = MAY_READ | MAY_EXEC | MAY_OPEN,
-		.intent = LOOKUP_OPEN
-	};
 
 	if (IS_ERR(tmp))
 		goto out;
 
-	file = do_filp_open(AT_FDCWD, tmp, &uselib_flags, LOOKUP_FOLLOW);
+	file = do_filp_open(AT_FDCWD, tmp,
+				O_LARGEFILE | O_RDONLY | FMODE_EXEC, 0,
+				MAY_READ | MAY_EXEC | MAY_OPEN);
 	putname(tmp);
 	error = PTR_ERR(file);
 	if (IS_ERR(file))
@@ -724,13 +714,10 @@ struct file *open_exec(const char *name)
 {
 	struct file *file;
 	int err;
-	static const struct open_flags open_exec_flags = {
-		.open_flag = O_LARGEFILE | O_RDONLY | __FMODE_EXEC,
-		.acc_mode = MAY_EXEC | MAY_OPEN,
-		.intent = LOOKUP_OPEN
-	};
 
-	file = do_filp_open(AT_FDCWD, name, &open_exec_flags, LOOKUP_FOLLOW);
+	file = do_filp_open(AT_FDCWD, name,
+				O_LARGEFILE | O_RDONLY | FMODE_EXEC, 0,
+				MAY_EXEC | MAY_OPEN);
 	if (IS_ERR(file))
 		goto out;
 
@@ -802,10 +789,6 @@ static int exec_mmap(struct mm_struct *mm)
 	tsk->mm = mm;
 	tsk->active_mm = mm;
 	activate_mm(active_mm, mm);
-	if (old_mm && tsk->signal->oom_score_adj == OOM_SCORE_ADJ_MIN) {
-		atomic_dec(&old_mm->oom_disable_count);
-		atomic_inc(&tsk->mm->oom_disable_count);
-	}
 	task_unlock(tsk);
 	arch_pick_mmap_layout(mm);
 	if (old_mm) {
@@ -1046,8 +1029,7 @@ int flush_old_exec(struct linux_binprm * bprm)
 
 	bprm->mm = NULL;		/* We're using it now */
 
-	set_fs(USER_DS);
-	current->flags &= ~(PF_RANDOMIZE | PF_KTHREAD);
+	current->flags &= ~PF_RANDOMIZE;
 	flush_thread();
 	current->personality &= ~bprm->per_clear;
 
@@ -1127,14 +1109,14 @@ EXPORT_SYMBOL(setup_new_exec);
  */
 int prepare_bprm_creds(struct linux_binprm *bprm)
 {
-	if (mutex_lock_interruptible(&current->signal->cred_guard_mutex))
+	if (mutex_lock_interruptible(&current->cred_guard_mutex))
 		return -ERESTARTNOINTR;
 
 	bprm->cred = prepare_exec_creds();
 	if (likely(bprm->cred))
 		return 0;
 
-	mutex_unlock(&current->signal->cred_guard_mutex);
+	mutex_unlock(&current->cred_guard_mutex);
 	return -ENOMEM;
 }
 
@@ -1142,7 +1124,7 @@ void free_bprm(struct linux_binprm *bprm)
 {
 	free_arg_pages(bprm);
 	if (bprm->cred) {
-		mutex_unlock(&current->signal->cred_guard_mutex);
+		mutex_unlock(&current->cred_guard_mutex);
 		abort_creds(bprm->cred);
 	}
 	kfree(bprm);
@@ -1163,13 +1145,13 @@ void install_exec_creds(struct linux_binprm *bprm)
 	 * credentials; any time after this it may be unlocked.
 	 */
 	security_bprm_committed_creds(bprm);
-	mutex_unlock(&current->signal->cred_guard_mutex);
+	mutex_unlock(&current->cred_guard_mutex);
 }
 EXPORT_SYMBOL(install_exec_creds);
 
 /*
  * determine how safe it is to execute the proposed program
- * - the caller must hold ->cred_guard_mutex to protect against
+ * - the caller must hold current->cred_guard_mutex to protect against
  *   PTRACE_ATTACH
  */
 int check_unsafe_exec(struct linux_binprm *bprm)
@@ -1311,6 +1293,10 @@ int search_binary_handler(struct linux_binprm *bprm,struct pt_regs *regs)
 	if (retval)
 		return retval;
 
+	/* kernel module loader fixup */
+	/* so we don't try to load run modprobe in kernel space. */
+	set_fs(USER_DS);
+
 	retval = audit_bprm(bprm);
 	if (retval)
 		return retval;
@@ -1446,6 +1432,7 @@ int do_execve(const char * filename,
 	if (retval < 0)
 		goto out;
 
+	current->flags &= ~PF_KTHREAD;
 	retval = search_binary_handler(bprm,regs);
 	if (retval < 0)
 		goto out;
@@ -1500,148 +1487,127 @@ void set_binfmt(struct linux_binfmt *new)
 
 EXPORT_SYMBOL(set_binfmt);
 
-static int expand_corename(struct core_name *cn)
-{
-	char *old_corename = cn->corename;
-
-	cn->size = CORENAME_MAX_SIZE * atomic_inc_return(&call_count);
-	cn->corename = krealloc(old_corename, cn->size, GFP_KERNEL);
-
-	if (!cn->corename) {
-		kfree(old_corename);
-		return -ENOMEM;
-	}
-
-	return 0;
-}
-
-static int cn_printf(struct core_name *cn, const char *fmt, ...)
-{
-	char *cur;
-	int need;
-	int ret;
-	va_list arg;
-
-	va_start(arg, fmt);
-	need = vsnprintf(NULL, 0, fmt, arg);
-	va_end(arg);
-
-	if (likely(need < cn->size - cn->used - 1))
-		goto out_printf;
-
-	ret = expand_corename(cn);
-	if (ret)
-		goto expand_fail;
-
-out_printf:
-	cur = cn->corename + cn->used;
-	va_start(arg, fmt);
-	vsnprintf(cur, need + 1, fmt, arg);
-	va_end(arg);
-	cn->used += need;
-	return 0;
-
-expand_fail:
-	return ret;
-}
-
 /* format_corename will inspect the pattern parameter, and output a
  * name into corename, which must have space for at least
  * CORENAME_MAX_SIZE bytes plus one byte for the zero terminator.
  */
-static int format_corename(struct core_name *cn, long signr)
+static int format_corename(char *corename, long signr)
 {
 	const struct cred *cred = current_cred();
 	const char *pat_ptr = core_pattern;
 	int ispipe = (*pat_ptr == '|');
+	char *out_ptr = corename;
+	char *const out_end = corename + CORENAME_MAX_SIZE;
+	int rc;
 	int pid_in_pattern = 0;
-	int err = 0;
-
-	cn->size = CORENAME_MAX_SIZE * atomic_read(&call_count);
-	cn->corename = kmalloc(cn->size, GFP_KERNEL);
-	cn->used = 0;
-
-	if (!cn->corename)
-		return -ENOMEM;
 
 	/* Repeat as long as we have more pattern to process and more output
 	   space */
 	while (*pat_ptr) {
 		if (*pat_ptr != '%') {
-			if (*pat_ptr == 0)
+			if (out_ptr == out_end)
 				goto out;
-			err = cn_printf(cn, "%c", *pat_ptr++);
+			*out_ptr++ = *pat_ptr++;
 		} else {
 			switch (*++pat_ptr) {
-			/* single % at the end, drop that */
 			case 0:
 				goto out;
 			/* Double percent, output one percent */
 			case '%':
-				err = cn_printf(cn, "%c", '%');
+				if (out_ptr == out_end)
+					goto out;
+				*out_ptr++ = '%';
 				break;
 			/* pid */
 			case 'p':
 				pid_in_pattern = 1;
-				err = cn_printf(cn, "%d",
-					      task_tgid_vnr(current));
+				rc = snprintf(out_ptr, out_end - out_ptr,
+					      "%d", task_tgid_vnr(current));
+				if (rc > out_end - out_ptr)
+					goto out;
+				out_ptr += rc;
 				break;
 			/* uid */
 			case 'u':
-				err = cn_printf(cn, "%d", cred->uid);
+				rc = snprintf(out_ptr, out_end - out_ptr,
+					      "%d", cred->uid);
+				if (rc > out_end - out_ptr)
+					goto out;
+				out_ptr += rc;
 				break;
 			/* gid */
 			case 'g':
-				err = cn_printf(cn, "%d", cred->gid);
+				rc = snprintf(out_ptr, out_end - out_ptr,
+					      "%d", cred->gid);
+				if (rc > out_end - out_ptr)
+					goto out;
+				out_ptr += rc;
 				break;
 			/* signal that caused the coredump */
 			case 's':
-				err = cn_printf(cn, "%ld", signr);
+				rc = snprintf(out_ptr, out_end - out_ptr,
+					      "%ld", signr);
+				if (rc > out_end - out_ptr)
+					goto out;
+				out_ptr += rc;
 				break;
 			/* UNIX time of coredump */
 			case 't': {
 				struct timeval tv;
 				do_gettimeofday(&tv);
-				err = cn_printf(cn, "%lu", tv.tv_sec);
+				rc = snprintf(out_ptr, out_end - out_ptr,
+					      "%lu", tv.tv_sec);
+				if (rc > out_end - out_ptr)
+					goto out;
+				out_ptr += rc;
 				break;
 			}
 			/* hostname */
 			case 'h':
 				down_read(&uts_sem);
-				err = cn_printf(cn, "%s",
-					      utsname()->nodename);
+				rc = snprintf(out_ptr, out_end - out_ptr,
+					      "%s", utsname()->nodename);
 				up_read(&uts_sem);
+				if (rc > out_end - out_ptr)
+					goto out;
+				out_ptr += rc;
 				break;
 			/* executable */
 			case 'e':
-				err = cn_printf(cn, "%s", current->comm);
+				rc = snprintf(out_ptr, out_end - out_ptr,
+					      "%s", current->comm);
+				if (rc > out_end - out_ptr)
+					goto out;
+				out_ptr += rc;
 				break;
 			/* core limit size */
 			case 'c':
-				err = cn_printf(cn, "%lu",
-					      rlimit(RLIMIT_CORE));
+				rc = snprintf(out_ptr, out_end - out_ptr,
+					      "%lu", rlimit(RLIMIT_CORE));
+				if (rc > out_end - out_ptr)
+					goto out;
+				out_ptr += rc;
 				break;
 			default:
 				break;
 			}
 			++pat_ptr;
 		}
-
-		if (err)
-			return err;
 	}
-
 	/* Backward compatibility with core_uses_pid:
 	 *
 	 * If core_pattern does not include a %p (as is the default)
 	 * and core_uses_pid is set, then .%pid will be appended to
 	 * the filename. Do not do this for piped commands. */
 	if (!ispipe && !pid_in_pattern && core_uses_pid) {
-		err = cn_printf(cn, ".%d", task_tgid_vnr(current));
-		if (err)
-			return err;
+		rc = snprintf(out_ptr, out_end - out_ptr,
+			      ".%d", task_tgid_vnr(current));
+		if (rc > out_end - out_ptr)
+			goto out;
+		out_ptr += rc;
 	}
 out:
+	*out_ptr = 0;
 	return ispipe;
 }
 
@@ -1872,7 +1838,7 @@ static void wait_for_dump_helpers(struct file *file)
 
 
 /*
- * umh_pipe_setup
+ * uhm_pipe_setup
  * helper function to customize the process used
  * to collect the core in userspace.  Specifically
  * it sets up a pipe and installs it as fd 0 (stdin)
@@ -1918,7 +1884,7 @@ static int umh_pipe_setup(struct subprocess_info *info)
 void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 {
 	struct core_state core_state;
-	struct core_name cn;
+	char corename[CORENAME_MAX_SIZE + 1];
 	struct mm_struct *mm = current->mm;
 	struct linux_binfmt * binfmt;
 	const struct cred *old_cred;
@@ -1973,13 +1939,7 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 	 */
 	clear_thread_flag(TIF_SIGPENDING);
 
-	ispipe = format_corename(&cn, signr);
-
-	if (ispipe == -ENOMEM) {
-		printk(KERN_WARNING "format_corename failed\n");
-		printk(KERN_WARNING "Aborting core\n");
-		goto fail_corename;
-	}
+	ispipe = format_corename(corename, signr);
 
  	if (ispipe) {
 		int dump_count;
@@ -2016,7 +1976,7 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 			goto fail_dropcount;
 		}
 
-		helper_argv = argv_split(GFP_KERNEL, cn.corename+1, NULL);
+		helper_argv = argv_split(GFP_KERNEL, corename+1, NULL);
 		if (!helper_argv) {
 			printk(KERN_WARNING "%s failed to allocate memory\n",
 			       __func__);
@@ -2029,7 +1989,7 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 		argv_free(helper_argv);
 		if (retval) {
  			printk(KERN_INFO "Core dump to %s pipe failed\n",
-			       cn.corename);
+			       corename);
 			goto close_fail;
  		}
 	} else {
@@ -2038,7 +1998,7 @@ void do_coredump(long signr, int exit_code, struct pt_regs *regs)
 		if (cprm.limit < binfmt->min_coredump)
 			goto fail_unlock;
 
-		cprm.file = filp_open(cn.corename,
+		cprm.file = filp_open(corename,
 				 O_CREAT | 2 | O_NOFOLLOW | O_LARGEFILE | flag,
 				 0600);
 		if (IS_ERR(cprm.file))
@@ -2080,8 +2040,6 @@ fail_dropcount:
 	if (ispipe)
 		atomic_dec(&core_dump_count);
 fail_unlock:
-	kfree(cn.corename);
-fail_corename:
 	coredump_finish(mm);
 	revert_creds(old_cred);
 fail_creds:

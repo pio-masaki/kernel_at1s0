@@ -20,7 +20,7 @@
 #include <linux/module.h>
 #include <linux/rtc.h>
 #include <linux/slab.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/string.h>
 #ifdef CONFIG_RTC_DRV_M41T80_WDT
 #include <linux/fs.h>
@@ -68,7 +68,6 @@
 
 #define DRV_VERSION "0.05"
 
-static DEFINE_MUTEX(m41t80_rtc_mutex);
 static const struct i2c_device_id m41t80_id[] = {
 	{ "m41t62", M41T80_FEATURE_SQ | M41T80_FEATURE_SQ_ALT },
 	{ "m41t65", M41T80_FEATURE_HT | M41T80_FEATURE_WD },
@@ -213,27 +212,41 @@ static int m41t80_rtc_set_time(struct device *dev, struct rtc_time *tm)
 	return m41t80_set_datetime(to_i2c_client(dev), tm);
 }
 
-static int m41t80_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
+#if defined(CONFIG_RTC_INTF_DEV) || defined(CONFIG_RTC_INTF_DEV_MODULE)
+static int
+m41t80_rtc_ioctl(struct device *dev, unsigned int cmd, unsigned long arg)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	int rc;
 
+	switch (cmd) {
+	case RTC_AIE_OFF:
+	case RTC_AIE_ON:
+		break;
+	default:
+		return -ENOIOCTLCMD;
+	}
+
 	rc = i2c_smbus_read_byte_data(client, M41T80_REG_ALARM_MON);
 	if (rc < 0)
 		goto err;
-
-	if (enabled)
-		rc |= M41T80_ALMON_AFE;
-	else
+	switch (cmd) {
+	case RTC_AIE_OFF:
 		rc &= ~M41T80_ALMON_AFE;
-
+		break;
+	case RTC_AIE_ON:
+		rc |= M41T80_ALMON_AFE;
+		break;
+	}
 	if (i2c_smbus_write_byte_data(client, M41T80_REG_ALARM_MON, rc) < 0)
 		goto err;
-
 	return 0;
 err:
 	return -EIO;
 }
+#else
+#define	m41t80_rtc_ioctl NULL
+#endif
 
 static int m41t80_rtc_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 {
@@ -360,7 +373,7 @@ static struct rtc_class_ops m41t80_rtc_ops = {
 	.read_alarm = m41t80_rtc_read_alarm,
 	.set_alarm = m41t80_rtc_set_alarm,
 	.proc = m41t80_rtc_proc,
-	.alarm_irq_enable = m41t80_rtc_alarm_irq_enable,
+	.ioctl = m41t80_rtc_ioctl,
 };
 
 #if defined(CONFIG_RTC_INTF_SYSFS) || defined(CONFIG_RTC_INTF_SYSFS_MODULE)
@@ -664,9 +677,9 @@ static long wdt_unlocked_ioctl(struct file *file, unsigned int cmd,
 {
 	int ret;
 
-	mutex_lock(&m41t80_rtc_mutex);
+	lock_kernel();
 	ret = wdt_ioctl(file, cmd, arg);
-	mutex_unlock(&m41t80_rtc_mutex);
+	unlock_kernel();
 
 	return ret;
 }
@@ -680,16 +693,16 @@ static long wdt_unlocked_ioctl(struct file *file, unsigned int cmd,
 static int wdt_open(struct inode *inode, struct file *file)
 {
 	if (MINOR(inode->i_rdev) == WATCHDOG_MINOR) {
-		mutex_lock(&m41t80_rtc_mutex);
+		lock_kernel();
 		if (test_and_set_bit(0, &wdt_is_open)) {
-			mutex_unlock(&m41t80_rtc_mutex);
+			unlock_kernel();
 			return -EBUSY;
 		}
 		/*
 		 *	Activate
 		 */
 		wdt_is_open = 1;
-		mutex_unlock(&m41t80_rtc_mutex);
+		unlock_kernel();
 		return nonseekable_open(inode, file);
 	}
 	return -ENODEV;
@@ -735,7 +748,6 @@ static const struct file_operations wdt_fops = {
 	.write	= wdt_write,
 	.open	= wdt_open,
 	.release = wdt_release,
-	.llseek = no_llseek,
 };
 
 static struct miscdevice wdt_dev = {
@@ -783,9 +795,6 @@ static int m41t80_probe(struct i2c_client *client,
 		goto exit;
 	}
 
-	clientdata->features = id->driver_data;
-	i2c_set_clientdata(client, clientdata);
-
 	rtc = rtc_device_register(client->name, &client->dev,
 				  &m41t80_rtc_ops, THIS_MODULE);
 	if (IS_ERR(rtc)) {
@@ -795,6 +804,8 @@ static int m41t80_probe(struct i2c_client *client,
 	}
 
 	clientdata->rtc = rtc;
+	clientdata->features = id->driver_data;
+	i2c_set_clientdata(client, clientdata);
 
 	/* Make sure HT (Halt Update) bit is cleared */
 	rc = i2c_smbus_read_byte_data(client, M41T80_REG_ALARM_HOUR);

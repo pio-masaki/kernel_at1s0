@@ -77,7 +77,9 @@ double __extendsfdf2(float a) {return a;}
 #include "r8192_pm.h"
 #endif
 
+#ifdef ENABLE_DOT11D
 #include "dot11d.h"
+#endif
 //set here to open your trace code. //WB
 u32 rt_global_debug_component = \
 			//	COMP_INIT    	|
@@ -164,6 +166,7 @@ static struct usb_driver rtl8192_usb_driver = {
 #endif
 };
 
+#ifdef ENABLE_DOT11D
 
 typedef struct _CHANNEL_LIST
 {
@@ -239,7 +242,9 @@ static void rtl819x_set_channel_map(u8 channel_plan, struct r8192_priv* priv)
 	}
 	return;
 }
+#endif
 
+#define eqMacAddr(a,b) ( ((a)[0]==(b)[0] && (a)[1]==(b)[1] && (a)[2]==(b)[2] && (a)[3]==(b)[3] && (a)[4]==(b)[4] && (a)[5]==(b)[5]) ? 1:0 )
 
 #define 	rx_hal_is_cck_rate(_pdrvinfo)\
 			(_pdrvinfo->RxRate == DESC90_RATE1M ||\
@@ -460,7 +465,7 @@ u32 read_nic_dword(struct net_device *dev, int indx)
 /* u8 read_phy_cck(struct net_device *dev, u8 adr); */
 /* u8 read_phy_ofdm(struct net_device *dev, u8 adr); */
 /* this might still called in what was the PHY rtl8185/rtl8192 common code
- * plans are to possibility turn it again in one common code...
+ * plans are to possibilty turn it again in one common code...
  */
 inline void force_pci_posting(struct net_device *dev)
 {
@@ -1378,7 +1383,7 @@ struct sk_buff *DrvAggr_Aggregation(struct net_device *dev, struct ieee80211_drv
 		//tx_agg_desc->LINIP = 0;
 		//tx_agg_desc->CmdInit = 1;
 		tx_agg_desc->Offset =  sizeof(tx_fwinfo_819x_usb) + 8;
-		/* already raw data, need not to subtract header length */
+		/* already raw data, need not to substract header length */
 		tx_agg_desc->PktSize = skb->len & 0xffff;
 
 		/*DWORD 1*/
@@ -1502,7 +1507,7 @@ static void rtl8192_tx_isr(struct urb *tx_urb)
 	{
 		//
 		// Handle HW Beacon:
-		// We had transfer our beacon frame to host controller at this moment.
+		// We had transfer our beacon frame to host controler at this moment.
 		//
 		//
 		// Caution:
@@ -1529,7 +1534,7 @@ static void rtl8192_tx_isr(struct urb *tx_urb)
 				 * 1. check whether there's tx irq available, for it's a completion return
 				 *    function, it should contain enough tx irq;
 				 * 2. check pakcet type;
-				 * 3. initialize sendlist, check whether the to-be send packet no greater than 1
+				 * 3. intialize sendlist, check whether the to-be send packet no greater than 1
 				 * 4. aggregation the packets, and fill firmware info and tx desc to it, etc.
 				 * 5. check whehter the packet could be sent, otherwise just insert to wait head
 				 * */
@@ -2198,8 +2203,6 @@ short rtl8192_usb_initendpoints(struct net_device *dev)
 
 	priv->rx_urb = kmalloc(sizeof(struct urb *) * (MAX_RX_URB+1),
 				GFP_KERNEL);
-	if (priv->rx_urb == NULL)
-		return -ENOMEM;
 
 #ifndef JACKSON_NEW_RX
 	for(i=0;i<(MAX_RX_URB+1);i++){
@@ -2242,8 +2245,12 @@ short rtl8192_usb_initendpoints(struct net_device *dev)
 
 
 destroy:
-	kfree(priv->pp_rxskb);
-	kfree(priv->rx_urb);
+	if (priv->pp_rxskb) {
+		kfree(priv->pp_rxskb);
+	}
+	if (priv->rx_urb) {
+		kfree(priv->rx_urb);
+	}
 
 	priv->pp_rxskb = NULL;
 	priv->rx_urb = NULL;
@@ -2272,8 +2279,10 @@ void rtl8192_usb_deleteendpoints(struct net_device *dev)
 		kfree(priv->rx_urb);
 		priv->rx_urb = NULL;
 	}
-	kfree(priv->oldaddr);
-	priv->oldaddr = NULL;
+	if(priv->oldaddr){
+		kfree(priv->oldaddr);
+		priv->oldaddr = NULL;
+	}
 	if (priv->pp_rxskb) {
 		kfree(priv->pp_rxskb);
 		priv->pp_rxskb = 0;
@@ -2298,10 +2307,14 @@ void rtl8192_usb_deleteendpoints(struct net_device *dev)
 
 	}
 #else
-	kfree(priv->rx_urb);
-	priv->rx_urb = NULL;
-	kfree(priv->oldaddr);
-	priv->oldaddr = NULL;
+	if(priv->rx_urb){
+		kfree(priv->rx_urb);
+		priv->rx_urb = NULL;
+	}
+	if(priv->oldaddr){
+		kfree(priv->oldaddr);
+		priv->oldaddr = NULL;
+	}
 	if (priv->pp_rxskb) {
 		kfree(priv->pp_rxskb);
 		priv->pp_rxskb = 0;
@@ -2888,7 +2901,7 @@ static void rtl8192_get_eeprom_size(struct net_device* dev)
 	RT_TRACE(COMP_EPROM, "<===========%s(), epromtype:%d\n", __FUNCTION__, priv->epromtype);
 }
 
-//used to swap endian. as ntohl & htonl are not necessary to swap endian, so use this instead.
+//used to swap endian. as ntohl & htonl are not neccessary to swap endian, so use this instead.
 static inline u16 endian_swap(u16* data)
 {
 	u16 tmp = *data;
@@ -3142,6 +3155,7 @@ static void rtl8192_read_eeprom_info(struct net_device* dev)
 short rtl8192_get_channel_map(struct net_device * dev)
 {
 	struct r8192_priv *priv = ieee80211_priv(dev);
+#ifdef ENABLE_DOT11D
 	if(priv->ChannelPlan > COUNTRY_CODE_GLOBAL_DOMAIN){
 		printk("rtl8180_init:Error channel plan! Set to default.\n");
 		priv->ChannelPlan= 0;
@@ -3149,6 +3163,21 @@ short rtl8192_get_channel_map(struct net_device * dev)
 	RT_TRACE(COMP_INIT, "Channel plan is %d\n",priv->ChannelPlan);
 
 	rtl819x_set_channel_map(priv->ChannelPlan, priv);
+#else
+	int ch,i;
+	//Set Default Channel Plan
+	if(!channels){
+		DMESG("No channels, aborting");
+		return -1;
+	}
+	ch=channels;
+	priv->ChannelPlan= 0;//hikaru
+	 // set channels 1..14 allowed in given locale
+	for (i=1; i<=14; i++) {
+		(priv->ieee80211->channel_map)[i] = (u8)(ch & 0x01);
+		ch >>= 1;
+	}
+#endif
 	return 0;
 }
 
@@ -5056,7 +5085,7 @@ static void rtl8192_query_rxphystatus(
 			//Get Rx snr value in DB
 			tmp_rxsnr =	pofdm_buf->rxsnr_X[i];
 			rx_snrX = (char)(tmp_rxsnr);
-			//rx_snrX >>= 1;
+			//rx_snrX >>= 1;;
 			rx_snrX /= 2;
 			priv->stats.rxSNRdB[i] = (long)rx_snrX;
 
@@ -5764,12 +5793,10 @@ static int __devinit rtl8192_usb_probe(struct usb_interface *intf,
 	struct net_device *dev = NULL;
 	struct r8192_priv *priv= NULL;
 	struct usb_device *udev = interface_to_usbdev(intf);
-	int ret;
 	RT_TRACE(COMP_INIT, "Oops: i'm coming\n");
 
 	dev = alloc_ieee80211(sizeof(struct r8192_priv));
-	if (dev == NULL)
-		return -ENOMEM;
+
 
 	usb_set_intfdata(intf, dev);
 	SET_NETDEV_DEV(dev, &intf->dev);
@@ -5799,16 +5826,12 @@ static int __devinit rtl8192_usb_probe(struct usb_interface *intf,
 	RT_TRACE(COMP_INIT, "Driver probe completed1\n");
 	if(rtl8192_init(dev)!=0){
 		RT_TRACE(COMP_ERR, "Initialization failed");
-		ret = -ENODEV;
 		goto fail;
 	}
 	netif_carrier_off(dev);
 	netif_stop_queue(dev);
 
-	ret = register_netdev(dev);
-	if (ret)
-		goto fail2;
-
+	register_netdev(dev);
 	RT_TRACE(COMP_INIT, "dev name=======> %s\n",dev->name);
 	rtl8192_proc_init_one(dev);
 
@@ -5816,18 +5839,13 @@ static int __devinit rtl8192_usb_probe(struct usb_interface *intf,
 	RT_TRACE(COMP_INIT, "Driver probe completed\n");
 	return 0;
 
-fail2:
-	rtl8192_down(dev);
-	kfree(priv->pFirmware);
-	priv->pFirmware = NULL;
-	rtl8192_usb_deleteendpoints(dev);
-	destroy_workqueue(priv->priv_wq);
-	mdelay(10);
+
 fail:
 	free_ieee80211(dev);
 
 	RT_TRACE(COMP_ERR, "wlan driver load failed\n");
-	return ret;
+	return -ENODEV;
+
 }
 
 //detach all the work and timer structure declared or inititialize in r8192U_init function.
@@ -5857,8 +5875,11 @@ static void __devexit rtl8192_usb_disconnect(struct usb_interface *intf)
 		rtl8192_proc_remove_one(dev);
 
 			rtl8192_down(dev);
-		kfree(priv->pFirmware);
-		priv->pFirmware = NULL;
+		if (priv->pFirmware)
+		{
+			kfree(priv->pFirmware);
+			priv->pFirmware = NULL;
+		}
 	//	priv->rf_close(dev);
 //		rtl8192_SetRFPowerState(dev, eRfOff);
 		rtl8192_usb_deleteendpoints(dev);

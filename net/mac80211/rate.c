@@ -145,7 +145,6 @@ static ssize_t rcname_read(struct file *file, char __user *userbuf,
 static const struct file_operations rcname_ops = {
 	.read = rcname_read,
 	.open = mac80211_open_file_generic,
-	.llseek = default_llseek,
 };
 #endif
 
@@ -208,11 +207,10 @@ static bool rc_no_data_or_no_ack(struct ieee80211_tx_rate_control *txrc)
 
 	fc = hdr->frame_control;
 
-	return (info->flags & IEEE80211_TX_CTL_NO_ACK) || !ieee80211_is_data(fc);
+	return ((info->flags & IEEE80211_TX_CTL_NO_ACK) || !ieee80211_is_data(fc));
 }
 
-static void rc_send_low_broadcast(s8 *idx, u32 basic_rates,
-				  struct ieee80211_supported_band *sband)
+static void rc_send_low_broadcast(s8 *idx, u32 basic_rates, u8 max_rate_idx)
 {
 	u8 i;
 
@@ -223,7 +221,7 @@ static void rc_send_low_broadcast(s8 *idx, u32 basic_rates,
 	if (basic_rates & (1 << *idx))
 		return; /* selected rate is a basic rate */
 
-	for (i = *idx + 1; i <= sband->n_bitrates; i++) {
+	for (i = *idx + 1; i <= max_rate_idx; i++) {
 		if (basic_rates & (1 << i)) {
 			*idx = i;
 			return;
@@ -238,25 +236,16 @@ bool rate_control_send_low(struct ieee80211_sta *sta,
 			   struct ieee80211_tx_rate_control *txrc)
 {
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(txrc->skb);
-	struct ieee80211_supported_band *sband = txrc->sband;
-	int mcast_rate;
 
 	if (!sta || !priv_sta || rc_no_data_or_no_ack(txrc)) {
 		info->control.rates[0].idx = rate_lowest_index(txrc->sband, sta);
 		info->control.rates[0].count =
 			(info->flags & IEEE80211_TX_CTL_NO_ACK) ?
 			1 : txrc->hw->max_rate_tries;
-		if (!sta && txrc->bss) {
-			mcast_rate = txrc->bss_conf->mcast_rate[sband->band];
-			if (mcast_rate > 0) {
-				info->control.rates[0].idx = mcast_rate - 1;
-				return true;
-			}
-
+		if (!sta && txrc->ap)
 			rc_send_low_broadcast(&info->control.rates[0].idx,
 					      txrc->bss_conf->basic_rates,
-					      sband);
-		}
+					      txrc->sband->n_bitrates);
 		return true;
 	}
 	return false;
@@ -382,8 +371,8 @@ int ieee80211_init_rate_ctrl_alg(struct ieee80211_local *local,
 
 	ref = rate_control_alloc(name, local);
 	if (!ref) {
-		wiphy_warn(local->hw.wiphy,
-			   "Failed to select rate control algorithm\n");
+		printk(KERN_WARNING "%s: Failed to select rate control "
+		       "algorithm\n", wiphy_name(local->hw.wiphy));
 		return -ENOENT;
 	}
 
@@ -394,8 +383,9 @@ int ieee80211_init_rate_ctrl_alg(struct ieee80211_local *local,
 		sta_info_flush(local, NULL);
 	}
 
-	wiphy_debug(local->hw.wiphy, "Selected rate control algorithm '%s'\n",
-		    ref->ops->name);
+	printk(KERN_DEBUG "%s: Selected rate control "
+	       "algorithm '%s'\n", wiphy_name(local->hw.wiphy),
+	       ref->ops->name);
 
 	return 0;
 }

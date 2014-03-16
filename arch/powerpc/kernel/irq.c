@@ -116,7 +116,7 @@ static inline notrace void set_soft_enabled(unsigned long enable)
 	: : "r" (enable), "i" (offsetof(struct paca_struct, soft_enabled)));
 }
 
-notrace void arch_local_irq_restore(unsigned long en)
+notrace void raw_local_irq_restore(unsigned long en)
 {
 	/*
 	 * get_paca()->soft_enabled = en;
@@ -192,10 +192,10 @@ notrace void arch_local_irq_restore(unsigned long en)
 
 	__hard_irq_enable();
 }
-EXPORT_SYMBOL(arch_local_irq_restore);
+EXPORT_SYMBOL(raw_local_irq_restore);
 #endif /* CONFIG_PPC64 */
 
-int arch_show_interrupts(struct seq_file *p, int prec)
+static int show_other_interrupts(struct seq_file *p, int prec)
 {
 	int j;
 
@@ -231,6 +231,63 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 	return 0;
 }
 
+int show_interrupts(struct seq_file *p, void *v)
+{
+	unsigned long flags, any_count = 0;
+	int i = *(loff_t *) v, j, prec;
+	struct irqaction *action;
+	struct irq_desc *desc;
+
+	if (i > nr_irqs)
+		return 0;
+
+	for (prec = 3, j = 1000; prec < 10 && j <= nr_irqs; ++prec)
+		j *= 10;
+
+	if (i == nr_irqs)
+		return show_other_interrupts(p, prec);
+
+	/* print header */
+	if (i == 0) {
+		seq_printf(p, "%*s", prec + 8, "");
+		for_each_online_cpu(j)
+			seq_printf(p, "CPU%-8d", j);
+		seq_putc(p, '\n');
+	}
+
+	desc = irq_to_desc(i);
+	if (!desc)
+		return 0;
+
+	raw_spin_lock_irqsave(&desc->lock, flags);
+	for_each_online_cpu(j)
+		any_count |= kstat_irqs_cpu(i, j);
+	action = desc->action;
+	if (!action && !any_count)
+		goto out;
+
+	seq_printf(p, "%*d: ", prec, i);
+	for_each_online_cpu(j)
+		seq_printf(p, "%10u ", kstat_irqs_cpu(i, j));
+
+	if (desc->chip)
+		seq_printf(p, "  %-16s", desc->chip->name);
+	else
+		seq_printf(p, "  %-16s", "None");
+	seq_printf(p, " %-8s", (desc->status & IRQ_LEVEL) ? "Level" : "Edge");
+
+	if (action) {
+		seq_printf(p, "     %s", action->name);
+		while ((action = action->next) != NULL)
+			seq_printf(p, ", %s", action->name);
+	}
+
+	seq_putc(p, '\n');
+out:
+	raw_spin_unlock_irqrestore(&desc->lock, flags);
+	return 0;
+}
+
 /*
  * /proc/stat helpers
  */
@@ -246,37 +303,30 @@ u64 arch_irq_stat_cpu(unsigned int cpu)
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
-void migrate_irqs(void)
+void fixup_irqs(const struct cpumask *map)
 {
 	struct irq_desc *desc;
 	unsigned int irq;
 	static int warned;
 	cpumask_var_t mask;
-	const struct cpumask *map = cpu_online_mask;
 
 	alloc_cpumask_var(&mask, GFP_KERNEL);
 
 	for_each_irq(irq) {
-		struct irq_data *data;
-		struct irq_chip *chip;
-
 		desc = irq_to_desc(irq);
 		if (!desc)
 			continue;
 
-		data = irq_desc_get_irq_data(desc);
-		if (irqd_is_per_cpu(data))
+		if (desc->status & IRQ_PER_CPU)
 			continue;
 
-		chip = irq_data_get_irq_chip(data);
-
-		cpumask_and(mask, data->affinity, map);
+		cpumask_and(mask, desc->affinity, map);
 		if (cpumask_any(mask) >= nr_cpu_ids) {
 			printk("Breaking affinity for irq %i\n", irq);
 			cpumask_copy(mask, map);
 		}
-		if (chip->irq_set_affinity)
-			chip->irq_set_affinity(data, mask, true);
+		if (desc->chip->set_affinity)
+			desc->chip->set_affinity(irq, mask);
 		else if (desc->action && !(warned++))
 			printk("Cannot set affinity for irq %i\n", irq);
 	}
@@ -537,10 +587,8 @@ struct irq_host *irq_alloc_host(struct device_node *of_node,
 			 * this will be fixed once slab is made available early
 			 * instead of the current cruft
 			 */
-			if (mem_init_done) {
-				of_node_put(host->of_node);
+			if (mem_init_done)
 				kfree(host);
-			}
 			return NULL;
 		}
 		irq_map[0].host = host;
@@ -562,7 +610,7 @@ struct irq_host *irq_alloc_host(struct device_node *of_node,
 			smp_wmb();
 
 			/* Clear norequest flags */
-			irq_clear_status_flags(i, IRQ_NOREQUEST);
+			irq_to_desc(i)->status &= ~IRQ_NOREQUEST;
 
 			/* Legacy flags are left to default at this point,
 			 * one can then use irq_create_mapping() to
@@ -628,15 +676,16 @@ void irq_set_virq_count(unsigned int count)
 static int irq_setup_virq(struct irq_host *host, unsigned int virq,
 			    irq_hw_number_t hwirq)
 {
-	int res;
+	struct irq_desc *desc;
 
-	res = irq_alloc_desc_at(virq, 0);
-	if (res != virq) {
+	desc = irq_to_desc_alloc_node(virq, 0);
+	if (!desc) {
 		pr_debug("irq: -> allocating desc failed\n");
 		goto error;
 	}
 
-	irq_clear_status_flags(virq, IRQ_NOREQUEST);
+	/* Clear IRQ_NOREQUEST flag */
+	desc->status &= ~IRQ_NOREQUEST;
 
 	/* map it */
 	smp_wmb();
@@ -645,13 +694,11 @@ static int irq_setup_virq(struct irq_host *host, unsigned int virq,
 
 	if (host->ops->map(host, virq, hwirq)) {
 		pr_debug("irq: -> mapping failed, freeing\n");
-		goto errdesc;
+		goto error;
 	}
 
 	return 0;
 
-errdesc:
-	irq_free_descs(virq, 1);
 error:
 	irq_free_virt(virq, 1);
 	return -1;
@@ -771,8 +818,8 @@ unsigned int irq_create_of_mapping(struct device_node *controller,
 
 	/* Set type if specified and different than the current one */
 	if (type != IRQ_TYPE_NONE &&
-	    type != (irqd_get_trigger_type(irq_get_irq_data(virq))))
-		irq_set_irq_type(virq, type);
+	    type != (irq_to_desc(virq)->status & IRQF_TRIGGER_MASK))
+		set_irq_type(virq, type);
 	return virq;
 }
 EXPORT_SYMBOL_GPL(irq_create_of_mapping);
@@ -795,7 +842,7 @@ void irq_dispose_mapping(unsigned int virq)
 		return;
 
 	/* remove chip and handler */
-	irq_set_chip_and_handler(virq, NULL, NULL);
+	set_irq_chip_and_handler(virq, NULL, NULL);
 
 	/* Make sure it's completed */
 	synchronize_irq(virq);
@@ -830,9 +877,9 @@ void irq_dispose_mapping(unsigned int virq)
 	smp_mb();
 	irq_map[virq].hwirq = host->inval_irq;
 
-	irq_set_status_flags(virq, IRQ_NOREQUEST);
+	/* Set some flags */
+	irq_to_desc(virq)->status |= IRQ_NOREQUEST;
 
-	irq_free_descs(virq, 1);
 	/* Free it */
 	irq_free_virt(virq, 1);
 }
@@ -1025,6 +1072,21 @@ void irq_free_virt(unsigned int virq, unsigned int count)
 
 int arch_early_irq_init(void)
 {
+	struct irq_desc *desc;
+	int i;
+
+	for (i = 0; i < NR_IRQS; i++) {
+		desc = irq_to_desc(i);
+		if (desc)
+			desc->status |= IRQ_NOREQUEST;
+	}
+
+	return 0;
+}
+
+int arch_init_chip_data(struct irq_desc *desc, int node)
+{
+	desc->status |= IRQ_NOREQUEST;
 	return 0;
 }
 
@@ -1081,7 +1143,7 @@ static int virq_debug_show(struct seq_file *m, void *private)
 	unsigned long flags;
 	struct irq_desc *desc;
 	const char *p;
-	static const char none[] = "none";
+	char none[] = "none";
 	int i;
 
 	seq_printf(m, "%-5s  %-7s  %-15s  %s\n", "virq", "hwirq",
@@ -1095,14 +1157,11 @@ static int virq_debug_show(struct seq_file *m, void *private)
 		raw_spin_lock_irqsave(&desc->lock, flags);
 
 		if (desc->action && desc->action->handler) {
-			struct irq_chip *chip;
-
 			seq_printf(m, "%5d  ", i);
 			seq_printf(m, "0x%05lx  ", virq_to_hw(i));
 
-			chip = irq_desc_get_chip(desc);
-			if (chip && chip->name)
-				p = chip->name;
+			if (desc->chip && desc->chip->name)
+				p = desc->chip->name;
 			else
 				p = none;
 			seq_printf(m, "%-15s  ", p);

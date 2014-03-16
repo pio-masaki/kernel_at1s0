@@ -24,8 +24,6 @@
 #include <linux/wait.h>
 #include <linux/workqueue.h>
 
-#include <dvb_frontend.h>
-
 #include "firedtv.h"
 
 #define FCP_COMMAND_REGISTER		0xfffff0000b00ULL
@@ -132,20 +130,6 @@ MODULE_PARM_DESC(debug, "Verbose logging (none = 0"
 	", FCP payloads = "		__stringify(AVC_DEBUG_FCP_PAYLOADS)
 	", or a combination, or all = -1)");
 
-/*
- * This is a workaround since there is no vendor specific command to retrieve
- * ca_info using AVC. If this parameter is not used, ca_system_id will be
- * filled with application_manufacturer from ca_app_info.
- * Digital Everywhere have said that adding ca_info is on their TODO list.
- */
-static unsigned int num_fake_ca_system_ids;
-static int fake_ca_system_ids[4] = { -1, -1, -1, -1 };
-module_param_array(fake_ca_system_ids, int, &num_fake_ca_system_ids, 0644);
-MODULE_PARM_DESC(fake_ca_system_ids, "If your CAM application manufacturer "
-		 "does not have the same ca_system_id as your CAS, you can "
-		 "override what ca_system_ids are presented to the "
-		 "application by setting this field to an array of ids.");
-
 static const char *debug_fcp_ctype(unsigned int ctype)
 {
 	static const char *ctypes[] = {
@@ -241,8 +225,8 @@ static int avc_write(struct firedtv *fdtv)
 		if (unlikely(avc_debug))
 			debug_fcp(fdtv->avc_data, fdtv->avc_data_length);
 
-		err = fdtv_write(fdtv, FCP_COMMAND_REGISTER,
-				 fdtv->avc_data, fdtv->avc_data_length);
+		err = fdtv->backend->write(fdtv, FCP_COMMAND_REGISTER,
+				fdtv->avc_data, fdtv->avc_data_length);
 		if (err) {
 			dev_err(fdtv->device, "FCP command write failed\n");
 
@@ -384,30 +368,10 @@ static int avc_tuner_tuneqpsk(struct firedtv *fdtv,
 		c->operand[12] = 0;
 
 	if (fdtv->type == FIREDTV_DVB_S2) {
-		if (fdtv->fe.dtv_property_cache.delivery_system == SYS_DVBS2) {
-			switch (fdtv->fe.dtv_property_cache.modulation) {
-			case QAM_16:		c->operand[13] = 0x1; break;
-			case QPSK:		c->operand[13] = 0x2; break;
-			case PSK_8:		c->operand[13] = 0x3; break;
-			default:		c->operand[13] = 0x2; break;
-			}
-			switch (fdtv->fe.dtv_property_cache.rolloff) {
-			case ROLLOFF_AUTO:	c->operand[14] = 0x2; break;
-			case ROLLOFF_35:	c->operand[14] = 0x2; break;
-			case ROLLOFF_20:	c->operand[14] = 0x0; break;
-			case ROLLOFF_25:	c->operand[14] = 0x1; break;
-			/* case ROLLOFF_NONE:	c->operand[14] = 0xff; break; */
-			}
-			switch (fdtv->fe.dtv_property_cache.pilot) {
-			case PILOT_AUTO:	c->operand[15] = 0x0; break;
-			case PILOT_OFF:		c->operand[15] = 0x0; break;
-			case PILOT_ON:		c->operand[15] = 0x1; break;
-			}
-		} else {
-			c->operand[13] = 0x1;  /* auto modulation */
-			c->operand[14] = 0xff; /* disable rolloff */
-			c->operand[15] = 0xff; /* disable pilot */
-		}
+		c->operand[13] = 0x1;
+		c->operand[14] = 0xff;
+		c->operand[15] = 0xff;
+
 		return 16;
 	} else {
 		return 13;
@@ -1013,7 +977,7 @@ int avc_ca_info(struct firedtv *fdtv, char *app_info, unsigned int *len)
 {
 	struct avc_command_frame *c = (void *)fdtv->avc_data;
 	struct avc_response_frame *r = (void *)fdtv->avc_data;
-	int i, pos, ret;
+	int pos, ret;
 
 	mutex_lock(&fdtv->avc_mutex);
 
@@ -1040,18 +1004,9 @@ int avc_ca_info(struct firedtv *fdtv, char *app_info, unsigned int *len)
 	app_info[0] = (EN50221_TAG_CA_INFO >> 16) & 0xff;
 	app_info[1] = (EN50221_TAG_CA_INFO >>  8) & 0xff;
 	app_info[2] = (EN50221_TAG_CA_INFO >>  0) & 0xff;
-	if (num_fake_ca_system_ids == 0) {
-		app_info[3] = 2;
-		app_info[4] = r->operand[pos + 0];
-		app_info[5] = r->operand[pos + 1];
-	} else {
-		app_info[3] = num_fake_ca_system_ids * 2;
-		for (i = 0; i < num_fake_ca_system_ids; i++) {
-			app_info[4 + i * 2] =
-				(fake_ca_system_ids[i] >> 8) & 0xff;
-			app_info[5 + i * 2] = fake_ca_system_ids[i] & 0xff;
-		}
-	}
+	app_info[3] = 2;
+	app_info[4] = r->operand[pos + 0];
+	app_info[5] = r->operand[pos + 1];
 	*len = app_info[3] + 4;
 out:
 	mutex_unlock(&fdtv->avc_mutex);
@@ -1322,7 +1277,7 @@ static int cmp_read(struct firedtv *fdtv, u64 addr, __be32 *data)
 
 	mutex_lock(&fdtv->avc_mutex);
 
-	ret = fdtv_read(fdtv, addr, data);
+	ret = fdtv->backend->read(fdtv, addr, data);
 	if (ret < 0)
 		dev_err(fdtv->device, "CMP: read I/O error\n");
 
@@ -1340,7 +1295,7 @@ static int cmp_lock(struct firedtv *fdtv, u64 addr, __be32 data[])
 	/* data[] is stack-allocated and should not be DMA-mapped. */
 	memcpy(fdtv->avc_data, data, 8);
 
-	ret = fdtv_lock(fdtv, addr, fdtv->avc_data);
+	ret = fdtv->backend->lock(fdtv, addr, fdtv->avc_data);
 	if (ret < 0)
 		dev_err(fdtv->device, "CMP: lock I/O error\n");
 	else
@@ -1405,7 +1360,10 @@ repeat:
 		/* FIXME: this is for the worst case - optimize */
 		set_opcr_overhead_id(opcr, 0);
 
-		/* FIXME: allocate isochronous channel and bandwidth at IRM */
+		/*
+		 * FIXME: allocate isochronous channel and bandwidth at IRM
+		 * fdtv->backend->alloc_resources(fdtv, channels_mask, bw);
+		 */
 	}
 
 	set_opcr_p2p_connections(opcr, get_opcr_p2p_connections(*opcr) + 1);
@@ -1421,6 +1379,8 @@ repeat:
 		/*
 		 * FIXME: if old_opcr.P2P_Connections > 0,
 		 * deallocate isochronous channel and bandwidth at IRM
+		 * if (...)
+		 *	fdtv->backend->dealloc_resources(fdtv, channel, bw);
 		 */
 
 		if (++attempts < 6) /* arbitrary limit */

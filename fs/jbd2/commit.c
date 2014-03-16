@@ -26,9 +26,7 @@
 #include <linux/backing-dev.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
-#include <linux/bitops.h>
 #include <trace/events/jbd2.h>
-#include <asm/system.h>
 
 /*
  * Default IO end handler for temporary BJ_IO buffer_heads.
@@ -105,8 +103,6 @@ static int journal_submit_commit_record(journal_t *journal,
 	int ret;
 	struct timespec now = current_kernel_time();
 
-	*cbh = NULL;
-
 	if (is_journal_aborted(journal))
 		return 0;
 
@@ -138,11 +134,25 @@ static int journal_submit_commit_record(journal_t *journal,
 
 	if (journal->j_flags & JBD2_BARRIER &&
 	    !JBD2_HAS_INCOMPAT_FEATURE(journal,
-				       JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT))
-		ret = submit_bh(WRITE_SYNC | WRITE_FLUSH_FUA, bh);
-	else
-		ret = submit_bh(WRITE_SYNC, bh);
+				       JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT)) {
+		ret = submit_bh(WRITE_SYNC_PLUG | WRITE_BARRIER, bh);
+		if (ret == -EOPNOTSUPP) {
+			printk(KERN_WARNING
+			       "JBD2: Disabling barriers on %s, "
+			       "not supported by device\n", journal->j_devname);
+			write_lock(&journal->j_state_lock);
+			journal->j_flags &= ~JBD2_BARRIER;
+			write_unlock(&journal->j_state_lock);
 
+			/* And try again, without the barrier */
+			lock_buffer(bh);
+			set_buffer_uptodate(bh);
+			clear_buffer_dirty(bh);
+			ret = submit_bh(WRITE_SYNC_PLUG, bh);
+		}
+	} else {
+		ret = submit_bh(WRITE_SYNC_PLUG, bh);
+	}
 	*cbh = bh;
 	return ret;
 }
@@ -156,8 +166,29 @@ static int journal_wait_on_commit_record(journal_t *journal,
 {
 	int ret = 0;
 
+retry:
 	clear_buffer_dirty(bh);
 	wait_on_buffer(bh);
+	if (buffer_eopnotsupp(bh) && (journal->j_flags & JBD2_BARRIER)) {
+		printk(KERN_WARNING
+		       "JBD2: %s: disabling barries on %s - not supported "
+		       "by device\n", __func__, journal->j_devname);
+		write_lock(&journal->j_state_lock);
+		journal->j_flags &= ~JBD2_BARRIER;
+		write_unlock(&journal->j_state_lock);
+
+		lock_buffer(bh);
+		clear_buffer_dirty(bh);
+		set_buffer_uptodate(bh);
+		bh->b_end_io = journal_end_buffer_io_sync;
+
+		ret = submit_bh(WRITE_SYNC_PLUG, bh);
+		if (ret) {
+			unlock_buffer(bh);
+			return ret;
+		}
+		goto retry;
+	}
 
 	if (unlikely(!buffer_uptodate(bh)))
 		ret = -EIO;
@@ -205,7 +236,7 @@ static int journal_submit_data_buffers(journal_t *journal,
 	spin_lock(&journal->j_list_lock);
 	list_for_each_entry(jinode, &commit_transaction->t_inode_list, i_list) {
 		mapping = jinode->i_vfs_inode->i_mapping;
-		set_bit(__JI_COMMIT_RUNNING, &jinode->i_flags);
+		jinode->i_flags |= JI_COMMIT_RUNNING;
 		spin_unlock(&journal->j_list_lock);
 		/*
 		 * submit the inode data buffers. We use writepage
@@ -220,8 +251,7 @@ static int journal_submit_data_buffers(journal_t *journal,
 		spin_lock(&journal->j_list_lock);
 		J_ASSERT(jinode->i_transaction == commit_transaction);
 		commit_transaction->t_flushed_data_blocks = 1;
-		clear_bit(__JI_COMMIT_RUNNING, &jinode->i_flags);
-		smp_mb__after_clear_bit();
+		jinode->i_flags &= ~JI_COMMIT_RUNNING;
 		wake_up_bit(&jinode->i_flags, __JI_COMMIT_RUNNING);
 	}
 	spin_unlock(&journal->j_list_lock);
@@ -242,7 +272,7 @@ static int journal_finish_inode_data_buffers(journal_t *journal,
 	/* For locking, see the comment in journal_submit_data_buffers() */
 	spin_lock(&journal->j_list_lock);
 	list_for_each_entry(jinode, &commit_transaction->t_inode_list, i_list) {
-		set_bit(__JI_COMMIT_RUNNING, &jinode->i_flags);
+		jinode->i_flags |= JI_COMMIT_RUNNING;
 		spin_unlock(&journal->j_list_lock);
 		err = filemap_fdatawait(jinode->i_vfs_inode->i_mapping);
 		if (err) {
@@ -258,8 +288,7 @@ static int journal_finish_inode_data_buffers(journal_t *journal,
 				ret = err;
 		}
 		spin_lock(&journal->j_list_lock);
-		clear_bit(__JI_COMMIT_RUNNING, &jinode->i_flags);
-		smp_mb__after_clear_bit();
+		jinode->i_flags &= ~JI_COMMIT_RUNNING;
 		wake_up_bit(&jinode->i_flags, __JI_COMMIT_RUNNING);
 	}
 
@@ -331,7 +360,7 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	int tag_bytes = journal_tag_bytes(journal);
 	struct buffer_head *cbh = NULL; /* For transactional checksums */
 	__u32 crc32_sum = ~0;
-	struct blk_plug plug;
+	int write_op = WRITE;
 
 	/*
 	 * First job: lock down the current transaction and wait for
@@ -365,6 +394,13 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	write_lock(&journal->j_state_lock);
 	commit_transaction->t_state = T_LOCKED;
 
+	/*
+	 * Use plugged writes here, since we want to submit several before
+	 * we unplug the device. We don't do explicit unplugging in here,
+	 * instead we rely on sync_buffer() doing the unplug for us.
+	 */
+	if (commit_transaction->t_synchronous_commit)
+		write_op = WRITE_SYNC_PLUG;
 	trace_jbd2_commit_locking(journal, commit_transaction);
 	stats.run.rs_wait = commit_transaction->t_max_wait;
 	stats.run.rs_locked = jiffies;
@@ -405,7 +441,7 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	 * we do not require it to remember exactly which old buffers it
 	 * has reserved.  This is consistent with the existing behaviour
 	 * that multiple jbd2_journal_get_write_access() calls to the same
-	 * buffer are perfectly permissible.
+	 * buffer are perfectly permissable.
 	 */
 	while (commit_transaction->t_reserved_list) {
 		jh = commit_transaction->t_reserved_list;
@@ -464,10 +500,8 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	if (err)
 		jbd2_journal_abort(journal, err);
 
-	blk_start_plug(&plug);
 	jbd2_journal_write_revoke_records(journal, commit_transaction,
-					  WRITE_SYNC);
-	blk_finish_plug(&plug);
+					  write_op);
 
 	jbd_debug(3, "JBD: commit phase 2\n");
 
@@ -494,7 +528,6 @@ void jbd2_journal_commit_transaction(journal_t *journal)
 	err = 0;
 	descriptor = NULL;
 	bufs = 0;
-	blk_start_plug(&plug);
 	while (commit_transaction->t_buffers) {
 
 		/* Find the next buffer to be journaled... */
@@ -656,7 +689,7 @@ start_journal_io:
 				clear_buffer_dirty(bh);
 				set_buffer_uptodate(bh);
 				bh->b_end_io = journal_end_buffer_io_sync;
-				submit_bh(WRITE_SYNC, bh);
+				submit_bh(write_op, bh);
 			}
 			cond_resched();
 			stats.run.rs_blocks_logged += bufs;
@@ -668,6 +701,29 @@ start_journal_io:
 		}
 	}
 
+	/* 
+	 * If the journal is not located on the file system device,
+	 * then we must flush the file system device before we issue
+	 * the commit record
+	 */
+	if (commit_transaction->t_flushed_data_blocks &&
+	    (journal->j_fs_dev != journal->j_dev) &&
+	    (journal->j_flags & JBD2_BARRIER))
+		blkdev_issue_flush(journal->j_fs_dev, GFP_KERNEL, NULL,
+			BLKDEV_IFL_WAIT);
+
+	/* Done it all: now write the commit record asynchronously. */
+	if (JBD2_HAS_INCOMPAT_FEATURE(journal,
+				      JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT)) {
+		err = journal_submit_commit_record(journal, commit_transaction,
+						 &cbh, crc32_sum);
+		if (err)
+			__jbd2_journal_abort_hard(journal);
+		if (journal->j_flags & JBD2_BARRIER)
+			blkdev_issue_flush(journal->j_dev, GFP_KERNEL, NULL,
+				BLKDEV_IFL_WAIT);
+	}
+
 	err = journal_finish_inode_data_buffers(journal, commit_transaction);
 	if (err) {
 		printk(KERN_WARNING
@@ -677,27 +733,6 @@ start_journal_io:
 			jbd2_journal_abort(journal, err);
 		err = 0;
 	}
-
-	/* 
-	 * If the journal is not located on the file system device,
-	 * then we must flush the file system device before we issue
-	 * the commit record
-	 */
-	if (commit_transaction->t_flushed_data_blocks &&
-	    (journal->j_fs_dev != journal->j_dev) &&
-	    (journal->j_flags & JBD2_BARRIER))
-		blkdev_issue_flush(journal->j_fs_dev, GFP_KERNEL, NULL);
-
-	/* Done it all: now write the commit record asynchronously. */
-	if (JBD2_HAS_INCOMPAT_FEATURE(journal,
-				      JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT)) {
-		err = journal_submit_commit_record(journal, commit_transaction,
-						 &cbh, crc32_sum);
-		if (err)
-			__jbd2_journal_abort_hard(journal);
-	}
-
-	blk_finish_plug(&plug);
 
 	/* Lo and behold: we have just managed to send a transaction to
            the log.  Before we can commit it, wait for the IO so far to
@@ -808,13 +843,8 @@ wait_for_iobuf:
 		if (err)
 			__jbd2_journal_abort_hard(journal);
 	}
-	if (cbh)
+	if (!err && !is_journal_aborted(journal))
 		err = journal_wait_on_commit_record(journal, cbh);
-	if (JBD2_HAS_INCOMPAT_FEATURE(journal,
-				      JBD2_FEATURE_INCOMPAT_ASYNC_COMMIT) &&
-	    journal->j_flags & JBD2_BARRIER) {
-		blkdev_issue_flush(journal->j_dev, GFP_KERNEL, NULL);
-	}
 
 	if (err)
 		jbd2_journal_abort(journal, err);

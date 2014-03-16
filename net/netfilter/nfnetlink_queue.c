@@ -387,31 +387,25 @@ nfqnl_enqueue_packet(struct nf_queue_entry *entry, unsigned int queuenum)
 {
 	struct sk_buff *nskb;
 	struct nfqnl_instance *queue;
-	int err = -ENOBUFS;
+	int err;
 
 	/* rcu_read_lock()ed by nf_hook_slow() */
 	queue = instance_lookup(queuenum);
-	if (!queue) {
-		err = -ESRCH;
+	if (!queue)
 		goto err_out;
-	}
 
-	if (queue->copy_mode == NFQNL_COPY_NONE) {
-		err = -EINVAL;
+	if (queue->copy_mode == NFQNL_COPY_NONE)
 		goto err_out;
-	}
 
 	nskb = nfqnl_build_packet_message(queue, entry);
-	if (nskb == NULL) {
-		err = -ENOMEM;
+	if (nskb == NULL)
 		goto err_out;
-	}
+
 	spin_lock_bh(&queue->lock);
 
-	if (!queue->peer_pid) {
-		err = -EINVAL;
+	if (!queue->peer_pid)
 		goto err_out_free_nskb;
-	}
+
 	if (queue->queue_total >= queue->queue_maxlen) {
 		queue->queue_dropped++;
 		if (net_ratelimit())
@@ -438,7 +432,7 @@ err_out_free_nskb:
 err_out_unlock:
 	spin_unlock_bh(&queue->lock);
 err_out:
-	return err;
+	return -1;
 }
 
 static int

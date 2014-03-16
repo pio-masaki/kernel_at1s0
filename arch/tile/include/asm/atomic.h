@@ -32,7 +32,7 @@
  */
 static inline int atomic_read(const atomic_t *v)
 {
-	return ACCESS_ONCE(v->counter);
+       return v->counter;
 }
 
 /**

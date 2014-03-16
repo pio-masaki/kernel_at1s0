@@ -7,8 +7,6 @@
 #include <newt.h>
 #include <linux/rbtree.h>
 
-#include "../../evsel.h"
-#include "../../evlist.h"
 #include "../../hist.h"
 #include "../../pstack.h"
 #include "../../sort.h"
@@ -58,11 +56,6 @@ static char hist_entry__folded(const struct hist_entry *self)
 static char callchain_list__folded(const struct callchain_list *self)
 {
 	return map_symbol__folded(&self->ms);
-}
-
-static void map_symbol__set_folding(struct map_symbol *self, bool unfold)
-{
-	self->unfolded = unfold ? self->has_children : false;
 }
 
 static int callchain_node__count_rows_rb_tree(struct callchain_node *self)
@@ -136,16 +129,16 @@ static void callchain_node__init_have_children_rb_tree(struct callchain_node *se
 	for (nd = rb_first(&self->rb_root); nd; nd = rb_next(nd)) {
 		struct callchain_node *child = rb_entry(nd, struct callchain_node, rb_node);
 		struct callchain_list *chain;
-		bool first = true;
+		int first = true;
 
 		list_for_each_entry(chain, &child->val, list) {
 			if (first) {
 				first = false;
 				chain->ms.has_children = chain->list.next != &child->val ||
-							 !RB_EMPTY_ROOT(&child->rb_root);
+							 rb_first(&child->rb_root) != NULL;
 			} else
 				chain->ms.has_children = chain->list.next == &child->val &&
-							 !RB_EMPTY_ROOT(&child->rb_root);
+							 rb_first(&child->rb_root) != NULL;
 		}
 
 		callchain_node__init_have_children_rb_tree(child);
@@ -157,7 +150,7 @@ static void callchain_node__init_have_children(struct callchain_node *self)
 	struct callchain_list *chain;
 
 	list_for_each_entry(chain, &self->val, list)
-		chain->ms.has_children = !RB_EMPTY_ROOT(&self->rb_root);
+		chain->ms.has_children = rb_first(&self->rb_root) != NULL;
 
 	callchain_node__init_have_children_rb_tree(self);
 }
@@ -175,7 +168,6 @@ static void callchain__init_have_children(struct rb_root *self)
 static void hist_entry__init_have_children(struct hist_entry *self)
 {
 	if (!self->init_have_children) {
-		self->ms.has_children = !RB_EMPTY_ROOT(&self->sorted_chain);
 		callchain__init_have_children(&self->sorted_chain);
 		self->init_have_children = true;
 	}
@@ -203,115 +195,43 @@ static bool hist_browser__toggle_fold(struct hist_browser *self)
 	return false;
 }
 
-static int callchain_node__set_folding_rb_tree(struct callchain_node *self, bool unfold)
+static int hist_browser__run(struct hist_browser *self, const char *title,
+			     struct newtExitStruct *es)
 {
-	int n = 0;
-	struct rb_node *nd;
-
-	for (nd = rb_first(&self->rb_root); nd; nd = rb_next(nd)) {
-		struct callchain_node *child = rb_entry(nd, struct callchain_node, rb_node);
-		struct callchain_list *chain;
-		bool has_children = false;
-
-		list_for_each_entry(chain, &child->val, list) {
-			++n;
-			map_symbol__set_folding(&chain->ms, unfold);
-			has_children = chain->ms.has_children;
-		}
-
-		if (has_children)
-			n += callchain_node__set_folding_rb_tree(child, unfold);
-	}
-
-	return n;
-}
-
-static int callchain_node__set_folding(struct callchain_node *node, bool unfold)
-{
-	struct callchain_list *chain;
-	bool has_children = false;
-	int n = 0;
-
-	list_for_each_entry(chain, &node->val, list) {
-		++n;
-		map_symbol__set_folding(&chain->ms, unfold);
-		has_children = chain->ms.has_children;
-	}
-
-	if (has_children)
-		n += callchain_node__set_folding_rb_tree(node, unfold);
-
-	return n;
-}
-
-static int callchain__set_folding(struct rb_root *chain, bool unfold)
-{
-	struct rb_node *nd;
-	int n = 0;
-
-	for (nd = rb_first(chain); nd; nd = rb_next(nd)) {
-		struct callchain_node *node = rb_entry(nd, struct callchain_node, rb_node);
-		n += callchain_node__set_folding(node, unfold);
-	}
-
-	return n;
-}
-
-static void hist_entry__set_folding(struct hist_entry *self, bool unfold)
-{
-	hist_entry__init_have_children(self);
-	map_symbol__set_folding(&self->ms, unfold);
-
-	if (self->ms.has_children) {
-		int n = callchain__set_folding(&self->sorted_chain, unfold);
-		self->nr_rows = unfold ? n : 0;
-	} else
-		self->nr_rows = 0;
-}
-
-static void hists__set_folding(struct hists *self, bool unfold)
-{
-	struct rb_node *nd;
-
-	self->nr_entries = 0;
-
-	for (nd = rb_first(&self->entries); nd; nd = rb_next(nd)) {
-		struct hist_entry *he = rb_entry(nd, struct hist_entry, rb_node);
-		hist_entry__set_folding(he, unfold);
-		self->nr_entries += 1 + he->nr_rows;
-	}
-}
-
-static void hist_browser__set_folding(struct hist_browser *self, bool unfold)
-{
-	hists__set_folding(self->hists, unfold);
-	self->b.nr_entries = self->hists->nr_entries;
-	/* Go to the start, we may be way after valid entries after a collapse */
-	ui_browser__reset_index(&self->b);
-}
-
-static int hist_browser__run(struct hist_browser *self, const char *title)
-{
-	int key;
-	int exit_keys[] = { 'a', '?', 'h', 'C', 'd', 'D', 'E', 't',
-			    NEWT_KEY_ENTER, NEWT_KEY_RIGHT, NEWT_KEY_LEFT,
-			    NEWT_KEY_TAB, NEWT_KEY_UNTAB, 0, };
+	char str[256], unit;
+	unsigned long nr_events = self->hists->stats.nr_events[PERF_RECORD_SAMPLE];
 
 	self->b.entries = &self->hists->entries;
 	self->b.nr_entries = self->hists->nr_entries;
 
 	hist_browser__refresh_dimensions(self);
 
+	nr_events = convert_unit(nr_events, &unit);
+	snprintf(str, sizeof(str), "Events: %lu%c                            ",
+		 nr_events, unit);
+	newtDrawRootText(0, 0, str);
+
 	if (ui_browser__show(&self->b, title,
 			     "Press '?' for help on key bindings") < 0)
 		return -1;
 
-	ui_browser__add_exit_keys(&self->b, exit_keys);
+	newtFormAddHotKey(self->b.form, 'a');
+	newtFormAddHotKey(self->b.form, '?');
+	newtFormAddHotKey(self->b.form, 'h');
+	newtFormAddHotKey(self->b.form, 'd');
+	newtFormAddHotKey(self->b.form, 'D');
+	newtFormAddHotKey(self->b.form, 't');
+
+	newtFormAddHotKey(self->b.form, NEWT_KEY_LEFT);
+	newtFormAddHotKey(self->b.form, NEWT_KEY_RIGHT);
+	newtFormAddHotKey(self->b.form, NEWT_KEY_ENTER);
 
 	while (1) {
-		key = ui_browser__run(&self->b);
+		ui_browser__run(&self->b, es);
 
-		switch (key) {
+		if (es->reason != NEWT_EXIT_HOTKEY)
+			break;
+		switch (es->u.key) {
 		case 'D': { /* Debug */
 			static int seq;
 			struct hist_entry *h = rb_entry(self->b.top,
@@ -325,26 +245,18 @@ static int hist_browser__run(struct hist_browser *self, const char *title)
 					   self->b.top_idx,
 					   h->row_offset, h->nr_rows);
 		}
-			break;
-		case 'C':
-			/* Collapse the whole world. */
-			hist_browser__set_folding(self, false);
-			break;
-		case 'E':
-			/* Expand the whole world. */
-			hist_browser__set_folding(self, true);
-			break;
+			continue;
 		case NEWT_KEY_ENTER:
 			if (hist_browser__toggle_fold(self))
 				break;
 			/* fall thru */
 		default:
-			goto out;
+			return 0;
 		}
 	}
-out:
+
 	ui_browser__hide(&self->b);
-	return key;
+	return 0;
 }
 
 static char *callchain_list__sym_name(struct callchain_list *self,
@@ -353,7 +265,7 @@ static char *callchain_list__sym_name(struct callchain_list *self,
 	if (self->ms.sym)
 		return self->ms.sym->name;
 
-	snprintf(bf, bfsize, "%#" PRIx64, self->ip);
+	snprintf(bf, bfsize, "%#Lx", self->ip);
 	return bf;
 }
 
@@ -380,7 +292,7 @@ static int hist_browser__show_callchain_node_rb_tree(struct hist_browser *self,
 	while (node) {
 		struct callchain_node *child = rb_entry(node, struct callchain_node, rb_node);
 		struct rb_node *next = rb_next(node);
-		u64 cumul = callchain_cumul_hits(child);
+		u64 cumul = cumul_hits(child);
 		struct callchain_list *chain;
 		char folded_sign = ' ';
 		int first = true;
@@ -394,10 +306,15 @@ static int hist_browser__show_callchain_node_rb_tree(struct hist_browser *self,
 			int color;
 			bool was_first = first;
 
-			if (first)
+			if (first) {
 				first = false;
-			else
+				chain->ms.has_children = chain->list.next != &child->val ||
+							 rb_first(&child->rb_root) != NULL;
+			} else {
 				extra_offset = LEVEL_OFFSET_STEP;
+				chain->ms.has_children = chain->list.next == &child->val &&
+							 rb_first(&child->rb_root) != NULL;
+			}
 
 			folded_sign = callchain_list__folded(chain);
 			if (*row_offset != 0) {
@@ -424,8 +341,8 @@ static int hist_browser__show_callchain_node_rb_tree(struct hist_browser *self,
 				*is_current_entry = true;
 			}
 
-			ui_browser__set_color(&self->b, color);
-			ui_browser__gotorc(&self->b, row, 0);
+			SLsmg_set_color(color);
+			SLsmg_gotorc(self->b.y + row, self->b.x);
 			slsmg_write_nstring(" ", offset + extra_offset);
 			slsmg_printf("%c ", folded_sign);
 			slsmg_write_nstring(str, width);
@@ -467,7 +384,12 @@ static int hist_browser__show_callchain_node(struct hist_browser *self,
 	list_for_each_entry(chain, &node->val, list) {
 		char ipstr[BITS_PER_LONG / 4 + 1], *s;
 		int color;
-
+		/*
+		 * FIXME: This should be moved to somewhere else,
+		 * probably when the callchain is created, so as not to
+		 * traverse it all over again
+		 */
+		chain->ms.has_children = rb_first(&node->rb_root) != NULL;
 		folded_sign = callchain_list__folded(chain);
 
 		if (*row_offset != 0) {
@@ -483,8 +405,8 @@ static int hist_browser__show_callchain_node(struct hist_browser *self,
 		}
 
 		s = callchain_list__sym_name(chain, ipstr, sizeof(ipstr));
-		ui_browser__gotorc(&self->b, row, 0);
-		ui_browser__set_color(&self->b, color);
+		SLsmg_gotorc(self->b.y + row, self->b.x);
+		SLsmg_set_color(color);
 		slsmg_write_nstring(" ", offset);
 		slsmg_printf("%c ", folded_sign);
 		slsmg_write_nstring(s, width - 2);
@@ -543,7 +465,7 @@ static int hist_browser__show_entry(struct hist_browser *self,
 	}
 
 	if (symbol_conf.use_callchain) {
-		hist_entry__init_have_children(entry);
+		entry->ms.has_children = !RB_EMPTY_ROOT(&entry->sorted_chain);
 		folded_sign = hist_entry__folded(entry);
 	}
 
@@ -562,8 +484,8 @@ static int hist_browser__show_entry(struct hist_browser *self,
 				color = HE_COLORSET_NORMAL;
 		}
 
-		ui_browser__set_color(&self->b, color);
-		ui_browser__gotorc(&self->b, row, 0);
+		SLsmg_set_color(color);
+		SLsmg_gotorc(self->b.y + row, self->b.x);
 		if (symbol_conf.use_callchain) {
 			slsmg_printf("%c ", folded_sign);
 			width -= 2;
@@ -640,9 +562,6 @@ static void ui_browser__hists_seek(struct ui_browser *self,
 	struct hist_entry *h;
 	struct rb_node *nd;
 	bool first = true;
-
-	if (self->nr_entries == 0)
-		return;
 
 	switch (whence) {
 	case SEEK_SET:
@@ -768,6 +687,8 @@ static struct hist_browser *hist_browser__new(struct hists *hists)
 
 static void hist_browser__delete(struct hist_browser *self)
 {
+	newtFormDestroy(self->b.form);
+	newtPopWindow();
 	free(self);
 }
 
@@ -781,37 +702,30 @@ static struct thread *hist_browser__selected_thread(struct hist_browser *self)
 	return self->he_selection->thread;
 }
 
-static int hists__browser_title(struct hists *self, char *bf, size_t size,
-				const char *ev_name, const struct dso *dso,
-				const struct thread *thread)
+static int hist_browser__title(char *bf, size_t size, const char *ev_name,
+			       const struct dso *dso, const struct thread *thread)
 {
-	char unit;
-	int printed;
-	unsigned long nr_events = self->stats.nr_events[PERF_RECORD_SAMPLE];
-
-	nr_events = convert_unit(nr_events, &unit);
-	printed = snprintf(bf, size, "Events: %lu%c %s", nr_events, unit, ev_name);
+	int printed = 0;
 
 	if (thread)
 		printed += snprintf(bf + printed, size - printed,
-				    ", Thread: %s(%d)",
-				    (thread->comm_set ? thread->comm : ""),
+				    "Thread: %s(%d)",
+				    (thread->comm_set ?  thread->comm : ""),
 				    thread->pid);
 	if (dso)
 		printed += snprintf(bf + printed, size - printed,
-				    ", DSO: %s", dso->short_name);
-	return printed;
+				    "%sDSO: %s", thread ? " " : "",
+				    dso->short_name);
+	return printed ?: snprintf(bf, size, "Event: %s", ev_name);
 }
 
-static int perf_evsel__hists_browse(struct perf_evsel *evsel,
-				    const char *helpline, const char *ev_name,
-				    bool left_exits)
+int hists__browse(struct hists *self, const char *helpline, const char *ev_name)
 {
-	struct hists *self = &evsel->hists;
 	struct hist_browser *browser = hist_browser__new(self);
 	struct pstack *fstack;
 	const struct thread *thread_filter = NULL;
 	const struct dso *dso_filter = NULL;
+	struct newtExitStruct es;
 	char msg[160];
 	int key = -1;
 
@@ -824,88 +738,84 @@ static int perf_evsel__hists_browse(struct perf_evsel *evsel,
 
 	ui_helpline__push(helpline);
 
-	hists__browser_title(self, msg, sizeof(msg), ev_name,
-			     dso_filter, thread_filter);
+	hist_browser__title(msg, sizeof(msg), ev_name,
+			    dso_filter, thread_filter);
+
 	while (1) {
-		const struct thread *thread = NULL;
-		const struct dso *dso = NULL;
+		const struct thread *thread;
+		const struct dso *dso;
 		char *options[16];
 		int nr_options = 0, choice = 0, i,
 		    annotate = -2, zoom_dso = -2, zoom_thread = -2,
 		    browse_map = -2;
 
-		key = hist_browser__run(browser, msg);
-
-		if (browser->he_selection != NULL) {
-			thread = hist_browser__selected_thread(browser);
-			dso = browser->selection->map ? browser->selection->map->dso : NULL;
-		}
-
-		switch (key) {
-		case NEWT_KEY_TAB:
-		case NEWT_KEY_UNTAB:
-			/*
-			 * Exit the browser, let hists__browser_tree
-			 * go to the next or previous
-			 */
-			goto out_free_stack;
-		case 'a':
-			if (browser->selection == NULL ||
-			    browser->selection->sym == NULL ||
-			    browser->selection->map->dso->annotate_warned)
-				continue;
-			goto do_annotate;
-		case 'd':
-			goto zoom_dso;
-		case 't':
-			goto zoom_thread;
-		case NEWT_KEY_F1:
-		case 'h':
-		case '?':
-			ui__help_window("->        Zoom into DSO/Threads & Annotate current symbol\n"
-					"<-        Zoom out\n"
-					"a         Annotate current symbol\n"
-					"h/?/F1    Show this window\n"
-					"C         Collapse all callchains\n"
-					"E         Expand all callchains\n"
-					"d         Zoom into current DSO\n"
-					"t         Zoom into current Thread\n"
-					"TAB/UNTAB Switch events\n"
-					"q/CTRL+C  Exit browser");
-			continue;
-		case NEWT_KEY_ENTER:
-		case NEWT_KEY_RIGHT:
-			/* menu */
+		if (hist_browser__run(browser, msg, &es))
 			break;
-		case NEWT_KEY_LEFT: {
-			const void *top;
 
-			if (pstack__empty(fstack)) {
+		thread = hist_browser__selected_thread(browser);
+		dso = browser->selection->map ? browser->selection->map->dso : NULL;
+
+		if (es.reason == NEWT_EXIT_HOTKEY) {
+			key = es.u.key;
+
+			switch (key) {
+			case NEWT_KEY_F1:
+				goto do_help;
+			case NEWT_KEY_TAB:
+			case NEWT_KEY_UNTAB:
 				/*
-				 * Go back to the perf_evsel_menu__run or other user
+				 * Exit the browser, let hists__browser_tree
+				 * go to the next or previous
 				 */
-				if (left_exits)
-					goto out_free_stack;
+				goto out_free_stack;
+			default:;
+			}
+
+			switch (key) {
+			case 'a':
+				if (browser->selection->map == NULL ||
+				    browser->selection->map->dso->annotate_warned)
+					continue;
+				goto do_annotate;
+			case 'd':
+				goto zoom_dso;
+			case 't':
+				goto zoom_thread;
+			case 'h':
+			case '?':
+do_help:
+				ui__help_window("->        Zoom into DSO/Threads & Annotate current symbol\n"
+						"<-        Zoom out\n"
+						"a         Annotate current symbol\n"
+						"h/?/F1    Show this window\n"
+						"d         Zoom into current DSO\n"
+						"t         Zoom into current Thread\n"
+						"q/CTRL+C  Exit browser");
+				continue;
+			default:;
+			}
+			if (is_exit_key(key)) {
+				if (key == NEWT_KEY_ESCAPE &&
+				    !ui__dialog_yesno("Do you really want to exit?"))
+					continue;
+				break;
+			}
+
+			if (es.u.key == NEWT_KEY_LEFT) {
+				const void *top;
+
+				if (pstack__empty(fstack))
+					continue;
+				top = pstack__pop(fstack);
+				if (top == &dso_filter)
+					goto zoom_out_dso;
+				if (top == &thread_filter)
+					goto zoom_out_thread;
 				continue;
 			}
-			top = pstack__pop(fstack);
-			if (top == &dso_filter)
-				goto zoom_out_dso;
-			if (top == &thread_filter)
-				goto zoom_out_thread;
-			continue;
-		}
-		case NEWT_KEY_ESCAPE:
-			if (!left_exits &&
-			    !ui__dialog_yesno("Do you really want to exit?"))
-				continue;
-			/* Fall thru */
-		default:
-			goto out_free_stack;
 		}
 
-		if (browser->selection != NULL &&
-		    browser->selection->sym != NULL &&
+		if (browser->selection->sym != NULL &&
 		    !browser->selection->map->dso->annotate_warned &&
 		    asprintf(&options[nr_options], "Annotate %s",
 			     browser->selection->sym->name) > 0)
@@ -924,8 +834,7 @@ static int perf_evsel__hists_browse(struct perf_evsel *evsel,
 			     (dso->kernel ? "the Kernel" : dso->short_name)) > 0)
 			zoom_dso = nr_options++;
 
-		if (browser->selection != NULL &&
-		    browser->selection->map != NULL &&
+		if (browser->selection->map != NULL &&
 		    asprintf(&options[nr_options], "Browse map details") > 0)
 			browse_map = nr_options++;
 
@@ -945,11 +854,19 @@ static int perf_evsel__hists_browse(struct perf_evsel *evsel,
 		if (choice == annotate) {
 			struct hist_entry *he;
 do_annotate:
+			if (browser->selection->map->dso->origin == DSO__ORIG_KERNEL) {
+				browser->selection->map->dso->annotate_warned = 1;
+				ui_helpline__puts("No vmlinux file found, can't "
+						 "annotate with just a "
+						 "kallsyms file");
+				continue;
+			}
+
 			he = hist_browser__selected_entry(browser);
 			if (he == NULL)
 				continue;
 
-			hist_entry__tui_annotate(he, evsel->idx);
+			hist_entry__tui_annotate(he);
 		} else if (choice == browse_map)
 			map__browse(browser->selection->map);
 		else if (choice == zoom_dso) {
@@ -968,8 +885,8 @@ zoom_out_dso:
 				pstack__push(fstack, &dso_filter);
 			}
 			hists__filter_by_dso(self, dso_filter);
-			hists__browser_title(self, msg, sizeof(msg), ev_name,
-					     dso_filter, thread_filter);
+			hist_browser__title(msg, sizeof(msg), ev_name,
+					    dso_filter, thread_filter);
 			hist_browser__reset(browser);
 		} else if (choice == zoom_thread) {
 zoom_thread:
@@ -986,8 +903,8 @@ zoom_out_thread:
 				pstack__push(fstack, &thread_filter);
 			}
 			hists__filter_by_thread(self, thread_filter);
-			hists__browser_title(self, msg, sizeof(msg), ev_name,
-					     dso_filter, thread_filter);
+			hist_browser__title(msg, sizeof(msg), ev_name,
+					    dso_filter, thread_filter);
 			hist_browser__reset(browser);
 		}
 	}
@@ -998,141 +915,34 @@ out:
 	return key;
 }
 
-struct perf_evsel_menu {
-	struct ui_browser b;
-	struct perf_evsel *selection;
-};
-
-static void perf_evsel_menu__write(struct ui_browser *browser,
-				   void *entry, int row)
+int hists__tui_browse_tree(struct rb_root *self, const char *help)
 {
-	struct perf_evsel_menu *menu = container_of(browser,
-						    struct perf_evsel_menu, b);
-	struct perf_evsel *evsel = list_entry(entry, struct perf_evsel, node);
-	bool current_entry = ui_browser__is_current_entry(browser, row);
-	unsigned long nr_events = evsel->hists.stats.nr_events[PERF_RECORD_SAMPLE];
-	const char *ev_name = event_name(evsel);
-	char bf[256], unit;
+	struct rb_node *first = rb_first(self), *nd = first, *next;
+	int key = 0;
 
-	ui_browser__set_color(browser, current_entry ? HE_COLORSET_SELECTED :
-						       HE_COLORSET_NORMAL);
+	while (nd) {
+		struct hists *hists = rb_entry(nd, struct hists, rb_node);
+		const char *ev_name = __event_name(hists->type, hists->config);
 
-	nr_events = convert_unit(nr_events, &unit);
-	snprintf(bf, sizeof(bf), "%lu%c%s%s", nr_events,
-		 unit, unit == ' ' ? "" : " ", ev_name);
-	slsmg_write_nstring(bf, browser->width);
+		key = hists__browse(hists, help, ev_name);
 
-	if (current_entry)
-		menu->selection = evsel;
-}
-
-static int perf_evsel_menu__run(struct perf_evsel_menu *menu, const char *help)
-{
-	int exit_keys[] = { NEWT_KEY_ENTER, NEWT_KEY_RIGHT, 0, };
-	struct perf_evlist *evlist = menu->b.priv;
-	struct perf_evsel *pos;
-	const char *ev_name, *title = "Available samples";
-	int key;
-
-	if (ui_browser__show(&menu->b, title,
-			     "ESC: exit, ENTER|->: Browse histograms") < 0)
-		return -1;
-
-	ui_browser__add_exit_keys(&menu->b, exit_keys);
-
-	while (1) {
-		key = ui_browser__run(&menu->b);
-
-		switch (key) {
-		case NEWT_KEY_RIGHT:
-		case NEWT_KEY_ENTER:
-			if (!menu->selection)
-				continue;
-			pos = menu->selection;
-browse_hists:
-			ev_name = event_name(pos);
-			key = perf_evsel__hists_browse(pos, help, ev_name, true);
-			ui_browser__show_title(&menu->b, title);
+		if (is_exit_key(key))
 			break;
-		case NEWT_KEY_LEFT:
-			continue;
-		case NEWT_KEY_ESCAPE:
-			if (!ui__dialog_yesno("Do you really want to exit?"))
-				continue;
-			/* Fall thru */
-		default:
-			goto out;
-		}
 
 		switch (key) {
 		case NEWT_KEY_TAB:
-			if (pos->node.next == &evlist->entries)
-				pos = list_entry(evlist->entries.next, struct perf_evsel, node);
-			else
-				pos = list_entry(pos->node.next, struct perf_evsel, node);
-			goto browse_hists;
+			next = rb_next(nd);
+			if (next)
+				nd = next;
+			break;
 		case NEWT_KEY_UNTAB:
-			if (pos->node.prev == &evlist->entries)
-				pos = list_entry(evlist->entries.prev, struct perf_evsel, node);
-			else
-				pos = list_entry(pos->node.prev, struct perf_evsel, node);
-			goto browse_hists;
-		case 'q':
-		case CTRL('c'):
-			goto out;
+			if (nd == first)
+				continue;
+			nd = rb_prev(nd);
 		default:
 			break;
 		}
 	}
 
-out:
-	ui_browser__hide(&menu->b);
 	return key;
-}
-
-static int __perf_evlist__tui_browse_hists(struct perf_evlist *evlist,
-					   const char *help)
-{
-	struct perf_evsel *pos;
-	struct perf_evsel_menu menu = {
-		.b = {
-			.entries    = &evlist->entries,
-			.refresh    = ui_browser__list_head_refresh,
-			.seek	    = ui_browser__list_head_seek,
-			.write	    = perf_evsel_menu__write,
-			.nr_entries = evlist->nr_entries,
-			.priv	    = evlist,
-		},
-	};
-
-	ui_helpline__push("Press ESC to exit");
-
-	list_for_each_entry(pos, &evlist->entries, node) {
-		const char *ev_name = event_name(pos);
-		size_t line_len = strlen(ev_name) + 7;
-
-		if (menu.b.width < line_len)
-			menu.b.width = line_len;
-		/*
-		 * Cache the evsel name, tracepoints have a _high_ cost per
-		 * event_name() call.
-		 */
-		if (pos->name == NULL)
-			pos->name = strdup(ev_name);
-	}
-
-	return perf_evsel_menu__run(&menu, help);
-}
-
-int perf_evlist__tui_browse_hists(struct perf_evlist *evlist, const char *help)
-{
-
-	if (evlist->nr_entries == 1) {
-		struct perf_evsel *first = list_entry(evlist->entries.next,
-						      struct perf_evsel, node);
-		const char *ev_name = event_name(first);
-		return perf_evsel__hists_browse(first, help, ev_name, false);
-	}
-
-	return __perf_evlist__tui_browse_hists(evlist, help);
 }

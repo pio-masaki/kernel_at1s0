@@ -145,7 +145,7 @@ static void br_stp_stop(struct net_bridge *br)
 	char *envp[] = { NULL };
 
 	if (br->stp_enabled == BR_USER_STP) {
-		r = call_usermodehelper(BR_STP_PROG, argv, envp, UMH_WAIT_PROC);
+		r = call_usermodehelper(BR_STP_PROG, argv, envp, 1);
 		br_info(br, "userspace STP stopped, return code %d\n", r);
 
 		/* To start timers on any ports left in blocking */
@@ -204,7 +204,7 @@ void br_stp_change_bridge_id(struct net_bridge *br, const unsigned char *addr)
 static const unsigned short br_mac_zero_aligned[ETH_ALEN >> 1];
 
 /* called under bridge lock */
-bool br_stp_recalculate_bridge_id(struct net_bridge *br)
+void br_stp_recalculate_bridge_id(struct net_bridge *br)
 {
 	const unsigned char *br_mac_zero =
 			(const unsigned char *)br_mac_zero_aligned;
@@ -213,7 +213,7 @@ bool br_stp_recalculate_bridge_id(struct net_bridge *br)
 
 	/* user has chosen a value so keep it */
 	if (br->flags & BR_SET_MAC_ADDR)
-		return false;
+		return;
 
 	list_for_each_entry(p, &br->port_list, list) {
 		if (addr == br_mac_zero ||
@@ -222,11 +222,8 @@ bool br_stp_recalculate_bridge_id(struct net_bridge *br)
 
 	}
 
-	if (compare_ether_addr(br->bridge_id.addr, addr) == 0)
-		return false;	/* no change */
-
-	br_stp_change_bridge_id(br, addr);
-	return true;
+	if (compare_ether_addr(br->bridge_id.addr, addr))
+		br_stp_change_bridge_id(br, addr);
 }
 
 /* called under bridge lock */

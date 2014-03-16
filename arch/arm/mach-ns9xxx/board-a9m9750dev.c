@@ -37,44 +37,44 @@ void __init board_a9m9750dev_map_io(void)
 		     ARRAY_SIZE(board_a9m9750dev_io_desc));
 }
 
-static void a9m9750dev_fpga_ack_irq(struct irq_data *d)
+static void a9m9750dev_fpga_ack_irq(unsigned int irq)
 {
 	/* nothing */
 }
 
-static void a9m9750dev_fpga_mask_irq(struct irq_data *d)
+static void a9m9750dev_fpga_mask_irq(unsigned int irq)
 {
 	u8 ier;
 
 	ier = __raw_readb(FPGA_IER);
 
-	ier &= ~(1 << (d->irq - FPGA_IRQ(0)));
+	ier &= ~(1 << (irq - FPGA_IRQ(0)));
 
 	__raw_writeb(ier, FPGA_IER);
 }
 
-static void a9m9750dev_fpga_maskack_irq(struct irq_data *d)
+static void a9m9750dev_fpga_maskack_irq(unsigned int irq)
 {
-	a9m9750dev_fpga_mask_irq(d);
-	a9m9750dev_fpga_ack_irq(d);
+	a9m9750dev_fpga_mask_irq(irq);
+	a9m9750dev_fpga_ack_irq(irq);
 }
 
-static void a9m9750dev_fpga_unmask_irq(struct irq_data *d)
+static void a9m9750dev_fpga_unmask_irq(unsigned int irq)
 {
 	u8 ier;
 
 	ier = __raw_readb(FPGA_IER);
 
-	ier |= 1 << (d->irq - FPGA_IRQ(0));
+	ier |= 1 << (irq - FPGA_IRQ(0));
 
 	__raw_writeb(ier, FPGA_IER);
 }
 
 static struct irq_chip a9m9750dev_fpga_chip = {
-	.irq_ack	= a9m9750dev_fpga_ack_irq,
-	.irq_mask	= a9m9750dev_fpga_mask_irq,
-	.irq_mask_ack	= a9m9750dev_fpga_maskack_irq,
-	.irq_unmask	= a9m9750dev_fpga_unmask_irq,
+	.ack		= a9m9750dev_fpga_ack_irq,
+	.mask		= a9m9750dev_fpga_mask_irq,
+	.mask_ack	= a9m9750dev_fpga_maskack_irq,
+	.unmask		= a9m9750dev_fpga_unmask_irq,
 };
 
 static void a9m9750dev_fpga_demux_handler(unsigned int irq,
@@ -82,7 +82,7 @@ static void a9m9750dev_fpga_demux_handler(unsigned int irq,
 {
 	u8 stat = __raw_readb(FPGA_ISR);
 
-	desc->irq_data.chip->irq_mask_ack(&desc->irq_data);
+	desc->chip->mask_ack(irq);
 
 	while (stat != 0) {
 		int irqno = fls(stat) - 1;
@@ -92,7 +92,7 @@ static void a9m9750dev_fpga_demux_handler(unsigned int irq,
 		generic_handle_irq(FPGA_IRQ(irqno));
 	}
 
-	desc->irq_data.chip->irq_unmask(&desc->irq_data);
+	desc->chip->unmask(irq);
 }
 
 void __init board_a9m9750dev_init_irq(void)
@@ -107,8 +107,8 @@ void __init board_a9m9750dev_init_irq(void)
 				__func__);
 
 	for (i = FPGA_IRQ(0); i <= FPGA_IRQ(7); ++i) {
-		irq_set_chip_and_handler(i, &a9m9750dev_fpga_chip,
-					 handle_level_irq);
+		set_irq_chip(i, &a9m9750dev_fpga_chip);
+		set_irq_handler(i, handle_level_irq);
 		set_irq_flags(i, IRQF_VALID);
 	}
 
@@ -118,8 +118,8 @@ void __init board_a9m9750dev_init_irq(void)
 	REGSET(eic, SYS_EIC, LVEDG, LEVEL);
 	__raw_writel(eic, SYS_EIC(2));
 
-	irq_set_chained_handler(IRQ_NS9XXX_EXT2,
-				a9m9750dev_fpga_demux_handler);
+	set_irq_chained_handler(IRQ_NS9XXX_EXT2,
+			a9m9750dev_fpga_demux_handler);
 }
 
 void __init board_a9m9750dev_init_machine(void)

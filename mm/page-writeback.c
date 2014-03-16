@@ -404,22 +404,25 @@ unsigned long determine_dirtyable_memory(void)
  * - vm.dirty_background_ratio  or  vm.dirty_background_bytes
  * - vm.dirty_ratio             or  vm.dirty_bytes
  * The dirty limits will be lifted by 1/4 for PF_LESS_THROTTLE (ie. nfsd) and
- * real-time tasks.
+ * runtime tasks.
  */
 void global_dirty_limits(unsigned long *pbackground, unsigned long *pdirty)
 {
 	unsigned long background;
 	unsigned long dirty;
-	unsigned long uninitialized_var(available_memory);
+	unsigned long available_memory = determine_dirtyable_memory();
 	struct task_struct *tsk;
-
-	if (!vm_dirty_bytes || !dirty_background_bytes)
-		available_memory = determine_dirtyable_memory();
 
 	if (vm_dirty_bytes)
 		dirty = DIV_ROUND_UP(vm_dirty_bytes, PAGE_SIZE);
-	else
-		dirty = (vm_dirty_ratio * available_memory) / 100;
+	else {
+		int dirty_ratio;
+
+		dirty_ratio = vm_dirty_ratio;
+		if (dirty_ratio < 5)
+			dirty_ratio = 5;
+		dirty = (dirty_ratio * available_memory) / 100;
+	}
 
 	if (dirty_background_bytes)
 		background = DIV_ROUND_UP(dirty_background_bytes, PAGE_SIZE);
@@ -507,7 +510,7 @@ static void balance_dirty_pages(struct address_space *mapping,
 		 * catch-up. This avoids (excessively) small writeouts
 		 * when the bdi limits are ramping up.
 		 */
-		if (nr_reclaimable + nr_writeback <=
+		if (nr_reclaimable + nr_writeback <
 				(background_thresh + dirty_thresh) / 2)
 			break;
 
@@ -539,8 +542,8 @@ static void balance_dirty_pages(struct address_space *mapping,
 		 * the last resort safeguard.
 		 */
 		dirty_exceeded =
-			(bdi_nr_reclaimable + bdi_nr_writeback > bdi_thresh)
-			|| (nr_reclaimable + nr_writeback > dirty_thresh);
+			(bdi_nr_reclaimable + bdi_nr_writeback >= bdi_thresh)
+			|| (nr_reclaimable + nr_writeback >= dirty_thresh);
 
 		if (!dirty_exceeded)
 			break;
@@ -566,7 +569,7 @@ static void balance_dirty_pages(struct address_space *mapping,
 				break;		/* We've done our duty */
 		}
 		trace_wbc_balance_dirty_wait(&wbc, bdi);
-		__set_current_state(TASK_UNINTERRUPTIBLE);
+		__set_current_state(TASK_INTERRUPTIBLE);
 		io_schedule_timeout(pause);
 
 		/*
@@ -927,7 +930,7 @@ retry:
 				break;
 			}
 
-			done_index = page->index;
+			done_index = page->index + 1;
 
 			lock_page(page);
 
@@ -977,7 +980,6 @@ continue_unlock:
 					 * not be suitable for data integrity
 					 * writeout).
 					 */
-					done_index = page->index + 1;
 					done = 1;
 					break;
 				}
@@ -1040,17 +1042,11 @@ static int __writepage(struct page *page, struct writeback_control *wbc,
 int generic_writepages(struct address_space *mapping,
 		       struct writeback_control *wbc)
 {
-	struct blk_plug plug;
-	int ret;
-
 	/* deal with chardevs and other special file */
 	if (!mapping->a_ops->writepage)
 		return 0;
 
-	blk_start_plug(&plug);
-	ret = write_cache_pages(mapping, wbc, __writepage, mapping);
-	blk_finish_plug(&plug);
-	return ret;
+	return write_cache_pages(mapping, wbc, __writepage, mapping);
 }
 
 EXPORT_SYMBOL(generic_writepages);
@@ -1113,7 +1109,7 @@ EXPORT_SYMBOL(write_one_page);
 int __set_page_dirty_no_writeback(struct page *page)
 {
 	if (!PageDirty(page))
-		return !TestSetPageDirty(page);
+		SetPageDirty(page);
 	return 0;
 }
 
@@ -1125,25 +1121,12 @@ void account_page_dirtied(struct page *page, struct address_space *mapping)
 {
 	if (mapping_cap_account_dirty(mapping)) {
 		__inc_zone_page_state(page, NR_FILE_DIRTY);
-		__inc_zone_page_state(page, NR_DIRTIED);
 		__inc_bdi_stat(mapping->backing_dev_info, BDI_RECLAIMABLE);
 		task_dirty_inc(current);
 		task_io_account_write(PAGE_CACHE_SIZE);
 	}
 }
 EXPORT_SYMBOL(account_page_dirtied);
-
-/*
- * Helper function for set_page_writeback family.
- * NOTE: Unlike account_page_dirtied this does not rely on being atomic
- * wrt interrupts.
- */
-void account_page_writeback(struct page *page)
-{
-	inc_zone_page_state(page, NR_WRITEBACK);
-	inc_zone_page_state(page, NR_WRITTEN);
-}
-EXPORT_SYMBOL(account_page_writeback);
 
 /*
  * For address_spaces which do not use buffers.  Just tag the page as dirty in
@@ -1218,17 +1201,6 @@ int set_page_dirty(struct page *page)
 
 	if (likely(mapping)) {
 		int (*spd)(struct page *) = mapping->a_ops->set_page_dirty;
-		/*
-		 * readahead/lru_deactivate_page could remain
-		 * PG_readahead/PG_reclaim due to race with end_page_writeback
-		 * About readahead, if the page is written, the flags would be
-		 * reset. So no problem.
-		 * About lru_deactivate_page, if the page is redirty, the flag
-		 * will be reset. So no problem. but if the page is used by readahead
-		 * it will confuse readahead and make it restart the size rampup
-		 * process. But it's a trivial problem.
-		 */
-		ClearPageReclaim(page);
 #ifdef CONFIG_BLOCK
 		if (!spd)
 			spd = __set_page_dirty_buffers;
@@ -1257,7 +1229,7 @@ int set_page_dirty_lock(struct page *page)
 {
 	int ret;
 
-	lock_page(page);
+	lock_page_nosync(page);
 	ret = set_page_dirty(page);
 	unlock_page(page);
 	return ret;
@@ -1284,6 +1256,7 @@ int clear_page_dirty_for_io(struct page *page)
 
 	BUG_ON(!PageLocked(page));
 
+	ClearPageReclaim(page);
 	if (mapping && mapping_cap_account_dirty(mapping)) {
 		/*
 		 * Yes, Virginia, this is indeed insane.
@@ -1393,7 +1366,7 @@ int test_set_page_writeback(struct page *page)
 		ret = TestSetPageWriteback(page);
 	}
 	if (!ret)
-		account_page_writeback(page);
+		inc_zone_page_state(page, NR_WRITEBACK);
 	return ret;
 
 }

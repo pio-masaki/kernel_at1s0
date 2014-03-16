@@ -219,14 +219,13 @@ int jffs2_garbage_collect_pass(struct jffs2_sb_info *c)
 	if (!list_empty(&c->erase_complete_list) ||
 	    !list_empty(&c->erase_pending_list)) {
 		spin_unlock(&c->erase_completion_lock);
-		mutex_unlock(&c->alloc_sem);
 		D1(printk(KERN_DEBUG "jffs2_garbage_collect_pass() erasing pending blocks\n"));
-		if (jffs2_erase_pending_blocks(c, 1))
+		if (jffs2_erase_pending_blocks(c, 1)) {
+			mutex_unlock(&c->alloc_sem);
 			return 0;
-
+		}
 		D1(printk(KERN_DEBUG "No progress from erasing blocks; doing GC anyway\n"));
 		spin_lock(&c->erase_completion_lock);
-		mutex_lock(&c->alloc_sem);
 	}
 
 	/* First, work out which block we're garbage-collecting */

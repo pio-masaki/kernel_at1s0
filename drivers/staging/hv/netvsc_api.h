@@ -32,10 +32,10 @@ struct hv_netvsc_packet;
 
 /* Represent the xfer page packet which contains 1 or more netvsc packet */
 struct xferpage_packet {
-	struct list_head list_ent;
+	struct list_head ListEntry;
 
 	/* # of netvsc packets this xfer packet contains */
-	u32 count;
+	u32 Count;
 };
 
 /* The number of pages which are enough to cover jumbo frame buffer. */
@@ -47,70 +47,70 @@ struct xferpage_packet {
  */
 struct hv_netvsc_packet {
 	/* Bookkeeping stuff */
-	struct list_head list_ent;
+	struct list_head ListEntry;
 
-	struct hv_device *device;
-	bool is_data_pkt;
+	struct hv_device *Device;
+	bool IsDataPacket;
 
 	/*
 	 * Valid only for receives when we break a xfer page packet
 	 * into multiple netvsc packets
 	 */
-	struct xferpage_packet *xfer_page_pkt;
+	struct xferpage_packet *XferPagePacket;
 
 	union {
 		struct{
-			u64 recv_completion_tid;
-			void *recv_completion_ctx;
-			void (*recv_completion)(void *context);
-		} recv;
+			u64 ReceiveCompletionTid;
+			void *ReceiveCompletionContext;
+			void (*OnReceiveCompletion)(void *context);
+		} Recv;
 		struct{
-			u64 send_completion_tid;
-			void *send_completion_ctx;
-			void (*send_completion)(void *context);
-		} send;
-	} completion;
+			u64 SendCompletionTid;
+			void *SendCompletionContext;
+			void (*OnSendCompletion)(void *context);
+		} Send;
+	} Completion;
 
-	/* This points to the memory after page_buf */
-	void *extension;
+	/* This points to the memory after PageBuffers */
+	void *Extension;
 
-	u32 total_data_buflen;
+	u32 TotalDataBufferLength;
 	/* Points to the send/receive buffer where the ethernet frame is */
-	u32 page_buf_cnt;
-	struct hv_page_buffer page_buf[NETVSC_PACKET_MAXPAGE];
+	u32 PageBufferCount;
+	struct hv_page_buffer PageBuffers[NETVSC_PACKET_MAXPAGE];
 };
 
 /* Represents the net vsc driver */
 struct netvsc_driver {
 	/* Must be the first field */
 	/* Which is a bug FIXME! */
-	struct hv_driver base;
+	struct hv_driver Base;
 
-	u32 ring_buf_size;
-	u32 req_ext_size;
+	u32 RingBufferSize;
+	u32 RequestExtSize;
 
 	/*
 	 * This is set by the caller to allow us to callback when we
 	 * receive a packet from the "wire"
 	 */
-	int (*recv_cb)(struct hv_device *dev,
+	int (*OnReceiveCallback)(struct hv_device *dev,
 				 struct hv_netvsc_packet *packet);
-	void (*link_status_change)(struct hv_device *dev, u32 status);
+	void (*OnLinkStatusChanged)(struct hv_device *dev, u32 Status);
 
 	/* Specific to this driver */
-	int (*send)(struct hv_device *dev, struct hv_netvsc_packet *packet);
+	int (*OnSend)(struct hv_device *dev, struct hv_netvsc_packet *packet);
 
-	void *ctx;
+	void *Context;
 };
 
 struct netvsc_device_info {
-	unsigned char mac_adr[6];
-	bool link_state;	/* 0 - link up, 1 - link down */
+    unsigned char MacAddr[6];
+    bool LinkState;	/* 0 - link up, 1 - link down */
 };
 
 /* Interface */
-int netvsc_initialize(struct hv_driver *drv);
-int rndis_filter_open(struct hv_device *dev);
-int rndis_filter_close(struct hv_device *dev);
+int NetVscInitialize(struct hv_driver *drv);
+int RndisFilterOnOpen(struct hv_device *Device);
+int RndisFilterOnClose(struct hv_device *Device);
 
 #endif /* _NETVSC_API_H_ */

@@ -6,7 +6,7 @@
 ** Description: 
 **     Time helper functions for Linux.
 **
-** Portions Copyright (c) 2008-2011 Immersion Corporation. All Rights Reserved. 
+** Portions Copyright (c) 2008-2010 Immersion Corporation. All Rights Reserved. 
 **
 ** This file contains Original Code and/or Modifications of Original Code 
 ** as defined in and that are subject to the GNU Public License v2 - 
@@ -43,18 +43,12 @@
 #define TIMER_INCR                      5       /* run timer at 5 jiffies (== 5ms) */
 #define WATCHDOG_TIMEOUT                10      /* 10 timer cycles = 50ms */
 
-/* For compatibility with older Kernels */
-#ifndef DEFINE_SEMAPHORE
-#define DEFINE_SEMAPHORE(name) \
-    struct semaphore name = __SEMAPHORE_INITIALIZER(name, 1)
-#endif
-
 /* Global variables */
 static bool g_bTimerStarted = false;
 static struct timer_list g_timerList;
 static int g_nWatchdogCounter = 0;
 
-DEFINE_SEMAPHORE(g_hMutex);
+DECLARE_MUTEX(g_hMutex);
 
 /* Forward declarations */
 static void VibeOSKernelLinuxStartTimer(void);
@@ -75,7 +69,6 @@ static void tsp_timer_interrupt(unsigned long param)
 {
     /* Scheduling next timeout value right away */
     mod_timer(&g_timerList, jiffies + TIMER_INCR);
-
     if(g_bTimerStarted)
     {
         if (VibeSemIsLocked(&g_hMutex)) up(&g_hMutex);

@@ -840,151 +840,92 @@ static void __devinit smp_core99_setup_cpu(int cpu_nr)
 
 	/* Setup openpic */
 	mpic_setup_this_cpu();
-}
 
+	if (cpu_nr == 0) {
 #ifdef CONFIG_PPC64
-#ifdef CONFIG_HOTPLUG_CPU
-static int smp_core99_cpu_notify(struct notifier_block *self,
-				 unsigned long action, void *hcpu)
-{
-	int rc;
+		extern void g5_phy_disable_cpu1(void);
 
-	switch(action) {
-	case CPU_UP_PREPARE:
-	case CPU_UP_PREPARE_FROZEN:
-		/* Open i2c bus if it was used for tb sync */
-		if (pmac_tb_clock_chip_host) {
-			rc = pmac_i2c_open(pmac_tb_clock_chip_host, 1);
-			if (rc) {
-				pr_err("Failed to open i2c bus for time sync\n");
-				return notifier_from_errno(rc);
-			}
-		}
-		break;
-	case CPU_ONLINE:
-	case CPU_UP_CANCELED:
 		/* Close i2c bus if it was used for tb sync */
-		if (pmac_tb_clock_chip_host)
+		if (pmac_tb_clock_chip_host) {
 			pmac_i2c_close(pmac_tb_clock_chip_host);
-		break;
-	default:
-		break;
-	}
-	return NOTIFY_OK;
-}
+			pmac_tb_clock_chip_host	= NULL;
+		}
 
-static struct notifier_block __cpuinitdata smp_core99_cpu_nb = {
-	.notifier_call	= smp_core99_cpu_notify,
-};
-#endif /* CONFIG_HOTPLUG_CPU */
-
-static void __init smp_core99_bringup_done(void)
-{
-	extern void g5_phy_disable_cpu1(void);
-
-	/* Close i2c bus if it was used for tb sync */
-	if (pmac_tb_clock_chip_host)
-		pmac_i2c_close(pmac_tb_clock_chip_host);
-
-	/* If we didn't start the second CPU, we must take
-	 * it off the bus.
-	 */
-	if (of_machine_is_compatible("MacRISC4") &&
-	    num_online_cpus() < 2) {
-		set_cpu_present(1, false);
-		g5_phy_disable_cpu1();
-	}
-#ifdef CONFIG_HOTPLUG_CPU
-	register_cpu_notifier(&smp_core99_cpu_nb);
-#endif
-
-	if (ppc_md.progress)
-		ppc_md.progress("smp_core99_bringup_done", 0x349);
-}
+		/* If we didn't start the second CPU, we must take
+		 * it off the bus
+		 */
+		if (of_machine_is_compatible("MacRISC4") &&
+		    num_online_cpus() < 2)		
+			g5_phy_disable_cpu1();
 #endif /* CONFIG_PPC64 */
 
-#ifdef CONFIG_HOTPLUG_CPU
+		if (ppc_md.progress)
+			ppc_md.progress("core99_setup_cpu 0 done", 0x349);
+	}
+}
 
-static int smp_core99_cpu_disable(void)
+
+#if defined(CONFIG_HOTPLUG_CPU) && defined(CONFIG_PPC32)
+
+int smp_core99_cpu_disable(void)
 {
-	int rc = generic_cpu_disable();
-	if (rc)
-		return rc;
+	set_cpu_online(smp_processor_id(), false);
 
+	/* XXX reset cpu affinity here */
 	mpic_cpu_set_priority(0xf);
-
+	asm volatile("mtdec %0" : : "r" (0x7fffffff));
+	mb();
+	udelay(20);
+	asm volatile("mtdec %0" : : "r" (0x7fffffff));
 	return 0;
 }
 
-#ifdef CONFIG_PPC32
+static int cpu_dead[NR_CPUS];
 
-static void pmac_cpu_die(void)
+void pmac32_cpu_die(void)
 {
-	int cpu = smp_processor_id();
-
 	local_irq_disable();
-	idle_task_exit();
-	pr_debug("CPU%d offline\n", cpu);
-	generic_set_cpu_dead(cpu);
-	smp_wmb();
+	cpu_dead[smp_processor_id()] = 1;
 	mb();
 	low_cpu_die();
 }
 
-#else /* CONFIG_PPC32 */
-
-static void pmac_cpu_die(void)
+void smp_core99_cpu_die(unsigned int cpu)
 {
-	int cpu = smp_processor_id();
+	int timeout;
 
-	local_irq_disable();
-	idle_task_exit();
-
-	/*
-	 * turn off as much as possible, we'll be
-	 * kicked out as this will only be invoked
-	 * on core99 platforms for now ...
-	 */
-
-	printk(KERN_INFO "CPU#%d offline\n", cpu);
-	generic_set_cpu_dead(cpu);
-	smp_wmb();
-
-	/*
-	 * Re-enable interrupts. The NAP code needs to enable them
-	 * anyways, do it now so we deal with the case where one already
-	 * happened while soft-disabled.
-	 * We shouldn't get any external interrupts, only decrementer, and the
-	 * decrementer handler is safe for use on offline CPUs
-	 */
-	local_irq_enable();
-
-	while (1) {
-		/* let's not take timer interrupts too often ... */
-		set_dec(0x7fffffff);
-
-		/* Enter NAP mode */
-		power4_idle();
+	timeout = 1000;
+	while (!cpu_dead[cpu]) {
+		if (--timeout == 0) {
+			printk("CPU %u refused to die!\n", cpu);
+			break;
+		}
+		msleep(1);
 	}
+	cpu_dead[cpu] = 0;
 }
 
-#endif /* else CONFIG_PPC32 */
-#endif /* CONFIG_HOTPLUG_CPU */
+#endif /* CONFIG_HOTPLUG_CPU && CONFIG_PP32 */
 
 /* Core99 Macs (dual G4s and G5s) */
 struct smp_ops_t core99_smp_ops = {
 	.message_pass	= smp_mpic_message_pass,
 	.probe		= smp_core99_probe,
-#ifdef CONFIG_PPC64
-	.bringup_done	= smp_core99_bringup_done,
-#endif
 	.kick_cpu	= smp_core99_kick_cpu,
 	.setup_cpu	= smp_core99_setup_cpu,
 	.give_timebase	= smp_core99_give_timebase,
 	.take_timebase	= smp_core99_take_timebase,
 #if defined(CONFIG_HOTPLUG_CPU)
+# if defined(CONFIG_PPC32)
 	.cpu_disable	= smp_core99_cpu_disable,
+	.cpu_die	= smp_core99_cpu_die,
+# endif
+# if defined(CONFIG_PPC64)
+	.cpu_disable	= generic_cpu_disable,
 	.cpu_die	= generic_cpu_die,
+	/* intentionally do *NOT* assign cpu_enable,
+	 * the generic code will use kick_cpu then! */
+# endif
 #endif
 };
 
@@ -1016,10 +957,5 @@ void __init pmac_setup_smp(void)
 		smp_ops = &psurge_smp_ops;
 	}
 #endif /* CONFIG_PPC32 */
-
-#ifdef CONFIG_HOTPLUG_CPU
-	ppc_md.cpu_die = pmac_cpu_die;
-#endif
 }
-
 

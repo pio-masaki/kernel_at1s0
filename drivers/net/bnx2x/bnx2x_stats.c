@@ -14,8 +14,8 @@
  * Statistics and Link management by Yitchak Gertner
  *
  */
-#include "bnx2x_cmn.h"
-#include "bnx2x_stats.h"
+ #include "bnx2x_cmn.h"
+ #include "bnx2x_stats.h"
 
 /* Statistics */
 
@@ -153,26 +153,24 @@ static inline long bnx2x_hilo(u32 *hiref)
 static void bnx2x_storm_stats_post(struct bnx2x *bp)
 {
 	if (!bp->stats_pending) {
-		struct common_query_ramrod_data ramrod_data = {0};
+		struct eth_query_ramrod_data ramrod_data = {0};
 		int i, rc;
 
 		spin_lock_bh(&bp->stats_lock);
 
-		if (bp->stats_pending) {
-			spin_unlock_bh(&bp->stats_lock);
-			return;
-		}
-
 		ramrod_data.drv_counter = bp->stats_counter++;
 		ramrod_data.collect_port = bp->port.pmf ? 1 : 0;
-		for_each_eth_queue(bp, i)
+		for_each_queue(bp, i)
 			ramrod_data.ctr_id_vector |= (1 << bp->fp[i].cl_id);
 
-		rc = bnx2x_sp_post(bp, RAMROD_CMD_ID_COMMON_STAT_QUERY, 0,
+		rc = bnx2x_sp_post(bp, RAMROD_CMD_ID_ETH_STAT_QUERY, 0,
 				   ((u32 *)&ramrod_data)[1],
-				   ((u32 *)&ramrod_data)[0], 1);
-		if (rc == 0)
+				   ((u32 *)&ramrod_data)[0], 0);
+		if (rc == 0) {
+			/* stats ramrod has it's own slot on the spq */
+			bp->spq_left++;
 			bp->stats_pending = 1;
+		}
 
 		spin_unlock_bh(&bp->stats_lock);
 	}
@@ -190,12 +188,20 @@ static void bnx2x_hw_stats_post(struct bnx2x *bp)
 	/* loader */
 	if (bp->executer_idx) {
 		int loader_idx = PMF_DMAE_C(bp);
-		u32 opcode =  bnx2x_dmae_opcode(bp, DMAE_SRC_PCI, DMAE_DST_GRC,
-						 true, DMAE_COMP_GRC);
-		opcode = bnx2x_dmae_opcode_clr_src_reset(opcode);
 
 		memset(dmae, 0, sizeof(struct dmae_command));
-		dmae->opcode = opcode;
+
+		dmae->opcode = (DMAE_CMD_SRC_PCI | DMAE_CMD_DST_GRC |
+				DMAE_CMD_C_DST_GRC | DMAE_CMD_C_ENABLE |
+				DMAE_CMD_DST_RESET |
+#ifdef __BIG_ENDIAN
+				DMAE_CMD_ENDIANITY_B_DW_SWAP |
+#else
+				DMAE_CMD_ENDIANITY_DW_SWAP |
+#endif
+				(BP_PORT(bp) ? DMAE_CMD_PORT_1 :
+					       DMAE_CMD_PORT_0) |
+				(BP_E1HVN(bp) << DMAE_CMD_E1HVN_SHIFT));
 		dmae->src_addr_lo = U64_LO(bnx2x_sp_mapping(bp, dmae[0]));
 		dmae->src_addr_hi = U64_HI(bnx2x_sp_mapping(bp, dmae[0]));
 		dmae->dst_addr_lo = (DMAE_REG_CMD_MEM +
@@ -247,17 +253,26 @@ static void bnx2x_stats_pmf_update(struct bnx2x *bp)
 	u32 *stats_comp = bnx2x_sp(bp, stats_comp);
 
 	/* sanity */
-	if (!IS_MF(bp) || !bp->port.pmf || !bp->port.port_stx) {
+	if (!IS_E1HMF(bp) || !bp->port.pmf || !bp->port.port_stx) {
 		BNX2X_ERR("BUG!\n");
 		return;
 	}
 
 	bp->executer_idx = 0;
 
-	opcode = bnx2x_dmae_opcode(bp, DMAE_SRC_GRC, DMAE_DST_PCI, false, 0);
+	opcode = (DMAE_CMD_SRC_GRC | DMAE_CMD_DST_PCI |
+		  DMAE_CMD_C_ENABLE |
+		  DMAE_CMD_SRC_RESET | DMAE_CMD_DST_RESET |
+#ifdef __BIG_ENDIAN
+		  DMAE_CMD_ENDIANITY_B_DW_SWAP |
+#else
+		  DMAE_CMD_ENDIANITY_DW_SWAP |
+#endif
+		  (BP_PORT(bp) ? DMAE_CMD_PORT_1 : DMAE_CMD_PORT_0) |
+		  (BP_E1HVN(bp) << DMAE_CMD_E1HVN_SHIFT));
 
 	dmae = bnx2x_sp(bp, dmae[bp->executer_idx++]);
-	dmae->opcode = bnx2x_dmae_opcode_add_comp(opcode, DMAE_COMP_GRC);
+	dmae->opcode = (opcode | DMAE_CMD_C_DST_GRC);
 	dmae->src_addr_lo = bp->port.port_stx >> 2;
 	dmae->src_addr_hi = 0;
 	dmae->dst_addr_lo = U64_LO(bnx2x_sp_mapping(bp, port_stats));
@@ -268,7 +283,7 @@ static void bnx2x_stats_pmf_update(struct bnx2x *bp)
 	dmae->comp_val = 1;
 
 	dmae = bnx2x_sp(bp, dmae[bp->executer_idx++]);
-	dmae->opcode = bnx2x_dmae_opcode_add_comp(opcode, DMAE_COMP_PCI);
+	dmae->opcode = (opcode | DMAE_CMD_C_DST_PCI);
 	dmae->src_addr_lo = (bp->port.port_stx >> 2) + DMAE_LEN32_RD_MAX;
 	dmae->src_addr_hi = 0;
 	dmae->dst_addr_lo = U64_LO(bnx2x_sp_mapping(bp, port_stats) +
@@ -289,6 +304,7 @@ static void bnx2x_port_stats_init(struct bnx2x *bp)
 {
 	struct dmae_command *dmae;
 	int port = BP_PORT(bp);
+	int vn = BP_E1HVN(bp);
 	u32 opcode;
 	int loader_idx = PMF_DMAE_C(bp);
 	u32 mac_addr;
@@ -303,8 +319,16 @@ static void bnx2x_port_stats_init(struct bnx2x *bp)
 	bp->executer_idx = 0;
 
 	/* MCP */
-	opcode = bnx2x_dmae_opcode(bp, DMAE_SRC_PCI, DMAE_DST_GRC,
-				    true, DMAE_COMP_GRC);
+	opcode = (DMAE_CMD_SRC_PCI | DMAE_CMD_DST_GRC |
+		  DMAE_CMD_C_DST_GRC | DMAE_CMD_C_ENABLE |
+		  DMAE_CMD_SRC_RESET | DMAE_CMD_DST_RESET |
+#ifdef __BIG_ENDIAN
+		  DMAE_CMD_ENDIANITY_B_DW_SWAP |
+#else
+		  DMAE_CMD_ENDIANITY_DW_SWAP |
+#endif
+		  (port ? DMAE_CMD_PORT_1 : DMAE_CMD_PORT_0) |
+		  (vn << DMAE_CMD_E1HVN_SHIFT));
 
 	if (bp->port.port_stx) {
 
@@ -335,8 +359,16 @@ static void bnx2x_port_stats_init(struct bnx2x *bp)
 	}
 
 	/* MAC */
-	opcode = bnx2x_dmae_opcode(bp, DMAE_SRC_GRC, DMAE_DST_PCI,
-				   true, DMAE_COMP_GRC);
+	opcode = (DMAE_CMD_SRC_GRC | DMAE_CMD_DST_PCI |
+		  DMAE_CMD_C_DST_GRC | DMAE_CMD_C_ENABLE |
+		  DMAE_CMD_SRC_RESET | DMAE_CMD_DST_RESET |
+#ifdef __BIG_ENDIAN
+		  DMAE_CMD_ENDIANITY_B_DW_SWAP |
+#else
+		  DMAE_CMD_ENDIANITY_DW_SWAP |
+#endif
+		  (port ? DMAE_CMD_PORT_1 : DMAE_CMD_PORT_0) |
+		  (vn << DMAE_CMD_E1HVN_SHIFT));
 
 	if (bp->link_vars.mac_type == MAC_TYPE_BMAC) {
 
@@ -347,21 +379,13 @@ static void bnx2x_port_stats_init(struct bnx2x *bp)
 		   BIGMAC_REGISTER_TX_STAT_GTBYT */
 		dmae = bnx2x_sp(bp, dmae[bp->executer_idx++]);
 		dmae->opcode = opcode;
-		if (CHIP_IS_E1x(bp)) {
-			dmae->src_addr_lo = (mac_addr +
+		dmae->src_addr_lo = (mac_addr +
 				     BIGMAC_REGISTER_TX_STAT_GTPKT) >> 2;
-			dmae->len = (8 + BIGMAC_REGISTER_TX_STAT_GTBYT -
-				     BIGMAC_REGISTER_TX_STAT_GTPKT) >> 2;
-		} else {
-			dmae->src_addr_lo = (mac_addr +
-				     BIGMAC2_REGISTER_TX_STAT_GTPOK) >> 2;
-			dmae->len = (8 + BIGMAC2_REGISTER_TX_STAT_GTBYT -
-				     BIGMAC2_REGISTER_TX_STAT_GTPOK) >> 2;
-		}
-
 		dmae->src_addr_hi = 0;
 		dmae->dst_addr_lo = U64_LO(bnx2x_sp_mapping(bp, mac_stats));
 		dmae->dst_addr_hi = U64_HI(bnx2x_sp_mapping(bp, mac_stats));
+		dmae->len = (8 + BIGMAC_REGISTER_TX_STAT_GTBYT -
+			     BIGMAC_REGISTER_TX_STAT_GTPKT) >> 2;
 		dmae->comp_addr_lo = dmae_reg_go_c[loader_idx] >> 2;
 		dmae->comp_addr_hi = 0;
 		dmae->comp_val = 1;
@@ -370,31 +394,15 @@ static void bnx2x_port_stats_init(struct bnx2x *bp)
 		   BIGMAC_REGISTER_RX_STAT_GRIPJ */
 		dmae = bnx2x_sp(bp, dmae[bp->executer_idx++]);
 		dmae->opcode = opcode;
-		dmae->src_addr_hi = 0;
-		if (CHIP_IS_E1x(bp)) {
-			dmae->src_addr_lo = (mac_addr +
-					     BIGMAC_REGISTER_RX_STAT_GR64) >> 2;
-			dmae->dst_addr_lo =
-				U64_LO(bnx2x_sp_mapping(bp, mac_stats) +
-				offsetof(struct bmac1_stats, rx_stat_gr64_lo));
-			dmae->dst_addr_hi =
-				U64_HI(bnx2x_sp_mapping(bp, mac_stats) +
-				offsetof(struct bmac1_stats, rx_stat_gr64_lo));
-			dmae->len = (8 + BIGMAC_REGISTER_RX_STAT_GRIPJ -
+		dmae->src_addr_lo = (mac_addr +
 				     BIGMAC_REGISTER_RX_STAT_GR64) >> 2;
-		} else {
-			dmae->src_addr_lo =
-				(mac_addr + BIGMAC2_REGISTER_RX_STAT_GR64) >> 2;
-			dmae->dst_addr_lo =
-				U64_LO(bnx2x_sp_mapping(bp, mac_stats) +
-				offsetof(struct bmac2_stats, rx_stat_gr64_lo));
-			dmae->dst_addr_hi =
-				U64_HI(bnx2x_sp_mapping(bp, mac_stats) +
-				offsetof(struct bmac2_stats, rx_stat_gr64_lo));
-			dmae->len = (8 + BIGMAC2_REGISTER_RX_STAT_GRIPJ -
-				     BIGMAC2_REGISTER_RX_STAT_GR64) >> 2;
-		}
-
+		dmae->src_addr_hi = 0;
+		dmae->dst_addr_lo = U64_LO(bnx2x_sp_mapping(bp, mac_stats) +
+				offsetof(struct bmac_stats, rx_stat_gr64_lo));
+		dmae->dst_addr_hi = U64_HI(bnx2x_sp_mapping(bp, mac_stats) +
+				offsetof(struct bmac_stats, rx_stat_gr64_lo));
+		dmae->len = (8 + BIGMAC_REGISTER_RX_STAT_GRIPJ -
+			     BIGMAC_REGISTER_RX_STAT_GR64) >> 2;
 		dmae->comp_addr_lo = dmae_reg_go_c[loader_idx] >> 2;
 		dmae->comp_addr_hi = 0;
 		dmae->comp_val = 1;
@@ -475,8 +483,16 @@ static void bnx2x_port_stats_init(struct bnx2x *bp)
 	dmae->comp_val = 1;
 
 	dmae = bnx2x_sp(bp, dmae[bp->executer_idx++]);
-	dmae->opcode = bnx2x_dmae_opcode(bp, DMAE_SRC_GRC, DMAE_DST_PCI,
-					 true, DMAE_COMP_PCI);
+	dmae->opcode = (DMAE_CMD_SRC_GRC | DMAE_CMD_DST_PCI |
+			DMAE_CMD_C_DST_PCI | DMAE_CMD_C_ENABLE |
+			DMAE_CMD_SRC_RESET | DMAE_CMD_DST_RESET |
+#ifdef __BIG_ENDIAN
+			DMAE_CMD_ENDIANITY_B_DW_SWAP |
+#else
+			DMAE_CMD_ENDIANITY_DW_SWAP |
+#endif
+			(port ? DMAE_CMD_PORT_1 : DMAE_CMD_PORT_0) |
+			(vn << DMAE_CMD_E1HVN_SHIFT));
 	dmae->src_addr_lo = (port ? NIG_REG_STAT1_EGRESS_MAC_PKT1 :
 				    NIG_REG_STAT0_EGRESS_MAC_PKT1) >> 2;
 	dmae->src_addr_hi = 0;
@@ -506,8 +522,16 @@ static void bnx2x_func_stats_init(struct bnx2x *bp)
 	bp->executer_idx = 0;
 	memset(dmae, 0, sizeof(struct dmae_command));
 
-	dmae->opcode = bnx2x_dmae_opcode(bp, DMAE_SRC_PCI, DMAE_DST_GRC,
-					 true, DMAE_COMP_PCI);
+	dmae->opcode = (DMAE_CMD_SRC_PCI | DMAE_CMD_DST_GRC |
+			DMAE_CMD_C_DST_PCI | DMAE_CMD_C_ENABLE |
+			DMAE_CMD_SRC_RESET | DMAE_CMD_DST_RESET |
+#ifdef __BIG_ENDIAN
+			DMAE_CMD_ENDIANITY_B_DW_SWAP |
+#else
+			DMAE_CMD_ENDIANITY_DW_SWAP |
+#endif
+			(BP_PORT(bp) ? DMAE_CMD_PORT_1 : DMAE_CMD_PORT_0) |
+			(BP_E1HVN(bp) << DMAE_CMD_E1HVN_SHIFT));
 	dmae->src_addr_lo = U64_LO(bnx2x_sp_mapping(bp, func_stats));
 	dmae->src_addr_hi = U64_HI(bnx2x_sp_mapping(bp, func_stats));
 	dmae->dst_addr_lo = bp->func_stx >> 2;
@@ -547,6 +571,7 @@ static void bnx2x_stats_restart(struct bnx2x *bp)
 
 static void bnx2x_bmac_stats_update(struct bnx2x *bp)
 {
+	struct bmac_stats *new = bnx2x_sp(bp, mac_stats.bmac_stats);
 	struct host_port_stats *pstats = bnx2x_sp(bp, port_stats);
 	struct bnx2x_eth_stats *estats = &bp->eth_stats;
 	struct {
@@ -554,74 +579,35 @@ static void bnx2x_bmac_stats_update(struct bnx2x *bp)
 		u32 hi;
 	} diff;
 
-	if (CHIP_IS_E1x(bp)) {
-		struct bmac1_stats *new = bnx2x_sp(bp, mac_stats.bmac1_stats);
-
-		/* the macros below will use "bmac1_stats" type */
-		UPDATE_STAT64(rx_stat_grerb, rx_stat_ifhcinbadoctets);
-		UPDATE_STAT64(rx_stat_grfcs, rx_stat_dot3statsfcserrors);
-		UPDATE_STAT64(rx_stat_grund, rx_stat_etherstatsundersizepkts);
-		UPDATE_STAT64(rx_stat_grovr, rx_stat_dot3statsframestoolong);
-		UPDATE_STAT64(rx_stat_grfrg, rx_stat_etherstatsfragments);
-		UPDATE_STAT64(rx_stat_grjbr, rx_stat_etherstatsjabbers);
-		UPDATE_STAT64(rx_stat_grxcf, rx_stat_maccontrolframesreceived);
-		UPDATE_STAT64(rx_stat_grxpf, rx_stat_xoffstateentered);
-		UPDATE_STAT64(rx_stat_grxpf, rx_stat_bmac_xpf);
-		UPDATE_STAT64(tx_stat_gtxpf, tx_stat_outxoffsent);
-		UPDATE_STAT64(tx_stat_gtxpf, tx_stat_flowcontroldone);
-		UPDATE_STAT64(tx_stat_gt64, tx_stat_etherstatspkts64octets);
-		UPDATE_STAT64(tx_stat_gt127,
+	UPDATE_STAT64(rx_stat_grerb, rx_stat_ifhcinbadoctets);
+	UPDATE_STAT64(rx_stat_grfcs, rx_stat_dot3statsfcserrors);
+	UPDATE_STAT64(rx_stat_grund, rx_stat_etherstatsundersizepkts);
+	UPDATE_STAT64(rx_stat_grovr, rx_stat_dot3statsframestoolong);
+	UPDATE_STAT64(rx_stat_grfrg, rx_stat_etherstatsfragments);
+	UPDATE_STAT64(rx_stat_grjbr, rx_stat_etherstatsjabbers);
+	UPDATE_STAT64(rx_stat_grxcf, rx_stat_maccontrolframesreceived);
+	UPDATE_STAT64(rx_stat_grxpf, rx_stat_xoffstateentered);
+	UPDATE_STAT64(rx_stat_grxpf, rx_stat_bmac_xpf);
+	UPDATE_STAT64(tx_stat_gtxpf, tx_stat_outxoffsent);
+	UPDATE_STAT64(tx_stat_gtxpf, tx_stat_flowcontroldone);
+	UPDATE_STAT64(tx_stat_gt64, tx_stat_etherstatspkts64octets);
+	UPDATE_STAT64(tx_stat_gt127,
 				tx_stat_etherstatspkts65octetsto127octets);
-		UPDATE_STAT64(tx_stat_gt255,
+	UPDATE_STAT64(tx_stat_gt255,
 				tx_stat_etherstatspkts128octetsto255octets);
-		UPDATE_STAT64(tx_stat_gt511,
+	UPDATE_STAT64(tx_stat_gt511,
 				tx_stat_etherstatspkts256octetsto511octets);
-		UPDATE_STAT64(tx_stat_gt1023,
+	UPDATE_STAT64(tx_stat_gt1023,
 				tx_stat_etherstatspkts512octetsto1023octets);
-		UPDATE_STAT64(tx_stat_gt1518,
+	UPDATE_STAT64(tx_stat_gt1518,
 				tx_stat_etherstatspkts1024octetsto1522octets);
-		UPDATE_STAT64(tx_stat_gt2047, tx_stat_bmac_2047);
-		UPDATE_STAT64(tx_stat_gt4095, tx_stat_bmac_4095);
-		UPDATE_STAT64(tx_stat_gt9216, tx_stat_bmac_9216);
-		UPDATE_STAT64(tx_stat_gt16383, tx_stat_bmac_16383);
-		UPDATE_STAT64(tx_stat_gterr,
+	UPDATE_STAT64(tx_stat_gt2047, tx_stat_bmac_2047);
+	UPDATE_STAT64(tx_stat_gt4095, tx_stat_bmac_4095);
+	UPDATE_STAT64(tx_stat_gt9216, tx_stat_bmac_9216);
+	UPDATE_STAT64(tx_stat_gt16383, tx_stat_bmac_16383);
+	UPDATE_STAT64(tx_stat_gterr,
 				tx_stat_dot3statsinternalmactransmiterrors);
-		UPDATE_STAT64(tx_stat_gtufl, tx_stat_bmac_ufl);
-
-	} else {
-		struct bmac2_stats *new = bnx2x_sp(bp, mac_stats.bmac2_stats);
-
-		/* the macros below will use "bmac2_stats" type */
-		UPDATE_STAT64(rx_stat_grerb, rx_stat_ifhcinbadoctets);
-		UPDATE_STAT64(rx_stat_grfcs, rx_stat_dot3statsfcserrors);
-		UPDATE_STAT64(rx_stat_grund, rx_stat_etherstatsundersizepkts);
-		UPDATE_STAT64(rx_stat_grovr, rx_stat_dot3statsframestoolong);
-		UPDATE_STAT64(rx_stat_grfrg, rx_stat_etherstatsfragments);
-		UPDATE_STAT64(rx_stat_grjbr, rx_stat_etherstatsjabbers);
-		UPDATE_STAT64(rx_stat_grxcf, rx_stat_maccontrolframesreceived);
-		UPDATE_STAT64(rx_stat_grxpf, rx_stat_xoffstateentered);
-		UPDATE_STAT64(rx_stat_grxpf, rx_stat_bmac_xpf);
-		UPDATE_STAT64(tx_stat_gtxpf, tx_stat_outxoffsent);
-		UPDATE_STAT64(tx_stat_gtxpf, tx_stat_flowcontroldone);
-		UPDATE_STAT64(tx_stat_gt64, tx_stat_etherstatspkts64octets);
-		UPDATE_STAT64(tx_stat_gt127,
-				tx_stat_etherstatspkts65octetsto127octets);
-		UPDATE_STAT64(tx_stat_gt255,
-				tx_stat_etherstatspkts128octetsto255octets);
-		UPDATE_STAT64(tx_stat_gt511,
-				tx_stat_etherstatspkts256octetsto511octets);
-		UPDATE_STAT64(tx_stat_gt1023,
-				tx_stat_etherstatspkts512octetsto1023octets);
-		UPDATE_STAT64(tx_stat_gt1518,
-				tx_stat_etherstatspkts1024octetsto1522octets);
-		UPDATE_STAT64(tx_stat_gt2047, tx_stat_bmac_2047);
-		UPDATE_STAT64(tx_stat_gt4095, tx_stat_bmac_4095);
-		UPDATE_STAT64(tx_stat_gt9216, tx_stat_bmac_9216);
-		UPDATE_STAT64(tx_stat_gt16383, tx_stat_bmac_16383);
-		UPDATE_STAT64(tx_stat_gterr,
-				tx_stat_dot3statsinternalmactransmiterrors);
-		UPDATE_STAT64(tx_stat_gtufl, tx_stat_bmac_ufl);
-	}
+	UPDATE_STAT64(tx_stat_gtufl, tx_stat_bmac_ufl);
 
 	estats->pause_frames_received_hi =
 				pstats->mac_stx[1].rx_stat_bmac_xpf_hi;
@@ -771,7 +757,7 @@ static int bnx2x_storm_stats_update(struct bnx2x *bp)
 	estats->no_buff_discard_hi = 0;
 	estats->no_buff_discard_lo = 0;
 
-	for_each_eth_queue(bp, i) {
+	for_each_queue(bp, i) {
 		struct bnx2x_fastpath *fp = &bp->fp[i];
 		int cl_id = fp->cl_id;
 		struct tstorm_per_client_stats *tclient =
@@ -983,7 +969,6 @@ static void bnx2x_net_stats_update(struct bnx2x *bp)
 {
 	struct bnx2x_eth_stats *estats = &bp->eth_stats;
 	struct net_device_stats *nstats = &bp->dev->stats;
-	unsigned long tmp;
 	int i;
 
 	nstats->rx_packets =
@@ -1000,10 +985,10 @@ static void bnx2x_net_stats_update(struct bnx2x *bp)
 
 	nstats->tx_bytes = bnx2x_hilo(&estats->total_bytes_transmitted_hi);
 
-	tmp = estats->mac_discard;
-	for_each_rx_queue(bp, i)
-		tmp += le32_to_cpu(bp->fp[i].old_tclient.checksum_discard);
-	nstats->rx_dropped = tmp;
+	nstats->rx_dropped = estats->mac_discard;
+	for_each_queue(bp, i)
+		nstats->rx_dropped +=
+			le32_to_cpu(bp->fp[i].old_tclient.checksum_discard);
 
 	nstats->tx_dropped = 0;
 
@@ -1092,7 +1077,7 @@ static void bnx2x_stats_update(struct bnx2x *bp)
 		       bp->dev->name,
 		       estats->brb_drop_lo, estats->brb_truncate_lo);
 
-		for_each_eth_queue(bp, i) {
+		for_each_queue(bp, i) {
 			struct bnx2x_fastpath *fp = &bp->fp[i];
 			struct bnx2x_eth_q_stats *qstats = &fp->eth_q_stats;
 
@@ -1106,7 +1091,7 @@ static void bnx2x_stats_update(struct bnx2x *bp)
 			       fp->rx_calls, fp->rx_pkt);
 		}
 
-		for_each_eth_queue(bp, i) {
+		for_each_queue(bp, i) {
 			struct bnx2x_fastpath *fp = &bp->fp[i];
 			struct bnx2x_eth_q_stats *qstats = &fp->eth_q_stats;
 			struct netdev_queue *txq =
@@ -1138,17 +1123,24 @@ static void bnx2x_port_stats_stop(struct bnx2x *bp)
 
 	bp->executer_idx = 0;
 
-	opcode = bnx2x_dmae_opcode(bp, DMAE_SRC_PCI, DMAE_DST_GRC, false, 0);
+	opcode = (DMAE_CMD_SRC_PCI | DMAE_CMD_DST_GRC |
+		  DMAE_CMD_C_ENABLE |
+		  DMAE_CMD_SRC_RESET | DMAE_CMD_DST_RESET |
+#ifdef __BIG_ENDIAN
+		  DMAE_CMD_ENDIANITY_B_DW_SWAP |
+#else
+		  DMAE_CMD_ENDIANITY_DW_SWAP |
+#endif
+		  (BP_PORT(bp) ? DMAE_CMD_PORT_1 : DMAE_CMD_PORT_0) |
+		  (BP_E1HVN(bp) << DMAE_CMD_E1HVN_SHIFT));
 
 	if (bp->port.port_stx) {
 
 		dmae = bnx2x_sp(bp, dmae[bp->executer_idx++]);
 		if (bp->func_stx)
-			dmae->opcode = bnx2x_dmae_opcode_add_comp(
-						opcode, DMAE_COMP_GRC);
+			dmae->opcode = (opcode | DMAE_CMD_C_DST_GRC);
 		else
-			dmae->opcode = bnx2x_dmae_opcode_add_comp(
-						opcode, DMAE_COMP_PCI);
+			dmae->opcode = (opcode | DMAE_CMD_C_DST_PCI);
 		dmae->src_addr_lo = U64_LO(bnx2x_sp_mapping(bp, port_stats));
 		dmae->src_addr_hi = U64_HI(bnx2x_sp_mapping(bp, port_stats));
 		dmae->dst_addr_lo = bp->port.port_stx >> 2;
@@ -1172,8 +1164,7 @@ static void bnx2x_port_stats_stop(struct bnx2x *bp)
 	if (bp->func_stx) {
 
 		dmae = bnx2x_sp(bp, dmae[bp->executer_idx++]);
-		dmae->opcode =
-			bnx2x_dmae_opcode_add_comp(opcode, DMAE_COMP_PCI);
+		dmae->opcode = (opcode | DMAE_CMD_C_DST_PCI);
 		dmae->src_addr_lo = U64_LO(bnx2x_sp_mapping(bp, func_stats));
 		dmae->src_addr_hi = U64_HI(bnx2x_sp_mapping(bp, func_stats));
 		dmae->dst_addr_lo = bp->func_stx >> 2;
@@ -1239,13 +1230,13 @@ void bnx2x_stats_handle(struct bnx2x *bp, enum bnx2x_stats_event event)
 	if (unlikely(bp->panic))
 		return;
 
-	bnx2x_stats_stm[bp->stats_state][event].action(bp);
-
 	/* Protect a state change flow */
 	spin_lock_bh(&bp->stats_lock);
 	state = bp->stats_state;
 	bp->stats_state = bnx2x_stats_stm[state][event].next_state;
 	spin_unlock_bh(&bp->stats_lock);
+
+	bnx2x_stats_stm[state][event].action(bp);
 
 	if ((event != STATS_EVENT_UPDATE) || netif_msg_timer(bp))
 		DP(BNX2X_MSG_STATS, "state %d -> event %d -> state %d\n",
@@ -1266,8 +1257,16 @@ static void bnx2x_port_stats_base_init(struct bnx2x *bp)
 	bp->executer_idx = 0;
 
 	dmae = bnx2x_sp(bp, dmae[bp->executer_idx++]);
-	dmae->opcode = bnx2x_dmae_opcode(bp, DMAE_SRC_PCI, DMAE_DST_GRC,
-					 true, DMAE_COMP_PCI);
+	dmae->opcode = (DMAE_CMD_SRC_PCI | DMAE_CMD_DST_GRC |
+			DMAE_CMD_C_DST_PCI | DMAE_CMD_C_ENABLE |
+			DMAE_CMD_SRC_RESET | DMAE_CMD_DST_RESET |
+#ifdef __BIG_ENDIAN
+			DMAE_CMD_ENDIANITY_B_DW_SWAP |
+#else
+			DMAE_CMD_ENDIANITY_DW_SWAP |
+#endif
+			(BP_PORT(bp) ? DMAE_CMD_PORT_1 : DMAE_CMD_PORT_0) |
+			(BP_E1HVN(bp) << DMAE_CMD_E1HVN_SHIFT));
 	dmae->src_addr_lo = U64_LO(bnx2x_sp_mapping(bp, port_stats));
 	dmae->src_addr_hi = U64_HI(bnx2x_sp_mapping(bp, port_stats));
 	dmae->dst_addr_lo = bp->port.port_stx >> 2;
@@ -1284,7 +1283,9 @@ static void bnx2x_port_stats_base_init(struct bnx2x *bp)
 
 static void bnx2x_func_stats_base_init(struct bnx2x *bp)
 {
-	int vn, vn_max = IS_MF(bp) ? E1HVN_MAX : E1VN_MAX;
+	int vn, vn_max = IS_E1HMF(bp) ? E1HVN_MAX : E1VN_MAX;
+	int port = BP_PORT(bp);
+	int func;
 	u32 func_stx;
 
 	/* sanity */
@@ -1297,9 +1298,9 @@ static void bnx2x_func_stats_base_init(struct bnx2x *bp)
 	func_stx = bp->func_stx;
 
 	for (vn = VN_0; vn < vn_max; vn++) {
-		int mb_idx = !CHIP_IS_E2(bp) ? 2*vn + BP_PORT(bp) : vn;
+		func = 2*vn + port;
 
-		bp->func_stx = SHMEM_RD(bp, func_mb[mb_idx].fw_mb_param);
+		bp->func_stx = SHMEM_RD(bp, func_mb[func].fw_mb_param);
 		bnx2x_func_stats_init(bp);
 		bnx2x_hw_stats_post(bp);
 		bnx2x_stats_comp(bp);
@@ -1323,8 +1324,16 @@ static void bnx2x_func_stats_base_update(struct bnx2x *bp)
 	bp->executer_idx = 0;
 	memset(dmae, 0, sizeof(struct dmae_command));
 
-	dmae->opcode = bnx2x_dmae_opcode(bp, DMAE_SRC_GRC, DMAE_DST_PCI,
-					 true, DMAE_COMP_PCI);
+	dmae->opcode = (DMAE_CMD_SRC_GRC | DMAE_CMD_DST_PCI |
+			DMAE_CMD_C_DST_PCI | DMAE_CMD_C_ENABLE |
+			DMAE_CMD_SRC_RESET | DMAE_CMD_DST_RESET |
+#ifdef __BIG_ENDIAN
+			DMAE_CMD_ENDIANITY_B_DW_SWAP |
+#else
+			DMAE_CMD_ENDIANITY_DW_SWAP |
+#endif
+			(BP_PORT(bp) ? DMAE_CMD_PORT_1 : DMAE_CMD_PORT_0) |
+			(BP_E1HVN(bp) << DMAE_CMD_E1HVN_SHIFT));
 	dmae->src_addr_lo = bp->func_stx >> 2;
 	dmae->src_addr_hi = 0;
 	dmae->dst_addr_lo = U64_LO(bnx2x_sp_mapping(bp, func_stats_base));
@@ -1342,9 +1351,8 @@ static void bnx2x_func_stats_base_update(struct bnx2x *bp)
 void bnx2x_stats_init(struct bnx2x *bp)
 {
 	int port = BP_PORT(bp);
-	int mb_idx = BP_FW_MB_IDX(bp);
+	int func = BP_FUNC(bp);
 	int i;
-	struct eth_stats_query *stats = bnx2x_sp(bp, fw_stats);
 
 	bp->stats_pending = 0;
 	bp->executer_idx = 0;
@@ -1353,7 +1361,7 @@ void bnx2x_stats_init(struct bnx2x *bp)
 	/* port and func stats for management */
 	if (!BP_NOMCP(bp)) {
 		bp->port.port_stx = SHMEM_RD(bp, port_mb[port].port_stx);
-		bp->func_stx = SHMEM_RD(bp, func_mb[mb_idx].fw_mb_param);
+		bp->func_stx = SHMEM_RD(bp, func_mb[func].fw_mb_param);
 
 	} else {
 		bp->port.port_stx = 0;
@@ -1384,19 +1392,6 @@ void bnx2x_stats_init(struct bnx2x *bp)
 		memset(&fp->old_xclient, 0,
 		       sizeof(struct xstorm_per_client_stats));
 		memset(&fp->eth_q_stats, 0, sizeof(struct bnx2x_eth_q_stats));
-	}
-
-	/* FW stats are currently collected for ETH clients only */
-	for_each_eth_queue(bp, i) {
-		/* Set initial stats counter in the stats ramrod data to -1 */
-		int cl_id = bp->fp[i].cl_id;
-
-		stats->xstorm_common.client_statistics[cl_id].
-			stats_counter = 0xffff;
-		stats->ustorm_common.client_statistics[cl_id].
-			stats_counter = 0xffff;
-		stats->tstorm_common.client_statistics[cl_id].
-			stats_counter = 0xffff;
 	}
 
 	memset(&bp->dev->stats, 0, sizeof(struct net_device_stats));

@@ -92,6 +92,12 @@ drm_gem_init(struct drm_device *dev)
 
 	spin_lock_init(&dev->object_name_lock);
 	idr_init(&dev->object_name_idr);
+	atomic_set(&dev->object_count, 0);
+	atomic_set(&dev->object_memory, 0);
+	atomic_set(&dev->pin_count, 0);
+	atomic_set(&dev->pin_memory, 0);
+	atomic_set(&dev->gtt_count, 0);
+	atomic_set(&dev->gtt_memory, 0);
 
 	mm = kzalloc(sizeof(struct drm_gem_mm), GFP_KERNEL);
 	if (!mm) {
@@ -101,7 +107,7 @@ drm_gem_init(struct drm_device *dev)
 
 	dev->mm_private = mm;
 
-	if (drm_ht_create(&mm->offset_hash, 12)) {
+	if (drm_ht_create(&mm->offset_hash, 19)) {
 		kfree(mm);
 		return -ENOMEM;
 	}
@@ -145,6 +151,9 @@ int drm_gem_object_init(struct drm_device *dev,
 	atomic_set(&obj->handle_count, 0);
 	obj->size = size;
 
+	atomic_inc(&dev->object_count);
+	atomic_add(obj->size, &dev->object_memory);
+
 	return 0;
 }
 EXPORT_SYMBOL(drm_gem_object_init);
@@ -171,6 +180,8 @@ drm_gem_object_alloc(struct drm_device *dev, size_t size)
 	return obj;
 fput:
 	/* Object_init mangles the global counters - readjust them. */
+	atomic_dec(&dev->object_count);
+	atomic_sub(obj->size, &dev->object_memory);
 	fput(obj->filp);
 free:
 	kfree(obj);
@@ -181,7 +192,7 @@ EXPORT_SYMBOL(drm_gem_object_alloc);
 /**
  * Removes the mapping from handle to filp for this object.
  */
-int
+static int
 drm_gem_handle_delete(struct drm_file *filp, u32 handle)
 {
 	struct drm_device *dev;
@@ -214,7 +225,6 @@ drm_gem_handle_delete(struct drm_file *filp, u32 handle)
 
 	return 0;
 }
-EXPORT_SYMBOL(drm_gem_handle_delete);
 
 /**
  * Create a handle for this object. This adds a handle reference
@@ -426,7 +436,10 @@ drm_gem_release(struct drm_device *dev, struct drm_file *file_private)
 void
 drm_gem_object_release(struct drm_gem_object *obj)
 {
+	struct drm_device *dev = obj->dev;
 	fput(obj->filp);
+	atomic_dec(&dev->object_count);
+	atomic_sub(obj->size, &dev->object_memory);
 }
 EXPORT_SYMBOL(drm_gem_object_release);
 
@@ -499,12 +512,11 @@ EXPORT_SYMBOL(drm_gem_vm_open);
 void drm_gem_vm_close(struct vm_area_struct *vma)
 {
 	struct drm_gem_object *obj = vma->vm_private_data;
-	struct drm_device *dev = obj->dev;
 
-	mutex_lock(&dev->struct_mutex);
+	mutex_lock(&obj->dev->struct_mutex);
 	drm_vm_close_locked(vma);
 	drm_gem_object_unreference(obj);
-	mutex_unlock(&dev->struct_mutex);
+	mutex_unlock(&obj->dev->struct_mutex);
 }
 EXPORT_SYMBOL(drm_gem_vm_close);
 

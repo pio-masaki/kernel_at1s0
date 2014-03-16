@@ -45,8 +45,6 @@
 
 ======================================================================*/
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/ptrace.h>
@@ -54,10 +52,12 @@
 #include <linux/string.h>
 #include <linux/timer.h>
 #include <linux/module.h>
+#include <linux/ethtool.h>
 #include <linux/netdevice.h>
 #include <linux/trdevice.h>
 #include <linux/ibmtr.h>
 
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/ds.h>
 
@@ -102,15 +102,34 @@ static void ibmtr_detach(struct pcmcia_device *p_dev);
 
 typedef struct ibmtr_dev_t {
 	struct pcmcia_device	*p_dev;
-	struct net_device	*dev;
-	struct tok_info		*ti;
+    struct net_device	*dev;
+    window_handle_t     sram_win_handle;
+    struct tok_info	*ti;
 } ibmtr_dev_t;
+
+static void netdev_get_drvinfo(struct net_device *dev,
+			       struct ethtool_drvinfo *info)
+{
+	strcpy(info->driver, "ibmtr_cs");
+}
+
+static const struct ethtool_ops netdev_ethtool_ops = {
+	.get_drvinfo		= netdev_get_drvinfo,
+};
 
 static irqreturn_t ibmtr_interrupt(int irq, void *dev_id) {
 	ibmtr_dev_t *info = dev_id;
 	struct net_device *dev = info->dev;
 	return tok_interrupt(irq, dev);
 };
+
+/*======================================================================
+
+    ibmtr_attach() creates an "instance" of the driver, allocating
+    local data structures for one device.  The device is registered
+    with Card Services.
+
+======================================================================*/
 
 static int __devinit ibmtr_attach(struct pcmcia_device *link)
 {
@@ -134,13 +153,25 @@ static int __devinit ibmtr_attach(struct pcmcia_device *link)
 
     link->resource[0]->flags |= IO_DATA_PATH_WIDTH_8;
     link->resource[0]->end = 4;
-    link->config_flags |= CONF_ENABLE_IRQ;
-    link->config_regs = PRESENT_OPTION;
+    link->conf.Attributes = CONF_ENABLE_IRQ;
+    link->conf.IntType = INT_MEMORY_AND_IO;
+    link->conf.Present = PRESENT_OPTION;
 
     info->dev = dev;
 
+    SET_ETHTOOL_OPS(dev, &netdev_ethtool_ops);
+
     return ibmtr_config(link);
 } /* ibmtr_attach */
+
+/*======================================================================
+
+    This deletes a driver "instance".  The device is de-registered
+    with Card Services.  If it has been released, all local data
+    structures are freed.  Otherwise, the structures will be freed
+    when the device is released.
+
+======================================================================*/
 
 static void ibmtr_detach(struct pcmcia_device *link)
 {
@@ -166,17 +197,26 @@ static void ibmtr_detach(struct pcmcia_device *link)
     kfree(info);
 } /* ibmtr_detach */
 
+/*======================================================================
+
+    ibmtr_config() is scheduled to run after a CARD_INSERTION event
+    is received, to configure the PCMCIA socket, and to make the
+    token-ring device available to the system.
+
+======================================================================*/
+
 static int __devinit ibmtr_config(struct pcmcia_device *link)
 {
     ibmtr_dev_t *info = link->priv;
     struct net_device *dev = info->dev;
     struct tok_info *ti = netdev_priv(dev);
+    win_req_t req;
     int i, ret;
 
     dev_dbg(&link->dev, "ibmtr_config\n");
 
+    link->conf.ConfigIndex = 0x61;
     link->io_lines = 16;
-    link->config_index = 0x61;
 
     /* Determine if this is PRIMARY or ALTERNATE. */
 
@@ -200,39 +240,39 @@ static int __devinit ibmtr_config(struct pcmcia_device *link)
     ti->global_int_enable=GLOBAL_INT_ENABLE+((dev->irq==9) ? 2 : dev->irq);
 
     /* Allocate the MMIO memory window */
-    link->resource[2]->flags |= WIN_DATA_WIDTH_16|WIN_MEMORY_TYPE_CM|WIN_ENABLE;
-    link->resource[2]->flags |= WIN_USE_WAIT;
-    link->resource[2]->start = 0;
-    link->resource[2]->end = 0x2000;
-    ret = pcmcia_request_window(link, link->resource[2], 250);
+    req.Attributes = WIN_DATA_WIDTH_16|WIN_MEMORY_TYPE_CM|WIN_ENABLE;
+    req.Attributes |= WIN_USE_WAIT;
+    req.Base = 0; 
+    req.Size = 0x2000;
+    req.AccessSpeed = 250;
+    ret = pcmcia_request_window(link, &req, &link->win);
     if (ret)
 	    goto failed;
 
-    ret = pcmcia_map_mem_page(link, link->resource[2], mmiobase);
+    ret = pcmcia_map_mem_page(link, link->win, mmiobase);
     if (ret)
 	    goto failed;
-    ti->mmio = ioremap(link->resource[2]->start,
-		    resource_size(link->resource[2]));
+    ti->mmio = ioremap(req.Base, req.Size);
 
     /* Allocate the SRAM memory window */
-    link->resource[3]->flags = WIN_DATA_WIDTH_16|WIN_MEMORY_TYPE_CM|WIN_ENABLE;
-    link->resource[3]->flags |= WIN_USE_WAIT;
-    link->resource[3]->start = 0;
-    link->resource[3]->end = sramsize * 1024;
-    ret = pcmcia_request_window(link, link->resource[3], 250);
+    req.Attributes = WIN_DATA_WIDTH_16|WIN_MEMORY_TYPE_CM|WIN_ENABLE;
+    req.Attributes |= WIN_USE_WAIT;
+    req.Base = 0;
+    req.Size = sramsize * 1024;
+    req.AccessSpeed = 250;
+    ret = pcmcia_request_window(link, &req, &info->sram_win_handle);
     if (ret)
 	    goto failed;
 
-    ret = pcmcia_map_mem_page(link, link->resource[3], srambase);
+    ret = pcmcia_map_mem_page(link, info->sram_win_handle, srambase);
     if (ret)
 	    goto failed;
 
     ti->sram_base = srambase >> 12;
-    ti->sram_virt = ioremap(link->resource[3]->start,
-		    resource_size(link->resource[3]));
-    ti->sram_phys = link->resource[3]->start;
+    ti->sram_virt = ioremap(req.Base, req.Size);
+    ti->sram_phys = req.Base;
 
-    ret = pcmcia_enable_device(link);
+    ret = pcmcia_request_configuration(link, &link->conf);
     if (ret)
 	    goto failed;
 
@@ -245,20 +285,29 @@ static int __devinit ibmtr_config(struct pcmcia_device *link)
 
     i = ibmtr_probe_card(dev);
     if (i != 0) {
-	pr_notice("register_netdev() failed\n");
+	printk(KERN_NOTICE "ibmtr_cs: register_netdev() failed\n");
 	goto failed;
     }
 
-    netdev_info(dev, "port %#3lx, irq %d, mmio %#5lx, sram %#5lx, hwaddr=%pM\n",
-		dev->base_addr, dev->irq,
-		(u_long)ti->mmio, (u_long)(ti->sram_base << 12),
-		dev->dev_addr);
+    printk(KERN_INFO
+	   "%s: port %#3lx, irq %d,  mmio %#5lx, sram %#5lx, hwaddr=%pM\n",
+           dev->name, dev->base_addr, dev->irq,
+	   (u_long)ti->mmio, (u_long)(ti->sram_base << 12),
+	   dev->dev_addr);
     return 0;
 
 failed:
     ibmtr_release(link);
     return -ENODEV;
 } /* ibmtr_config */
+
+/*======================================================================
+
+    After a card is removed, ibmtr_release() will unregister the net
+    device, and release the PCMCIA configuration.  If the device is
+    still open, this will be postponed until it is closed.
+
+======================================================================*/
 
 static void ibmtr_release(struct pcmcia_device *link)
 {
@@ -267,7 +316,7 @@ static void ibmtr_release(struct pcmcia_device *link)
 
 	dev_dbg(&link->dev, "ibmtr_release\n");
 
-	if (link->resource[2]->end) {
+	if (link->win) {
 		struct tok_info *ti = netdev_priv(dev);
 		iounmap(ti->mmio);
 	}
@@ -349,7 +398,9 @@ MODULE_DEVICE_TABLE(pcmcia, ibmtr_ids);
 
 static struct pcmcia_driver ibmtr_cs_driver = {
 	.owner		= THIS_MODULE,
-	.name		= "ibmtr_cs",
+	.drv		= {
+		.name	= "ibmtr_cs",
+	},
 	.probe		= ibmtr_attach,
 	.remove		= ibmtr_detach,
 	.id_table       = ibmtr_ids,

@@ -25,12 +25,6 @@ void early_printk(const char *fmt, ...);
 int setup_early_printk(char *opt);
 void disable_early_printk(void);
 
-#if defined(CONFIG_EARLY_PRINTK)
-#define eprintk early_printk
-#else
-#define eprintk printk
-#endif
-
 void heartbeat(void);
 void setup_heartbeat(void);
 

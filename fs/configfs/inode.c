@@ -135,7 +135,6 @@ struct inode * configfs_new_inode(mode_t mode, struct configfs_dirent * sd)
 {
 	struct inode * inode = new_inode(configfs_sb);
 	if (inode) {
-		inode->i_ino = get_next_ino();
 		inode->i_mapping->a_ops = &configfs_aops;
 		inode->i_mapping->backing_dev_info = &configfs_backing_dev_info;
 		inode->i_op = &configfs_inode_operations;
@@ -250,14 +249,18 @@ void configfs_drop_dentry(struct configfs_dirent * sd, struct dentry * parent)
 	struct dentry * dentry = sd->s_dentry;
 
 	if (dentry) {
+		spin_lock(&dcache_lock);
 		spin_lock(&dentry->d_lock);
 		if (!(d_unhashed(dentry) && dentry->d_inode)) {
-			dget_dlock(dentry);
+			dget_locked(dentry);
 			__d_drop(dentry);
 			spin_unlock(&dentry->d_lock);
+			spin_unlock(&dcache_lock);
 			simple_unlink(parent->d_inode, dentry);
-		} else
+		} else {
 			spin_unlock(&dentry->d_lock);
+			spin_unlock(&dcache_lock);
+		}
 	}
 }
 

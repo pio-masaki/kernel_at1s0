@@ -23,6 +23,7 @@
 
 /* include the world */
 
+#include <pcmcia/cs.h>
 #include <pcmcia/ss.h>
 #include <pcmcia/cistpl.h>
 #include "cs_internal.h"

@@ -321,8 +321,7 @@ static int tps65023_dcdc_get_voltage(struct regulator_dev *dev)
 }
 
 static int tps65023_dcdc_set_voltage(struct regulator_dev *dev,
-				     int min_uV, int max_uV,
-				     unsigned *selector)
+				int min_uV, int max_uV)
 {
 	struct tps_pmic *tps = rdev_get_drvdata(dev);
 	int dcdc = rdev_get_id(dev);
@@ -346,8 +345,6 @@ static int tps65023_dcdc_set_voltage(struct regulator_dev *dev,
 		if (min_uV <= uV && uV <= max_uV)
 			break;
 	}
-
-	*selector = vsel;
 
 	/* write to the register in case we found a match */
 	if (vsel == tps->info[dcdc]->table_len)
@@ -374,7 +371,7 @@ static int tps65023_ldo_get_voltage(struct regulator_dev *dev)
 }
 
 static int tps65023_ldo_set_voltage(struct regulator_dev *dev,
-				    int min_uV, int max_uV, unsigned *selector)
+				int min_uV, int max_uV)
 {
 	struct tps_pmic *tps = rdev_get_drvdata(dev);
 	int data, vsel, ldo = rdev_get_id(dev);
@@ -398,8 +395,6 @@ static int tps65023_ldo_set_voltage(struct regulator_dev *dev,
 
 	if (vsel == tps->info[ldo]->table_len)
 		return -EINVAL;
-
-	*selector = vsel;
 
 	data = tps_65023_reg_read(tps, TPS65023_REG_LDO_CTRL);
 	if (data < 0)

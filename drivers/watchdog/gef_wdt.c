@@ -30,7 +30,6 @@
 #include <linux/module.h>
 #include <linux/miscdevice.h>
 #include <linux/watchdog.h>
-#include <linux/fs.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/io.h>
@@ -261,7 +260,8 @@ static struct miscdevice gef_wdt_miscdev = {
 };
 
 
-static int __devinit gef_wdt_probe(struct platform_device *dev)
+static int __devinit gef_wdt_probe(struct platform_device *dev,
+	const struct of_device_id *match)
 {
 	int timeout = 10;
 	u32 freq;
@@ -302,7 +302,7 @@ static const struct of_device_id gef_wdt_ids[] = {
 	{},
 };
 
-static struct platform_driver gef_wdt_driver = {
+static struct of_platform_driver gef_wdt_driver = {
 	.driver = {
 		.name = "gef_wdt",
 		.owner = THIS_MODULE,
@@ -314,12 +314,12 @@ static struct platform_driver gef_wdt_driver = {
 static int __init gef_wdt_init(void)
 {
 	printk(KERN_INFO "GE watchdog driver\n");
-	return platform_driver_register(&gef_wdt_driver);
+	return of_register_platform_driver(&gef_wdt_driver);
 }
 
 static void __exit gef_wdt_exit(void)
 {
-	platform_driver_unregister(&gef_wdt_driver);
+	of_unregister_platform_driver(&gef_wdt_driver);
 }
 
 module_init(gef_wdt_init);

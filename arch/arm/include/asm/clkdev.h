@@ -12,13 +12,23 @@
 #ifndef __ASM_CLKDEV_H
 #define __ASM_CLKDEV_H
 
-#include <linux/slab.h>
+struct clk;
+struct device;
 
-#include <mach/clkdev.h>
+struct clk_lookup {
+	struct list_head	node;
+	const char		*dev_id;
+	const char		*con_id;
+	struct clk		*clk;
+};
 
-static inline struct clk_lookup_alloc *__clkdev_alloc(size_t size)
-{
-	return kzalloc(size, GFP_KERNEL);
-}
+struct clk_lookup *clkdev_alloc(struct clk *clk, const char *con_id,
+	const char *dev_fmt, ...);
+
+void clkdev_add(struct clk_lookup *cl);
+void clkdev_drop(struct clk_lookup *cl);
+
+void clkdev_add_table(struct clk_lookup *, size_t);
+int clk_add_alias(const char *, const char *, char *, struct device *);
 
 #endif

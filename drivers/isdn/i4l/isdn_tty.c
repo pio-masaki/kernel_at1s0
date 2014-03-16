@@ -14,7 +14,7 @@
 #include <linux/isdn.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include "isdn_common.h"
 #include "isdn_tty.h"
 #ifdef CONFIG_ISDN_AUDIO
@@ -28,7 +28,6 @@
 
 /* Prototypes */
 
-static DEFINE_MUTEX(modem_info_mutex);
 static int isdn_tty_edit_at(const char *, int, modem_info *);
 static void isdn_tty_check_esc(const u_char *, u_char, int, int *, u_long *);
 static void isdn_tty_modem_reset_regs(modem_info *, int);
@@ -792,7 +791,7 @@ isdn_tty_suspend(char *id, modem_info * info, atemu * m)
 }
 
 /* isdn_tty_resume() tries to resume a suspended call
- * setup of the lower levels before that. unfortunately here is no
+ * setup of the lower levels before that. unfortunatly here is no
  * checking for compatibility of used protocols implemented by Q931
  * It does the same things like isdn_tty_dial, the last command
  * is different, may be we can merge it.
@@ -1345,7 +1344,7 @@ isdn_tty_get_lsr_info(modem_info * info, uint __user * value)
 
 
 static int
-isdn_tty_tiocmget(struct tty_struct *tty)
+isdn_tty_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	modem_info *info = (modem_info *) tty->driver_data;
 	u_char control, status;
@@ -1355,14 +1354,14 @@ isdn_tty_tiocmget(struct tty_struct *tty)
 	if (tty->flags & (1 << TTY_IO_ERROR))
 		return -EIO;
 
-	mutex_lock(&modem_info_mutex);
+	lock_kernel();
 #ifdef ISDN_DEBUG_MODEM_IOCTL
 	printk(KERN_DEBUG "ttyI%d ioctl TIOCMGET\n", info->line);
 #endif
 
 	control = info->mcr;
 	status = info->msr;
-	mutex_unlock(&modem_info_mutex);
+	unlock_kernel();
 	return ((control & UART_MCR_RTS) ? TIOCM_RTS : 0)
 	    | ((control & UART_MCR_DTR) ? TIOCM_DTR : 0)
 	    | ((status & UART_MSR_DCD) ? TIOCM_CAR : 0)
@@ -1372,7 +1371,7 @@ isdn_tty_tiocmget(struct tty_struct *tty)
 }
 
 static int
-isdn_tty_tiocmset(struct tty_struct *tty,
+isdn_tty_tiocmset(struct tty_struct *tty, struct file *file,
 		unsigned int set, unsigned int clear)
 {
 	modem_info *info = (modem_info *) tty->driver_data;
@@ -1386,7 +1385,7 @@ isdn_tty_tiocmset(struct tty_struct *tty,
 	printk(KERN_DEBUG "ttyI%d ioctl TIOCMxxx: %x %x\n", info->line, set, clear);
 #endif
 
-	mutex_lock(&modem_info_mutex);
+	lock_kernel();
 	if (set & TIOCM_RTS)
 		info->mcr |= UART_MCR_RTS;
 	if (set & TIOCM_DTR) {
@@ -1408,12 +1407,13 @@ isdn_tty_tiocmset(struct tty_struct *tty,
 			isdn_tty_modem_hup(info, 1);
 		}
 	}
-	mutex_unlock(&modem_info_mutex);
+	unlock_kernel();
 	return 0;
 }
 
 static int
-isdn_tty_ioctl(struct tty_struct *tty, uint cmd, ulong arg)
+isdn_tty_ioctl(struct tty_struct *tty, struct file *file,
+	       uint cmd, ulong arg)
 {
 	modem_info *info = (modem_info *) tty->driver_data;
 	int retval;
@@ -3515,7 +3515,7 @@ isdn_tty_parse_at(modem_info * info)
 {
 	atemu *m = &info->emu;
 	char *p;
-	char ds[ISDN_MSNLEN];
+	char ds[40];
 
 #ifdef ISDN_DEBUG_AT
 	printk(KERN_DEBUG "AT: '%s'\n", m->mdmcmd);
@@ -3594,7 +3594,7 @@ isdn_tty_parse_at(modem_info * info)
 						break;
 					case '3':
                                                 p++;
-                                                snprintf(ds, sizeof(ds), "\r\n%d", info->emu.charge);
+                                                sprintf(ds, "\r\n%d", info->emu.charge);
                                                 isdn_tty_at_cout(ds, info);
                                                 break;
 					default:;

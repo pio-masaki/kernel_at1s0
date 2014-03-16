@@ -551,18 +551,16 @@ void __init omap_vram_reserve_sdram_memblock(void)
 	if (!size)
 		return;
 
-	size = ALIGN(size, SZ_2M);
+	size = PAGE_ALIGN(size);
 
 	if (paddr) {
-		if (paddr & ~PAGE_MASK) {
-			pr_err("VRAM start address 0x%08x not page aligned\n",
-					paddr);
-			return;
-		}
+		struct memblock_property res;
 
-		if (!memblock_is_region_memory(paddr, size)) {
-			pr_err("Illegal SDRAM region 0x%08x..0x%08x for VRAM\n",
-					paddr, paddr + size - 1);
+		res.base = paddr;
+		res.size = size;
+		if ((paddr & ~PAGE_MASK) || memblock_find(&res) ||
+		    res.base != paddr || res.size != size) {
+			pr_err("Illegal SDRAM region for VRAM\n");
 			return;
 		}
 
@@ -576,11 +574,8 @@ void __init omap_vram_reserve_sdram_memblock(void)
 			return;
 		}
 	} else {
-		paddr = memblock_alloc(size, SZ_2M);
+		paddr = memblock_alloc_base(size, PAGE_SIZE, MEMBLOCK_REAL_LIMIT);
 	}
-
-	memblock_free(paddr, size);
-	memblock_remove(paddr, size);
 
 	omap_vram_add_region(paddr, size);
 

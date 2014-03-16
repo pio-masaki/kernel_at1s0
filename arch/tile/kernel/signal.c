@@ -16,6 +16,7 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/kernel.h>
 #include <linux/signal.h>
 #include <linux/errno.h>
@@ -40,8 +41,8 @@
 #define _BLOCKABLE (~(sigmask(SIGKILL) | sigmask(SIGSTOP)))
 
 
-SYSCALL_DEFINE3(sigaltstack, const stack_t __user *, uss,
-		stack_t __user *, uoss, struct pt_regs *, regs)
+long _sys_sigaltstack(const stack_t __user *uss,
+		      stack_t __user *uoss, struct pt_regs *regs)
 {
 	return do_sigaltstack(uss, uoss, regs->sp);
 }
@@ -52,7 +53,7 @@ SYSCALL_DEFINE3(sigaltstack, const stack_t __user *, uss,
  */
 
 int restore_sigcontext(struct pt_regs *regs,
-		       struct sigcontext __user *sc)
+		       struct sigcontext __user *sc, long *pr0)
 {
 	int err = 0;
 	int i;
@@ -70,20 +71,19 @@ int restore_sigcontext(struct pt_regs *regs,
 	for (i = 0; i < sizeof(struct pt_regs)/sizeof(long); ++i)
 		err |= __get_user(regs->regs[i], &sc->gregs[i]);
 
-	/* Ensure that the PL is always set to USER_PL. */
-	regs->ex1 = PL_ICS_EX1(USER_PL, EX1_ICS(regs->ex1));
-
 	regs->faultnum = INT_SWINT_1_SIGRETURN;
 
+	err |= __get_user(*pr0, &sc->gregs[0]);
 	return err;
 }
 
-/* The assembly shim for this function arranges to ignore the return value. */
-SYSCALL_DEFINE1(rt_sigreturn, struct pt_regs *, regs)
+/* sigreturn() returns long since it restores r0 in the interrupted code. */
+long _sys_rt_sigreturn(struct pt_regs *regs)
 {
 	struct rt_sigframe __user *frame =
 		(struct rt_sigframe __user *)(regs->sp);
 	sigset_t set;
+	long r0;
 
 	if (!access_ok(VERIFY_READ, frame, sizeof(*frame)))
 		goto badframe;
@@ -96,13 +96,13 @@ SYSCALL_DEFINE1(rt_sigreturn, struct pt_regs *, regs)
 	recalc_sigpending();
 	spin_unlock_irq(&current->sighand->siglock);
 
-	if (restore_sigcontext(regs, &frame->uc.uc_mcontext))
+	if (restore_sigcontext(regs, &frame->uc.uc_mcontext, &r0))
 		goto badframe;
 
 	if (do_sigaltstack(&frame->uc.uc_stack, NULL, regs->sp) == -EFAULT)
 		goto badframe;
 
-	return 0;
+	return r0;
 
 badframe:
 	force_sig(SIGSEGV, current);
@@ -330,7 +330,7 @@ void do_signal(struct pt_regs *regs)
 			current_thread_info()->status &= ~TS_RESTORE_SIGMASK;
 		}
 
-		goto done;
+		return;
 	}
 
 	/* Did we come from a system call? */
@@ -358,8 +358,4 @@ void do_signal(struct pt_regs *regs)
 		current_thread_info()->status &= ~TS_RESTORE_SIGMASK;
 		sigprocmask(SIG_SETMASK, &current->saved_sigmask, NULL);
 	}
-
-done:
-	/* Avoid double syscall restart if there are nested signals. */
-	regs->faultnum = INT_SWINT_1_SIGRETURN;
 }

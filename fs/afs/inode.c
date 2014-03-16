@@ -184,8 +184,7 @@ struct inode *afs_iget_autocell(struct inode *dir, const char *dev_name,
 	inode->i_generation	= 0;
 
 	set_bit(AFS_VNODE_PSEUDODIR, &vnode->flags);
-	set_bit(AFS_VNODE_MOUNTPOINT, &vnode->flags);
-	inode->i_flags |= S_AUTOMOUNT | S_NOATIME;
+	inode->i_flags |= S_NOATIME;
 	unlock_new_inode(inode);
 	_leave(" = %p", inode);
 	return inode;

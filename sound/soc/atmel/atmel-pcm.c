@@ -179,7 +179,7 @@ static int atmel_pcm_hw_params(struct snd_pcm_substream *substream,
 	snd_pcm_set_runtime_buffer(substream, &substream->dma_buffer);
 	runtime->dma_bytes = params_buffer_bytes(params);
 
-	prtd->params = snd_soc_dai_get_dma_data(rtd->cpu_dai, substream);
+	prtd->params = snd_soc_dai_get_dma_data(rtd->dai->cpu_dai, substream);
 	prtd->params->dma_intr_handler = atmel_pcm_dma_irq;
 
 	prtd->dma_buffer = runtime->dma_addr;
@@ -374,14 +374,14 @@ static int atmel_pcm_new(struct snd_card *card,
 	if (!card->dev->coherent_dma_mask)
 		card->dev->coherent_dma_mask = 0xffffffff;
 
-	if (dai->driver->playback.channels_min) {
+	if (dai->playback.channels_min) {
 		ret = atmel_pcm_preallocate_dma_buffer(pcm,
 			SNDRV_PCM_STREAM_PLAYBACK);
 		if (ret)
 			goto out;
 	}
 
-	if (dai->driver->capture.channels_min) {
+	if (dai->capture.channels_min) {
 		pr_debug("at32-pcm:"
 				"Allocating PCM capture DMA buffer\n");
 		ret = atmel_pcm_preallocate_dma_buffer(pcm,
@@ -414,9 +414,12 @@ static void atmel_pcm_free_dma_buffers(struct snd_pcm *pcm)
 }
 
 #ifdef CONFIG_PM
-static int atmel_pcm_suspend(struct snd_soc_dai *dai)
+static int atmel_pcm_suspend(struct snd_soc_dai_link *dai_link)
 {
-	struct snd_pcm_runtime *runtime = dai->runtime;
+	struct snd_pcm *pcm = dai_link->pcm;
+	struct snd_pcm_str *stream = &pcm->streams[0];
+	struct snd_pcm_substream *substream = stream->substream;
+	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct atmel_runtime_data *prtd;
 	struct atmel_pcm_dma_params *params;
 
@@ -438,9 +441,12 @@ static int atmel_pcm_suspend(struct snd_soc_dai *dai)
 	return 0;
 }
 
-static int atmel_pcm_resume(struct snd_soc_dai *dai)
+static int atmel_pcm_resume(struct snd_soc_dai_link *dai_link)
 {
-	struct snd_pcm_runtime *runtime = dai->runtime;
+	struct snd_pcm *pcm = dai_link->pcm;
+	struct snd_pcm_str *stream = &pcm->streams[0];
+	struct snd_pcm_substream *substream = stream->substream;
+	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct atmel_runtime_data *prtd;
 	struct atmel_pcm_dma_params *params;
 
@@ -464,46 +470,27 @@ static int atmel_pcm_resume(struct snd_soc_dai *dai)
 #define atmel_pcm_resume	NULL
 #endif
 
-static struct snd_soc_platform_driver atmel_soc_platform = {
-	.ops		= &atmel_pcm_ops,
+struct snd_soc_platform atmel_soc_platform = {
+	.name		= "atmel-audio",
+	.pcm_ops 	= &atmel_pcm_ops,
 	.pcm_new	= atmel_pcm_new,
 	.pcm_free	= atmel_pcm_free_dma_buffers,
 	.suspend	= atmel_pcm_suspend,
 	.resume		= atmel_pcm_resume,
 };
+EXPORT_SYMBOL_GPL(atmel_soc_platform);
 
-static int __devinit atmel_soc_platform_probe(struct platform_device *pdev)
+static int __init atmel_pcm_modinit(void)
 {
-	return snd_soc_register_platform(&pdev->dev, &atmel_soc_platform);
+	return snd_soc_register_platform(&atmel_soc_platform);
 }
+module_init(atmel_pcm_modinit);
 
-static int __devexit atmel_soc_platform_remove(struct platform_device *pdev)
+static void __exit atmel_pcm_modexit(void)
 {
-	snd_soc_unregister_platform(&pdev->dev);
-	return 0;
+	snd_soc_unregister_platform(&atmel_soc_platform);
 }
-
-static struct platform_driver atmel_pcm_driver = {
-	.driver = {
-			.name = "atmel-pcm-audio",
-			.owner = THIS_MODULE,
-	},
-
-	.probe = atmel_soc_platform_probe,
-	.remove = __devexit_p(atmel_soc_platform_remove),
-};
-
-static int __init snd_atmel_pcm_init(void)
-{
-	return platform_driver_register(&atmel_pcm_driver);
-}
-module_init(snd_atmel_pcm_init);
-
-static void __exit snd_atmel_pcm_exit(void)
-{
-	platform_driver_unregister(&atmel_pcm_driver);
-}
-module_exit(snd_atmel_pcm_exit);
+module_exit(atmel_pcm_modexit);
 
 MODULE_AUTHOR("Sedji Gaouaou <sedji.gaouaou@atmel.com>");
 MODULE_DESCRIPTION("Atmel PCM module");

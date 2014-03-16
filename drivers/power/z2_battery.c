@@ -134,8 +134,6 @@ static int z2_batt_ps_init(struct z2_charger *charger, int props)
 	enum power_supply_property *prop;
 	struct z2_battery_info *info = charger->info;
 
-	if (info->charge_gpio >= 0)
-		props++;	/* POWER_SUPPLY_PROP_STATUS */
 	if (info->batt_tech >= 0)
 		props++;	/* POWER_SUPPLY_PROP_TECHNOLOGY */
 	if (info->batt_I2C_reg >= 0)
@@ -215,8 +213,8 @@ static int __devinit z2_batt_probe(struct i2c_client *client,
 		if (ret)
 			goto err2;
 
-		irq_set_irq_type(gpio_to_irq(info->charge_gpio),
-				 IRQ_TYPE_EDGE_BOTH);
+		set_irq_type(gpio_to_irq(info->charge_gpio),
+				IRQ_TYPE_EDGE_BOTH);
 		ret = request_irq(gpio_to_irq(info->charge_gpio),
 				z2_charge_switch_irq, IRQF_DISABLED,
 				"AC Detect", charger);
@@ -256,7 +254,7 @@ static int __devexit z2_batt_remove(struct i2c_client *client)
 	struct z2_charger *charger = i2c_get_clientdata(client);
 	struct z2_battery_info *info = charger->info;
 
-	cancel_work_sync(&charger->bat_work);
+	flush_scheduled_work();
 	power_supply_unregister(&charger->batt_ps);
 
 	kfree(charger->batt_ps.properties);
@@ -273,9 +271,7 @@ static int __devexit z2_batt_remove(struct i2c_client *client)
 #ifdef CONFIG_PM
 static int z2_batt_suspend(struct i2c_client *client, pm_message_t state)
 {
-	struct z2_charger *charger = i2c_get_clientdata(client);
-
-	flush_work_sync(&charger->bat_work);
+	flush_scheduled_work();
 	return 0;
 }
 
@@ -295,7 +291,6 @@ static const struct i2c_device_id z2_batt_id[] = {
 	{ "aer915", 0 },
 	{ }
 };
-MODULE_DEVICE_TABLE(i2c, z2_batt_id);
 
 static struct i2c_driver z2_batt_driver = {
 	.driver	= {

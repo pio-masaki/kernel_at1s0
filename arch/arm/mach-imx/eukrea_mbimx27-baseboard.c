@@ -26,18 +26,23 @@
 #include <linux/spi/ads7846.h>
 #include <linux/backlight.h>
 #include <video/platform_lcd.h>
+#include <linux/input/matrix_keypad.h>
 
 #include <asm/mach/arch.h>
 
 #include <mach/common.h>
 #include <mach/iomux-mx27.h>
+#include <mach/imxfb.h>
 #include <mach/hardware.h>
+#include <mach/mmc.h>
 #include <mach/spi.h>
+#include <mach/ssi.h>
 #include <mach/audmux.h>
 
 #include "devices-imx27.h"
+#include "devices.h"
 
-static const int eukrea_mbimx27_pins[] __initconst = {
+static int eukrea_mbimx27_pins[] = {
 	/* UART2 */
 	PE3_PF_UART2_CTS,
 	PE4_PF_UART2_RTS,
@@ -107,8 +112,7 @@ static const uint32_t eukrea_mbimx27_keymap[] = {
 	KEY(1, 1, KEY_LEFT),
 };
 
-static const struct matrix_keymap_data
-eukrea_mbimx27_keymap_data __initconst = {
+static struct matrix_keymap_data eukrea_mbimx27_keymap_data = {
 	.keymap         = eukrea_mbimx27_keymap,
 	.keymap_size    = ARRAY_SIZE(eukrea_mbimx27_keymap),
 };
@@ -193,7 +197,7 @@ static struct imx_fb_videomode eukrea_mbimx27_modes[] = {
 	},
 };
 
-static const struct imx_fb_platform_data eukrea_mbimx27_fb_data __initconst = {
+static struct imx_fb_platform_data eukrea_mbimx27_fb_data = {
 	.mode = eukrea_mbimx27_modes,
 	.num_modes = ARRAY_SIZE(eukrea_mbimx27_modes),
 
@@ -247,9 +251,12 @@ static const struct imxuart_platform_data uart_pdata __initconst = {
 	.flags = IMXUART_HAVE_RTSCTS,
 };
 
+#if defined(CONFIG_TOUCHSCREEN_ADS7846) \
+	|| defined(CONFIG_TOUCHSCREEN_ADS7846_MODULE)
+
 #define ADS7846_PENDOWN (GPIO_PORTD | 25)
 
-static void __maybe_unused ads7846_dev_init(void)
+static void ads7846_dev_init(void)
 {
 	if (gpio_request(ADS7846_PENDOWN, "ADS7846 pendown") < 0) {
 		printk(KERN_ERR "can't get ads746 pen down GPIO\n");
@@ -267,9 +274,10 @@ static struct ads7846_platform_data ads7846_config __initdata = {
 	.get_pendown_state	= ads7846_get_pendown_state,
 	.keep_vref_on		= 1,
 };
+#endif
 
-static struct spi_board_info __maybe_unused
-		eukrea_mbimx27_spi_board_info[] __initdata = {
+#if defined(CONFIG_SPI_IMX) || defined(CONFIG_SPI_IMX_MODULE)
+static struct spi_board_info eukrea_mbimx27_spi_board_info[] __initdata = {
 	[0] = {
 		.modalias	= "ads7846",
 		.bus_num	= 0,
@@ -287,6 +295,7 @@ static const struct spi_imx_master eukrea_mbimx27_spi0_data __initconst = {
 	.chipselect	= eukrea_mbimx27_spi_cs,
 	.num_chipselect = ARRAY_SIZE(eukrea_mbimx27_spi_cs),
 };
+#endif
 
 static struct i2c_board_info eukrea_mbimx27_i2c_devices[] = {
 	{
@@ -298,12 +307,11 @@ static struct platform_device *platform_devices[] __initdata = {
 	&leds_gpio,
 };
 
-static const struct imxmmc_platform_data sdhc_pdata __initconst = {
+static struct imxmmc_platform_data sdhc_pdata = {
 	.dat3_card_detect = 1,
 };
 
-static const
-struct imx_ssi_platform_data eukrea_mbimx27_ssi_pdata __initconst = {
+struct imx_ssi_platform_data eukrea_mbimx27_ssi_pdata = {
 	.flags = IMX_SSI_DMA | IMX_SSI_USE_I2S_SLAVE,
 };
 
@@ -343,13 +351,13 @@ void __init eukrea_mbimx27_baseboard_init(void)
 	imx27_add_imx_uart3(&uart_pdata);
 #endif
 
-	imx27_add_imx_fb(&eukrea_mbimx27_fb_data);
-	imx27_add_mxc_mmc(0, &sdhc_pdata);
+	mxc_register_device(&mxc_fb_device, &eukrea_mbimx27_fb_data);
+	mxc_register_device(&mxc_sdhc_device0, &sdhc_pdata);
 
 	i2c_register_board_info(0, eukrea_mbimx27_i2c_devices,
 				ARRAY_SIZE(eukrea_mbimx27_i2c_devices));
 
-	imx27_add_imx_ssi(0, &eukrea_mbimx27_ssi_pdata);
+	mxc_register_device(&imx_ssi_device0, &eukrea_mbimx27_ssi_pdata);
 
 #if defined(CONFIG_TOUCHSCREEN_ADS7846) \
 	|| defined(CONFIG_TOUCHSCREEN_ADS7846_MODULE)
@@ -358,11 +366,13 @@ void __init eukrea_mbimx27_baseboard_init(void)
 	ads7846_dev_init();
 #endif
 
+#if defined(CONFIG_SPI_IMX) || defined(CONFIG_SPI_IMX_MODULE)
 	/* SPI_CS0 init */
 	mxc_gpio_mode(GPIO_PORTD | 28 | GPIO_GPIO | GPIO_OUT);
 	imx27_add_spi_imx0(&eukrea_mbimx27_spi0_data);
 	spi_register_board_info(eukrea_mbimx27_spi_board_info,
 			ARRAY_SIZE(eukrea_mbimx27_spi_board_info));
+#endif
 
 	/* Leds configuration */
 	mxc_gpio_mode(GPIO_PORTF | 16 | GPIO_GPIO | GPIO_OUT);
@@ -376,7 +386,7 @@ void __init eukrea_mbimx27_baseboard_init(void)
 	gpio_request(GPIO_PORTA | 25, "lcd_enable");
 	platform_device_register(&eukrea_mbimx27_lcd_powerdev);
 
-	imx27_add_imx_keypad(&eukrea_mbimx27_keymap_data);
+	mxc_register_device(&imx_kpp_device, &eukrea_mbimx27_keymap_data);
 
 	platform_add_devices(platform_devices, ARRAY_SIZE(platform_devices));
 }

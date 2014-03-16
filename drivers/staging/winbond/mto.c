@@ -17,10 +17,9 @@
  * ============================================================================
  */
 
+#include "sysdef.h"
 #include "sme_api.h"
-#include "wbhal.h"
-#include "wb35reg_f.h"
-#include "core.h"
+#include "wbhal_f.h"
 
 /* Declare SQ3 to rate and fragmentation threshold table */
 /* Declare fragmentation thresholds table */

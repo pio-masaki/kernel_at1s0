@@ -34,14 +34,9 @@ struct snd_usb_audio {
 	int index;
 	struct usb_device *dev;
 	struct snd_card *card;
-	struct usb_interface *pm_intf;
 	u32 usb_id;
-	struct mutex shutdown_mutex;
-	unsigned int shutdown:1;
-	unsigned int probing:1;
-	unsigned int autosuspended:1;	
+	int shutdown;
 	unsigned int txfr_quirk:1; /* Subframe boundaries on transfers */
-	
 	int num_interfaces;
 	int num_suspended_intf;
 
@@ -75,7 +70,7 @@ enum quirk_type {
 	QUIRK_MIDI_YAMAHA,
 	QUIRK_MIDI_MIDIMAN,
 	QUIRK_MIDI_NOVATION,
-	QUIRK_MIDI_RAW_BYTES,
+	QUIRK_MIDI_FASTLANE,
 	QUIRK_MIDI_EMAGIC,
 	QUIRK_MIDI_CME,
 	QUIRK_MIDI_AKAI,

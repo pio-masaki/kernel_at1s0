@@ -175,6 +175,8 @@ struct ep93xx_priv
 	struct net_device	*dev;
 	struct napi_struct	napi;
 
+	struct net_device_stats	stats;
+
 	struct mii_if_info	mii;
 	u8			mdc_divisor;
 };
@@ -228,6 +230,12 @@ static void ep93xx_mdio_write(struct net_device *dev, int phy_id, int reg, int d
 		pr_info("mdio write timed out\n");
 }
 
+static struct net_device_stats *ep93xx_get_stats(struct net_device *dev)
+{
+	struct ep93xx_priv *ep = netdev_priv(dev);
+	return &(ep->stats);
+}
+
 static int ep93xx_rx(struct net_device *dev, int processed, int budget)
 {
 	struct ep93xx_priv *ep = netdev_priv(dev);
@@ -259,15 +267,15 @@ static int ep93xx_rx(struct net_device *dev, int processed, int budget)
 			pr_crit("entry mismatch %.8x %.8x\n", rstat0, rstat1);
 
 		if (!(rstat0 & RSTAT0_RWE)) {
-			dev->stats.rx_errors++;
+			ep->stats.rx_errors++;
 			if (rstat0 & RSTAT0_OE)
-				dev->stats.rx_fifo_errors++;
+				ep->stats.rx_fifo_errors++;
 			if (rstat0 & RSTAT0_FE)
-				dev->stats.rx_frame_errors++;
+				ep->stats.rx_frame_errors++;
 			if (rstat0 & (RSTAT0_RUNT | RSTAT0_EDATA))
-				dev->stats.rx_length_errors++;
+				ep->stats.rx_length_errors++;
 			if (rstat0 & RSTAT0_CRCE)
-				dev->stats.rx_crc_errors++;
+				ep->stats.rx_crc_errors++;
 			goto err;
 		}
 
@@ -292,10 +300,10 @@ static int ep93xx_rx(struct net_device *dev, int processed, int budget)
 
 			netif_receive_skb(skb);
 
-			dev->stats.rx_packets++;
-			dev->stats.rx_bytes += length;
+			ep->stats.rx_packets++;
+			ep->stats.rx_bytes += length;
 		} else {
-			dev->stats.rx_dropped++;
+			ep->stats.rx_dropped++;
 		}
 
 err:
@@ -351,7 +359,7 @@ static int ep93xx_xmit(struct sk_buff *skb, struct net_device *dev)
 	int entry;
 
 	if (unlikely(skb->len > MAX_PKT_SIZE)) {
-		dev->stats.tx_dropped++;
+		ep->stats.tx_dropped++;
 		dev_kfree_skb(skb);
 		return NETDEV_TX_OK;
 	}
@@ -407,17 +415,17 @@ static void ep93xx_tx_complete(struct net_device *dev)
 		if (tstat0 & TSTAT0_TXWE) {
 			int length = ep->descs->tdesc[entry].tdesc1 & 0xfff;
 
-			dev->stats.tx_packets++;
-			dev->stats.tx_bytes += length;
+			ep->stats.tx_packets++;
+			ep->stats.tx_bytes += length;
 		} else {
-			dev->stats.tx_errors++;
+			ep->stats.tx_errors++;
 		}
 
 		if (tstat0 & TSTAT0_OW)
-			dev->stats.tx_window_errors++;
+			ep->stats.tx_window_errors++;
 		if (tstat0 & TSTAT0_TXU)
-			dev->stats.tx_fifo_errors++;
-		dev->stats.collisions += (tstat0 >> 16) & 0x1f;
+			ep->stats.tx_fifo_errors++;
+		ep->stats.collisions += (tstat0 >> 16) & 0x1f;
 
 		ep->tx_clean_pointer = (entry + 1) & (TX_QUEUE_ENTRIES - 1);
 		if (ep->tx_pending == TX_QUEUE_ENTRIES)
@@ -750,6 +758,7 @@ static const struct net_device_ops ep93xx_netdev_ops = {
 	.ndo_open		= ep93xx_open,
 	.ndo_stop		= ep93xx_close,
 	.ndo_start_xmit		= ep93xx_xmit,
+	.ndo_get_stats		= ep93xx_get_stats,
 	.ndo_do_ioctl		= ep93xx_ioctl,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_change_mtu		= eth_change_mtu,

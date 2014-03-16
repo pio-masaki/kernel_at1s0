@@ -17,6 +17,10 @@
 #define _VIDEOBUF_CORE_H
 
 #include <linux/poll.h>
+#ifdef CONFIG_VIDEO_V4L1_COMPAT
+#define __MIN_V4L1
+#include <linux/videodev.h>
+#endif
 #include <linux/videodev2.h>
 
 #define UNSET (-1U)
@@ -135,7 +139,6 @@ struct videobuf_qtype_ops {
 
 struct videobuf_queue {
 	struct mutex               vb_lock;
-	struct mutex               *ext_lock;
 	spinlock_t                 *irqlock;
 	struct device		   *dev;
 
@@ -164,20 +167,7 @@ struct videobuf_queue {
 	void                       *priv_data;
 };
 
-static inline void videobuf_queue_lock(struct videobuf_queue *q)
-{
-	if (!q->ext_lock)
-		mutex_lock(&q->vb_lock);
-}
-
-static inline void videobuf_queue_unlock(struct videobuf_queue *q)
-{
-	if (!q->ext_lock)
-		mutex_unlock(&q->vb_lock);
-}
-
-int videobuf_waiton(struct videobuf_queue *q, struct videobuf_buffer *vb,
-		int non_blocking, int intr);
+int videobuf_waiton(struct videobuf_buffer *vb, int non_blocking, int intr);
 int videobuf_iolock(struct videobuf_queue *q, struct videobuf_buffer *vb,
 		struct v4l2_framebuffer *fbuf);
 
@@ -195,8 +185,7 @@ void videobuf_queue_core_init(struct videobuf_queue *q,
 			 enum v4l2_field field,
 			 unsigned int msize,
 			 void *priv,
-			 struct videobuf_qtype_ops *int_ops,
-			 struct mutex *ext_lock);
+			 struct videobuf_qtype_ops *int_ops);
 int  videobuf_queue_is_busy(struct videobuf_queue *q);
 void videobuf_queue_cancel(struct videobuf_queue *q);
 
@@ -208,6 +197,10 @@ int videobuf_qbuf(struct videobuf_queue *q,
 		  struct v4l2_buffer *b);
 int videobuf_dqbuf(struct videobuf_queue *q,
 		   struct v4l2_buffer *b, int nonblocking);
+#ifdef CONFIG_VIDEO_V4L1_COMPAT
+int videobuf_cgmbuf(struct videobuf_queue *q,
+		    struct video_mbuf *mbuf, int count);
+#endif
 int videobuf_streamon(struct videobuf_queue *q);
 int videobuf_streamoff(struct videobuf_queue *q);
 

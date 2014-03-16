@@ -250,7 +250,7 @@ static int kick_a_thread(void)
 			dirty_zn_cnt = atomic_long_read(&c->dirty_zn_cnt);
 
 			if (!dirty_zn_cnt || c->cmt_state == COMMIT_BROKEN ||
-			    c->ro_mount || c->ro_error) {
+			    c->ro_media) {
 				mutex_unlock(&c->umount_mutex);
 				continue;
 			}
@@ -283,11 +283,7 @@ int ubifs_shrinker(struct shrinker *shrink, int nr, gfp_t gfp_mask)
 	long clean_zn_cnt = atomic_long_read(&ubifs_clean_zn_cnt);
 
 	if (nr == 0)
-		/*
-		 * Due to the way UBIFS updates the clean znode counter it may
-		 * temporarily be negative.
-		 */
-		return clean_zn_cnt >= 0 ? clean_zn_cnt : 1;
+		return clean_zn_cnt;
 
 	if (!clean_zn_cnt) {
 		/*

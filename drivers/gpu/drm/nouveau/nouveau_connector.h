@@ -52,7 +52,7 @@ static inline struct nouveau_connector *nouveau_connector(
 struct drm_connector *
 nouveau_connector_create(struct drm_device *, int index);
 
-int
-nouveau_connector_bpp(struct drm_connector *);
+void
+nouveau_connector_set_polling(struct drm_connector *);
 
 #endif /* __NOUVEAU_CONNECTOR_H__ */

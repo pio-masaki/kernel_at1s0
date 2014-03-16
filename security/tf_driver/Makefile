@@ -21,16 +21,16 @@
 # debug options
 #EXTRA_CFLAGS += -O0 -DDEBUG -D_DEBUG -DCONFIG_TF_DRIVER_DEBUG_SUPPORT
 EXTRA_CFLAGS += -DNDEBUG
-EXTRA_CFLAGS += -DLINUX -DCONFIG_TF_TRUSTZONE -DCONFIG_TFN -DCONFIG_SECURE_TRACES
+EXTRA_CFLAGS += -DLINUX -DCONFIG_TF_TRUSTZONE -DCONFIG_TFN
 
 ifdef S_VERSION_BUILD
 EXTRA_CFLAGS += -DS_VERSION_BUILD=$(S_VERSION_BUILD)
 endif
 
-tf_driver-objs += tf_util.o
-tf_driver-objs += tf_conn.o
-tf_driver-objs += tf_device.o
-tf_driver-objs += tf_comm.o
-tf_driver-objs += tf_comm_tz.o
+tf_driver-objs += scxlnx_util.o
+tf_driver-objs += scxlnx_conn.o
+tf_driver-objs += scxlnx_device.o
+tf_driver-objs += scxlnx_comm.o
+tf_driver-objs += scxlnx_comm_tz.o
 
 obj-$(CONFIG_TRUSTED_FOUNDATIONS) += tf_driver.o

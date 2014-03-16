@@ -215,7 +215,8 @@ static int jffs2_create(struct inode *dir_i, struct dentry *dentry, int mode,
 	   no chance of AB-BA deadlock involving its f->sem). */
 	mutex_unlock(&f->sem);
 
-	ret = jffs2_do_create(c, dir_f, f, ri, &dentry->d_name);
+	ret = jffs2_do_create(c, dir_f, f, ri,
+			      dentry->d_name.name, dentry->d_name.len);
 	if (ret)
 		goto fail;
 
@@ -288,7 +289,7 @@ static int jffs2_link (struct dentry *old_dentry, struct inode *dir_i, struct de
 		mutex_unlock(&f->sem);
 		d_instantiate(dentry, old_dentry->d_inode);
 		dir_i->i_mtime = dir_i->i_ctime = ITIME(now);
-		ihold(old_dentry->d_inode);
+		atomic_inc(&old_dentry->d_inode->i_count);
 	}
 	return ret;
 }
@@ -366,7 +367,7 @@ static int jffs2_symlink (struct inode *dir_i, struct dentry *dentry, const char
 	}
 
 	/* We use f->target field to store the target path. */
-	f->target = kmemdup(target, targetlen + 1, GFP_KERNEL);
+	f->target = kmalloc(targetlen + 1, GFP_KERNEL);
 	if (!f->target) {
 		printk(KERN_WARNING "Can't allocate %d bytes of memory\n", targetlen + 1);
 		mutex_unlock(&f->sem);
@@ -375,6 +376,7 @@ static int jffs2_symlink (struct inode *dir_i, struct dentry *dentry, const char
 		goto fail;
 	}
 
+	memcpy(f->target, target, targetlen + 1);
 	D1(printk(KERN_DEBUG "jffs2_symlink: symlink's target '%s' cached\n", (char *)f->target));
 
 	/* No data here. Only a metadata node, which will be
@@ -385,7 +387,7 @@ static int jffs2_symlink (struct inode *dir_i, struct dentry *dentry, const char
 
 	jffs2_complete_reservation(c);
 
-	ret = jffs2_init_security(inode, dir_i, &dentry->d_name);
+	ret = jffs2_init_security(inode, dir_i);
 	if (ret)
 		goto fail;
 
@@ -529,7 +531,7 @@ static int jffs2_mkdir (struct inode *dir_i, struct dentry *dentry, int mode)
 
 	jffs2_complete_reservation(c);
 
-	ret = jffs2_init_security(inode, dir_i, &dentry->d_name);
+	ret = jffs2_init_security(inode, dir_i);
 	if (ret)
 		goto fail;
 
@@ -702,7 +704,7 @@ static int jffs2_mknod (struct inode *dir_i, struct dentry *dentry, int mode, de
 
 	jffs2_complete_reservation(c);
 
-	ret = jffs2_init_security(inode, dir_i, &dentry->d_name);
+	ret = jffs2_init_security(inode, dir_i);
 	if (ret)
 		goto fail;
 
@@ -862,7 +864,7 @@ static int jffs2_rename (struct inode *old_dir_i, struct dentry *old_dentry,
 		printk(KERN_NOTICE "jffs2_rename(): Link succeeded, unlink failed (err %d). You now have a hard link\n", ret);
 		/* Might as well let the VFS know */
 		d_instantiate(new_dentry, old_dentry->d_inode);
-		ihold(old_dentry->d_inode);
+		atomic_inc(&old_dentry->d_inode->i_count);
 		new_dir_i->i_mtime = new_dir_i->i_ctime = ITIME(now);
 		return ret;
 	}

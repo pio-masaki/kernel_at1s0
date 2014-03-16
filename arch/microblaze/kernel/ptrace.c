@@ -39,7 +39,6 @@
 #include <linux/uaccess.h>
 #include <asm/asm-offsets.h>
 #include <asm/cacheflush.h>
-#include <asm/syscall.h>
 #include <asm/io.h>
 
 /* Returns the address where the register at REG_OFFS in P is stashed away. */
@@ -74,8 +73,7 @@ static microblaze_reg_t *reg_save_addr(unsigned reg_offs,
 	return (microblaze_reg_t *)((char *)regs + reg_offs);
 }
 
-long arch_ptrace(struct task_struct *child, long request,
-		 unsigned long addr, unsigned long data)
+long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 {
 	int rval;
 	unsigned long val = 0;
@@ -101,7 +99,7 @@ long arch_ptrace(struct task_struct *child, long request,
 			} else {
 				rval = -EIO;
 			}
-		} else if (addr < PT_SIZE && (addr & 0x3) == 0) {
+		} else if (addr >= 0 && addr < PT_SIZE && (addr & 0x3) == 0) {
 			microblaze_reg_t *reg_addr = reg_save_addr(addr, child);
 			if (request == PTRACE_PEEKUSR)
 				val = *reg_addr;
@@ -124,7 +122,7 @@ long arch_ptrace(struct task_struct *child, long request,
 			rval = -EIO;
 
 		if (rval == 0 && request == PTRACE_PEEKUSR)
-			rval = put_user(val, (unsigned long __user *)data);
+			rval = put_user(val, (unsigned long *)data);
 		break;
 	default:
 		rval = ptrace_request(child, request, addr, data);

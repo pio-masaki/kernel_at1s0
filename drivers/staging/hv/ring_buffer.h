@@ -29,18 +29,18 @@
 
 struct hv_ring_buffer {
 	/* Offset in bytes from the start of ring data below */
-	volatile u32 write_index;
+	volatile u32 WriteIndex;
 
 	/* Offset in bytes from the start of ring data below */
-	volatile u32 read_index;
+	volatile u32 ReadIndex;
 
-	volatile u32 interrupt_mask;
+	volatile u32 InterruptMask;
 
 	/* Pad it to PAGE_SIZE so that data starts on page boundary */
-	u8	reserved[4084];
+	u8	Reserved[4084];
 
 	/* NOTE:
-	 * The interrupt_mask field is used only for channels but since our
+	 * The InterruptMask field is used only for channels but since our
 	 * vmbus connection also uses this data structure and its data starts
 	 * here, we commented out this field.
 	 */
@@ -50,24 +50,24 @@ struct hv_ring_buffer {
 	 * Ring data starts here + RingDataStartOffset
 	 * !!! DO NOT place any fields below this !!!
 	 */
-	u8 buffer[0];
-} __packed;
+	u8 Buffer[0];
+} __attribute__((packed));
 
 struct hv_ring_buffer_info {
-	struct hv_ring_buffer *ring_buffer;
-	u32 ring_size;			/* Include the shared header */
+	struct hv_ring_buffer *RingBuffer;
+	u32 RingSize;			/* Include the shared header */
 	spinlock_t ring_lock;
 
-	u32 ring_datasize;		/* < ring_size */
-	u32 ring_data_startoffset;
+	u32 RingDataSize;		/* < ringSize */
+	u32 RingDataStartOffset;
 };
 
 struct hv_ring_buffer_debug_info {
-	u32 current_interrupt_mask;
-	u32 current_read_index;
-	u32 current_write_index;
-	u32 bytes_avail_toread;
-	u32 bytes_avail_towrite;
+	u32 CurrentInterruptMask;
+	u32 CurrentReadIndex;
+	u32 CurrentWriteIndex;
+	u32 BytesAvailToRead;
+	u32 BytesAvailToWrite;
 };
 
 
@@ -75,28 +75,28 @@ struct hv_ring_buffer_debug_info {
 /* Interface */
 
 
-int ringbuffer_init(struct hv_ring_buffer_info *ring_info, void *buffer,
-		   u32 buflen);
+int RingBufferInit(struct hv_ring_buffer_info *RingInfo, void *Buffer,
+		   u32 BufferLen);
 
-void ringbuffer_cleanup(struct hv_ring_buffer_info *ring_info);
+void RingBufferCleanup(struct hv_ring_buffer_info *RingInfo);
 
-int ringbuffer_write(struct hv_ring_buffer_info *ring_info,
+int RingBufferWrite(struct hv_ring_buffer_info *RingInfo,
 		    struct scatterlist *sglist,
 		    u32 sgcount);
 
-int ringbuffer_peek(struct hv_ring_buffer_info *ring_info, void *buffer,
-		   u32 buflen);
+int RingBufferPeek(struct hv_ring_buffer_info *RingInfo, void *Buffer,
+		   u32 BufferLen);
 
-int ringbuffer_read(struct hv_ring_buffer_info *ring_info,
-		   void *buffer,
-		   u32 buflen,
-		   u32 offset);
+int RingBufferRead(struct hv_ring_buffer_info *RingInfo,
+		   void *Buffer,
+		   u32 BufferLen,
+		   u32 Offset);
 
-u32 get_ringbuffer_interrupt_mask(struct hv_ring_buffer_info *ring_info);
+u32 GetRingBufferInterruptMask(struct hv_ring_buffer_info *RingInfo);
 
-void dump_ring_info(struct hv_ring_buffer_info *ring_info, char *prefix);
+void DumpRingInfo(struct hv_ring_buffer_info *RingInfo, char *Prefix);
 
-void ringbuffer_get_debuginfo(struct hv_ring_buffer_info *ring_info,
+void RingBufferGetDebugInfo(struct hv_ring_buffer_info *RingInfo,
 			    struct hv_ring_buffer_debug_info *debug_info);
 
 #endif /* _RING_BUFFER_H_ */

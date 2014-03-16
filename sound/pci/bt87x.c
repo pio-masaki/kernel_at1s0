@@ -637,9 +637,15 @@ static struct snd_kcontrol_new snd_bt87x_capture_boost = {
 static int snd_bt87x_capture_source_info(struct snd_kcontrol *kcontrol,
 					 struct snd_ctl_elem_info *info)
 {
-	static const char *const texts[3] = {"TV Tuner", "FM", "Mic/Line"};
+	static char *texts[3] = {"TV Tuner", "FM", "Mic/Line"};
 
-	return snd_ctl_enum_info(info, 1, 3, texts);
+	info->type = SNDRV_CTL_ELEM_TYPE_ENUMERATED;
+	info->count = 1;
+	info->value.enumerated.items = 3;
+	if (info->value.enumerated.item > 2)
+		info->value.enumerated.item = 2;
+	strcpy(info->value.enumerated.name, texts[info->value.enumerated.item]);
+	return 0;
 }
 
 static int snd_bt87x_capture_source_get(struct snd_kcontrol *kcontrol,

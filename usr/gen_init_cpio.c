@@ -104,8 +104,6 @@ static int cpio_mkslink(const char *name, const char *target,
 	char s[256];
 	time_t mtime = time(NULL);
 
-	if (name[0] == '/')
-		name++;
 	sprintf(s,"%s%08X%08X%08lX%08lX%08X%08lX"
 	       "%08X%08X%08X%08X%08X%08X%08X",
 		"070701",		/* magic */
@@ -154,8 +152,6 @@ static int cpio_mkgeneric(const char *name, unsigned int mode,
 	char s[256];
 	time_t mtime = time(NULL);
 
-	if (name[0] == '/')
-		name++;
 	sprintf(s,"%s%08X%08X%08lX%08lX%08X%08lX"
 	       "%08X%08X%08X%08X%08X%08X%08X",
 		"070701",		/* magic */
@@ -249,8 +245,6 @@ static int cpio_mknod(const char *name, unsigned int mode,
 	else
 		mode |= S_IFCHR;
 
-	if (name[0] == '/')
-		name++;
 	sprintf(s,"%s%08X%08X%08lX%08lX%08X%08lX"
 	       "%08X%08X%08X%08X%08X%08X%08X",
 		"070701",		/* magic */
@@ -309,15 +303,15 @@ static int cpio_mkfile(const char *name, const char *location,
 
 	mode |= S_IFREG;
 
-	file = open (location, O_RDONLY);
-	if (file < 0) {
-		fprintf (stderr, "File %s could not be opened for reading\n", location);
+	retval = stat (location, &buf);
+	if (retval) {
+		fprintf (stderr, "File %s could not be located\n", location);
 		goto error;
 	}
 
-	retval = fstat(file, &buf);
-	if (retval) {
-		fprintf(stderr, "File %s could not be stat()'ed\n", location);
+	file = open (location, O_RDONLY);
+	if (file < 0) {
+		fprintf (stderr, "File %s could not be opened for reading\n", location);
 		goto error;
 	}
 
@@ -338,8 +332,6 @@ static int cpio_mkfile(const char *name, const char *location,
 		/* data goes on last link */
 		if (i == nlinks) size = buf.st_size;
 
-		if (name[0] == '/')
-			name++;
 		namesize = strlen(name) + 1;
 		sprintf(s,"%s%08X%08X%08lX%08lX%08X%08lX"
 		       "%08lX%08X%08X%08X%08X%08X%08X",

@@ -66,7 +66,7 @@ SECTIONS
 		__machvec_end = .;
 	}
 
-	PERCPU(L1_CACHE_BYTES, PAGE_SIZE)
+	PERCPU(PAGE_SIZE)
 
 	/*
 	 * .exit.text is discarded at runtime, not link time, to deal with

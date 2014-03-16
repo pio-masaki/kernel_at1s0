@@ -162,7 +162,8 @@ static const char *part_probes[] = { "cmdlinepart", NULL };
 /*
  * Probe for the NAND device.
  */
-static int __devinit socrates_nand_probe(struct platform_device *ofdev)
+static int __devinit socrates_nand_probe(struct platform_device *ofdev,
+					 const struct of_device_id *ofid)
 {
 	struct socrates_nand_host *host;
 	struct mtd_info *mtd;
@@ -299,7 +300,7 @@ static const struct of_device_id socrates_nand_match[] =
 
 MODULE_DEVICE_TABLE(of, socrates_nand_match);
 
-static struct platform_driver socrates_nand_driver = {
+static struct of_platform_driver socrates_nand_driver = {
 	.driver = {
 		.name = "socrates_nand",
 		.owner = THIS_MODULE,
@@ -311,12 +312,12 @@ static struct platform_driver socrates_nand_driver = {
 
 static int __init socrates_nand_init(void)
 {
-	return platform_driver_register(&socrates_nand_driver);
+	return of_register_platform_driver(&socrates_nand_driver);
 }
 
 static void __exit socrates_nand_exit(void)
 {
-	platform_driver_unregister(&socrates_nand_driver);
+	of_unregister_platform_driver(&socrates_nand_driver);
 }
 
 module_init(socrates_nand_init);

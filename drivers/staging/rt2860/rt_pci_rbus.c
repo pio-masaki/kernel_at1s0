@@ -31,8 +31,7 @@
     Create and register network interface.
 
     Revision History:
-    Who         	When            What
-    Justin P. Mattock	11/07/2010	Fix a typo
+    Who         When            What
     --------    ----------      ----------------------------------------------
 */
 
@@ -357,7 +356,7 @@ static void mgmt_dma_done_tasklet(unsigned long data)
 
 	RTMPHandleMgmtRingDmaDoneInterrupt(pAd);
 
-	/* if you use RTMP_SEM_LOCK, sometimes kernel will hang up, without any */
+	/* if you use RTMP_SEM_LOCK, sometimes kernel will hang up, no any */
 	/* bug report output */
 	RTMP_INT_LOCK(&pAd->irq_lock, flags);
 	/*
@@ -619,7 +618,7 @@ IRQ_HANDLE_TYPE rt2860_interrupt(int irq, void *dev_instance)
 	   Or kernel will panic after ifconfig ra0 down sometimes */
 
 	/* */
-	/* Initial the Interrupt source. */
+	/* Inital the Interrupt source. */
 	/* */
 	IntSource.word = 0x00000000L;
 /*      McuIntSource.word = 0x00000000L; */
@@ -788,7 +787,7 @@ IRQ_HANDLE_TYPE rt2860_interrupt(int irq, void *dev_instance)
 }
 
 /*
- * invalid or writeback cache
+ * invaild or writeback cache
  * and convert virtual address to physical address
  */
 dma_addr_t linux_pci_map_single(struct rt_rtmp_adapter *pAd, void *ptr,

@@ -764,8 +764,6 @@ int __devinit pci_scan_bridge(struct pci_bus *bus, struct pci_dev *dev, int max,
 		if (pci_find_bus(pci_domain_nr(bus), max+1))
 			goto out;
 		child = pci_add_new_bus(bus, dev, ++max);
-		if (!child)
-			goto out;
 		buses = (buses & 0xff000000)
 		      | ((unsigned int)(child->primary)     <<  0)
 		      | ((unsigned int)(child->secondary)   <<  8)
@@ -779,7 +777,7 @@ int __devinit pci_scan_bridge(struct pci_bus *bus, struct pci_dev *dev, int max,
 			buses &= ~0xff000000;
 			buses |= CARDBUS_LATENCY_TIMER << 24;
 		}
-
+			
 		/*
 		 * We need to blast all three values with a single write.
 		 */
@@ -963,8 +961,8 @@ int pci_setup_device(struct pci_dev *dev)
 	dev->class = class;
 	class >>= 8;
 
-	dev_printk(KERN_DEBUG, &dev->dev, "[%04x:%04x] type %d class %#08x\n",
-		   dev->vendor, dev->device, dev->hdr_type, class);
+	dev_dbg(&dev->dev, "found [%04x:%04x] class %06x header type %02x\n",
+		 dev->vendor, dev->device, class, dev->hdr_type);
 
 	/* need to have dev->class ready */
 	dev->cfg_size = pci_cfg_space_size(dev);

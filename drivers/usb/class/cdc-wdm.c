@@ -497,6 +497,8 @@ static unsigned int wdm_poll(struct file *file, struct poll_table_struct *wait)
 	unsigned int mask = 0;
 
 	spin_lock_irqsave(&desc->iuspin, flags);
+	poll_wait(file, &desc->wait, wait);
+
 	if (test_bit(WDM_DISCONNECTING, &desc->flags)) {
 		mask = POLLERR;
 		spin_unlock_irqrestore(&desc->iuspin, flags);
@@ -510,7 +512,6 @@ static unsigned int wdm_poll(struct file *file, struct poll_table_struct *wait)
 		mask |= POLLOUT | POLLWRNORM;
 	spin_unlock_irqrestore(&desc->iuspin, flags);
 
-	poll_wait(file, &desc->wait, wait);
 
 desc_out:
 	return mask;
@@ -542,6 +543,8 @@ static int wdm_open(struct inode *inode, struct file *file)
 
 	mutex_lock(&desc->lock);
 	if (!desc->count++) {
+		desc->werr = 0;
+		desc->rerr = 0;
 		rv = usb_submit_urb(desc->validity, GFP_KERNEL);
 		if (rv < 0) {
 			desc->count--;
@@ -853,6 +856,18 @@ static int wdm_pre_reset(struct usb_interface *intf)
 	struct wdm_device *desc = usb_get_intfdata(intf);
 
 	mutex_lock(&desc->lock);
+	kill_urbs(desc);
+
+	/*
+	 * we notify everybody using poll of
+	 * an exceptional situation
+	 * must be done before recovery lest a spontaneous
+	 * message from the device is lost
+	 */
+	spin_lock_irq(&desc->iuspin);
+	desc->rerr = -EINTR;
+	spin_unlock_irq(&desc->iuspin);
+	wake_up_all(&desc->wait);
 	return 0;
 }
 

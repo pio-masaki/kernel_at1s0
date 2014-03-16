@@ -195,7 +195,6 @@ static const struct file_operations stack_max_size_fops = {
 	.open		= tracing_open_generic,
 	.read		= stack_max_size_read,
 	.write		= stack_max_size_write,
-	.llseek		= default_llseek,
 };
 
 static void *

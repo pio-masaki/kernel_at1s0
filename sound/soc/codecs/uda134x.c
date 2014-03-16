@@ -19,6 +19,7 @@
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 #include <sound/initval.h>
 
 #include <sound/uda134x.h>
@@ -160,7 +161,8 @@ static int uda134x_startup(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *dai)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec =rtd->codec;
+	struct snd_soc_device *socdev = rtd->socdev;
+	struct snd_soc_codec *codec = socdev->card->codec;
 	struct uda134x_priv *uda134x = snd_soc_codec_get_drvdata(codec);
 	struct snd_pcm_runtime *master_runtime;
 
@@ -192,7 +194,8 @@ static void uda134x_shutdown(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *dai)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_device *socdev = rtd->socdev;
+	struct snd_soc_codec *codec = socdev->card->codec;
 	struct uda134x_priv *uda134x = snd_soc_codec_get_drvdata(codec);
 
 	if (uda134x->master_substream == substream)
@@ -206,7 +209,8 @@ static int uda134x_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *dai)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_device *socdev = rtd->socdev;
+	struct snd_soc_codec *codec = socdev->card->codec;
 	struct uda134x_priv *uda134x = snd_soc_codec_get_drvdata(codec);
 	u8 hw_params;
 
@@ -360,7 +364,7 @@ static int uda134x_set_bias_level(struct snd_soc_codec *codec,
 			pd->power(1);
 			/* Sync reg_cache with the hardware */
 			for (i = 0; i < ARRAY_SIZE(uda134x_reg); i++)
-				codec->driver->write(codec, i, *cache++);
+				codec->write(codec, i, *cache++);
 		}
 		break;
 	case SND_SOC_BIAS_STANDBY:
@@ -388,7 +392,7 @@ static int uda134x_set_bias_level(struct snd_soc_codec *codec,
 			pd->power(0);
 		break;
 	}
-	codec->dapm.bias_level = level;
+	codec->bias_level = level;
 	return 0;
 }
 
@@ -461,8 +465,8 @@ static struct snd_soc_dai_ops uda134x_dai_ops = {
 	.set_fmt	= uda134x_set_dai_fmt,
 };
 
-static struct snd_soc_dai_driver uda134x_dai = {
-	.name = "uda134x-hifi",
+struct snd_soc_dai uda134x_dai = {
+	.name = "UDA134X",
 	/* playback capabilities */
 	.playback = {
 		.stream_name = "Playback",
@@ -482,22 +486,27 @@ static struct snd_soc_dai_driver uda134x_dai = {
 	/* pcm operations */
 	.ops = &uda134x_dai_ops,
 };
+EXPORT_SYMBOL(uda134x_dai);
 
-static int uda134x_soc_probe(struct snd_soc_codec *codec)
+
+static int uda134x_soc_probe(struct platform_device *pdev)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec;
 	struct uda134x_priv *uda134x;
-	struct uda134x_platform_data *pd = codec->card->dev->platform_data;
-
-	int ret;
+	void *codec_setup_data = socdev->codec_data;
+	int ret = -ENOMEM;
+	struct uda134x_platform_data *pd;
 
 	printk(KERN_INFO "UDA134X SoC Audio Codec\n");
 
-	if (!pd) {
+	if (!codec_setup_data) {
 		printk(KERN_ERR "UDA134X SoC codec: "
 		       "missing L3 bitbang function\n");
 		return -ENODEV;
 	}
 
+	pd = codec_setup_data;
 	switch (pd->model) {
 	case UDA134X_UDA1340:
 	case UDA134X_UDA1341:
@@ -511,22 +520,58 @@ static int uda134x_soc_probe(struct snd_soc_codec *codec)
 		return -EINVAL;
 	}
 
+	socdev->card->codec = kzalloc(sizeof(struct snd_soc_codec), GFP_KERNEL);
+	if (socdev->card->codec == NULL)
+		return ret;
+
+	codec = socdev->card->codec;
+
 	uda134x = kzalloc(sizeof(struct uda134x_priv), GFP_KERNEL);
 	if (uda134x == NULL)
-		return -ENOMEM;
+		goto priv_err;
 	snd_soc_codec_set_drvdata(codec, uda134x);
 
-	codec->control_data = pd;
+	codec->reg_cache = kmemdup(uda134x_reg, sizeof(uda134x_reg),
+				   GFP_KERNEL);
+	if (codec->reg_cache == NULL)
+		goto reg_err;
+
+	mutex_init(&codec->mutex);
+
+	codec->reg_cache_size = sizeof(uda134x_reg);
+	codec->reg_cache_step = 1;
+
+	codec->name = "UDA134X";
+	codec->owner = THIS_MODULE;
+	codec->dai = &uda134x_dai;
+	codec->num_dai = 1;
+	codec->read = uda134x_read_reg_cache;
+	codec->write = uda134x_write;
+
+	INIT_LIST_HEAD(&codec->dapm_widgets);
+	INIT_LIST_HEAD(&codec->dapm_paths);
+
+	codec->control_data = codec_setup_data;
 
 	if (pd->power)
 		pd->power(1);
 
 	uda134x_reset(codec);
 
-	if (pd->is_powered_on_standby)
+	if (pd->is_powered_on_standby) {
+		codec->set_bias_level = NULL;
 		uda134x_set_bias_level(codec, SND_SOC_BIAS_ON);
-	else
+	} else {
+		codec->set_bias_level = uda134x_set_bias_level;
 		uda134x_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+	}
+
+	/* register pcms */
+	ret = snd_soc_new_pcms(socdev, SNDRV_DEFAULT_IDX1, SNDRV_DEFAULT_STR1);
+	if (ret < 0) {
+		printk(KERN_ERR "UDA134X: failed to register pcms\n");
+		goto pcm_err;
+	}
 
 	switch (pd->model) {
 	case UDA134X_UDA1340:
@@ -545,42 +590,61 @@ static int uda134x_soc_probe(struct snd_soc_codec *codec)
 	default:
 		printk(KERN_ERR "%s unknown codec type: %d",
 			__func__, pd->model);
-		kfree(uda134x);
-		return -EINVAL;
+	return -EINVAL;
 	}
 
 	if (ret < 0) {
 		printk(KERN_ERR "UDA134X: failed to register controls\n");
-		kfree(uda134x);
-		return ret;
+		goto pcm_err;
 	}
 
 	return 0;
+
+pcm_err:
+	kfree(codec->reg_cache);
+reg_err:
+	kfree(snd_soc_codec_get_drvdata(codec));
+priv_err:
+	kfree(codec);
+	return ret;
 }
 
 /* power down chip */
-static int uda134x_soc_remove(struct snd_soc_codec *codec)
+static int uda134x_soc_remove(struct platform_device *pdev)
 {
-	struct uda134x_priv *uda134x = snd_soc_codec_get_drvdata(codec);
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
 
 	uda134x_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
 	uda134x_set_bias_level(codec, SND_SOC_BIAS_OFF);
 
-	kfree(uda134x);
+	snd_soc_free_pcms(socdev);
+	snd_soc_dapm_free(socdev);
+
+	kfree(snd_soc_codec_get_drvdata(codec));
+	kfree(codec->reg_cache);
+	kfree(codec);
+
 	return 0;
 }
 
 #if defined(CONFIG_PM)
-static int uda134x_soc_suspend(struct snd_soc_codec *codec,
+static int uda134x_soc_suspend(struct platform_device *pdev,
 						pm_message_t state)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+
 	uda134x_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
 	uda134x_set_bias_level(codec, SND_SOC_BIAS_OFF);
 	return 0;
 }
 
-static int uda134x_soc_resume(struct snd_soc_codec *codec)
+static int uda134x_soc_resume(struct platform_device *pdev)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+
 	uda134x_set_bias_level(codec, SND_SOC_BIAS_PREPARE);
 	uda134x_set_bias_level(codec, SND_SOC_BIAS_ON);
 	return 0;
@@ -590,52 +654,25 @@ static int uda134x_soc_resume(struct snd_soc_codec *codec)
 #define uda134x_soc_resume NULL
 #endif /* CONFIG_PM */
 
-static struct snd_soc_codec_driver soc_codec_dev_uda134x = {
+struct snd_soc_codec_device soc_codec_dev_uda134x = {
 	.probe =        uda134x_soc_probe,
 	.remove =       uda134x_soc_remove,
 	.suspend =      uda134x_soc_suspend,
 	.resume =       uda134x_soc_resume,
-	.reg_cache_size = sizeof(uda134x_reg),
-	.reg_word_size = sizeof(u8),
-	.reg_cache_default = uda134x_reg,
-	.reg_cache_step = 1,
-	.read = uda134x_read_reg_cache,
-	.write = uda134x_write,
-	.set_bias_level = uda134x_set_bias_level,
 };
+EXPORT_SYMBOL_GPL(soc_codec_dev_uda134x);
 
-static int __devinit uda134x_codec_probe(struct platform_device *pdev)
+static int __init uda134x_init(void)
 {
-	return snd_soc_register_codec(&pdev->dev,
-			&soc_codec_dev_uda134x, &uda134x_dai, 1);
+	return snd_soc_register_dai(&uda134x_dai);
 }
+module_init(uda134x_init);
 
-static int __devexit uda134x_codec_remove(struct platform_device *pdev)
+static void __exit uda134x_exit(void)
 {
-	snd_soc_unregister_codec(&pdev->dev);
-	return 0;
+	snd_soc_unregister_dai(&uda134x_dai);
 }
-
-static struct platform_driver uda134x_codec_driver = {
-	.driver = {
-		.name = "uda134x-codec",
-		.owner = THIS_MODULE,
-	},
-	.probe = uda134x_codec_probe,
-	.remove = __devexit_p(uda134x_codec_remove),
-};
-
-static int __init uda134x_codec_init(void)
-{
-	return platform_driver_register(&uda134x_codec_driver);
-}
-module_init(uda134x_codec_init);
-
-static void __exit uda134x_codec_exit(void)
-{
-	platform_driver_unregister(&uda134x_codec_driver);
-}
-module_exit(uda134x_codec_exit);
+module_exit(uda134x_exit);
 
 MODULE_DESCRIPTION("UDA134X ALSA soc codec driver");
 MODULE_AUTHOR("Zoltan Devai, Christian Pellegrin <chripell@evolware.org>");

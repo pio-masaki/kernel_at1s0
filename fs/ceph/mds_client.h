@@ -8,9 +8,9 @@
 #include <linux/rbtree.h>
 #include <linux/spinlock.h>
 
-#include <linux/ceph/types.h>
-#include <linux/ceph/messenger.h>
-#include <linux/ceph/mdsmap.h>
+#include "types.h"
+#include "messenger.h"
+#include "mdsmap.h"
 
 /*
  * Some lock dependencies:
@@ -26,7 +26,7 @@
  *
  */
 
-struct ceph_fs_client;
+struct ceph_client;
 struct ceph_cap;
 
 /*
@@ -35,7 +35,6 @@ struct ceph_cap;
  */
 struct ceph_mds_reply_info_in {
 	struct ceph_mds_reply_inode *in;
-	struct ceph_dir_layout dir_layout;
 	u32 symlink_len;
 	char *symlink;
 	u32 xattr_len;
@@ -43,37 +42,26 @@ struct ceph_mds_reply_info_in {
 };
 
 /*
- * parsed info about an mds reply, including information about
- * either: 1) the target inode and/or its parent directory and dentry,
- * and directory contents (for readdir results), or
- * 2) the file range lock info (for fcntl F_GETLK results).
+ * parsed info about an mds reply, including information about the
+ * target inode and/or its parent directory and dentry, and directory
+ * contents (for readdir results).
  */
 struct ceph_mds_reply_info_parsed {
 	struct ceph_mds_reply_head    *head;
 
-	/* trace */
 	struct ceph_mds_reply_info_in diri, targeti;
 	struct ceph_mds_reply_dirfrag *dirfrag;
 	char                          *dname;
 	u32                           dname_len;
 	struct ceph_mds_reply_lease   *dlease;
 
-	/* extra */
-	union {
-		/* for fcntl F_GETLK results */
-		struct ceph_filelock *filelock_reply;
-
-		/* for readdir results */
-		struct {
-			struct ceph_mds_reply_dirfrag *dir_dir;
-			int                           dir_nr;
-			char                          **dir_dname;
-			u32                           *dir_dname_len;
-			struct ceph_mds_reply_lease   **dir_dlease;
-			struct ceph_mds_reply_info_in *dir_in;
-			u8                            dir_complete, dir_end;
-		};
-	};
+	struct ceph_mds_reply_dirfrag *dir_dir;
+	int                           dir_nr;
+	char                          **dir_dname;
+	u32                           *dir_dname_len;
+	struct ceph_mds_reply_lease   **dir_dlease;
+	struct ceph_mds_reply_info_in *dir_in;
+	u8                            dir_complete, dir_end;
 
 	/* encoded blob describing snapshot contexts for certain
 	   operations (e.g., open) */
@@ -166,6 +154,7 @@ struct ceph_mds_request {
 	struct ceph_mds_client *r_mdsc;
 
 	int r_op;                    /* mds op code */
+	int r_mds;
 
 	/* operation on what? */
 	struct inode *r_inode;              /* arg1 */
@@ -181,8 +170,6 @@ struct ceph_mds_request {
 
 	union ceph_mds_request_args r_args;
 	int r_fmode;        /* file mode, if expecting cap */
-	uid_t r_uid;
-	gid_t r_gid;
 
 	/* for choosing which mds to send this request to */
 	int r_direct_mode;
@@ -243,7 +230,7 @@ struct ceph_mds_request {
  * mds client state
  */
 struct ceph_mds_client {
-	struct ceph_fs_client  *fsc;
+	struct ceph_client      *client;
 	struct mutex            mutex;         /* all nested structures */
 
 	struct ceph_mdsmap      *mdsmap;
@@ -302,6 +289,11 @@ struct ceph_mds_client {
 	int		caps_avail_count;    /* unused, unreserved */
 	int		caps_min_count;      /* keep at least this many
 						(unreserved) */
+
+#ifdef CONFIG_DEBUG_FS
+	struct dentry 	  *debugfs_file;
+#endif
+
 	spinlock_t	  dentry_lru_lock;
 	struct list_head  dentry_lru;
 	int		  num_dentry;
@@ -324,9 +316,10 @@ extern void ceph_put_mds_session(struct ceph_mds_session *s);
 extern int ceph_send_msg_mds(struct ceph_mds_client *mdsc,
 			     struct ceph_msg *msg, int mds);
 
-extern int ceph_mdsc_init(struct ceph_fs_client *fsc);
+extern int ceph_mdsc_init(struct ceph_mds_client *mdsc,
+			   struct ceph_client *client);
 extern void ceph_mdsc_close_sessions(struct ceph_mds_client *mdsc);
-extern void ceph_mdsc_destroy(struct ceph_fs_client *fsc);
+extern void ceph_mdsc_stop(struct ceph_mds_client *mdsc);
 
 extern void ceph_mdsc_sync(struct ceph_mds_client *mdsc);
 

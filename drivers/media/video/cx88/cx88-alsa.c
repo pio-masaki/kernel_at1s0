@@ -40,7 +40,6 @@
 #include <sound/control.h>
 #include <sound/initval.h>
 #include <sound/tlv.h>
-#include <media/wm8775.h>
 
 #include "cx88.h"
 #include "cx88-reg.h"
@@ -95,7 +94,7 @@ typedef struct cx88_audio_dev snd_cx88_card_t;
  ****************************************************************************/
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
-static const char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
+static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
 static int enable[SNDRV_CARDS] = {1, [1 ... (SNDRV_CARDS - 1)] = 1};
 
 module_param_array(enable, bool, NULL, 0444);
@@ -132,7 +131,7 @@ static int _cx88_start_audio_dma(snd_cx88_card_t *chip)
 {
 	struct cx88_audio_buffer *buf = chip->buf;
 	struct cx88_core *core=chip->core;
-	const struct sram_channel *audio_ch = &cx88_sram_channels[SRAM_CH25];
+	struct sram_channel *audio_ch = &cx88_sram_channels[SRAM_CH25];
 
 	/* Make sure RISC/FIFO are off before changing FIFO/RISC settings */
 	cx_clear(MO_AUD_DMACNTRL, 0x11);
@@ -198,7 +197,7 @@ static int _cx88_stop_audio_dma(snd_cx88_card_t *chip)
 /*
  * BOARD Specific: IRQ dma bits
  */
-static const char *cx88_aud_irqs[32] = {
+static char *cx88_aud_irqs[32] = {
 	"dn_risci1", "up_risci1", "rds_dn_risc1", /* 0-2 */
 	NULL,					  /* reserved */
 	"dn_risci2", "up_risci2", "rds_dn_risc2", /* 4-6 */
@@ -309,7 +308,7 @@ static int dsp_buffer_free(snd_cx88_card_t *chip)
  * Digital hardware definition
  */
 #define DEFAULT_FIFO_SIZE	4096
-static const struct snd_pcm_hardware snd_cx88_digital_hw = {
+static struct snd_pcm_hardware snd_cx88_digital_hw = {
 	.info = SNDRV_PCM_INFO_MMAP |
 		SNDRV_PCM_INFO_INTERLEAVED |
 		SNDRV_PCM_INFO_BLOCK_TRANSFER |
@@ -534,7 +533,7 @@ static struct snd_pcm_ops snd_cx88_pcm_ops = {
 /*
  * create a PCM device
  */
-static int __devinit snd_cx88_pcm(snd_cx88_card_t *chip, int device, const char *name)
+static int __devinit snd_cx88_pcm(snd_cx88_card_t *chip, int device, char *name)
 {
 	int err;
 	struct snd_pcm *pcm;
@@ -578,35 +577,6 @@ static int snd_cx88_volume_get(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
-static void snd_cx88_wm8775_volume_put(struct snd_kcontrol *kcontrol,
-			       struct snd_ctl_elem_value *value)
-{
-	snd_cx88_card_t *chip = snd_kcontrol_chip(kcontrol);
-	struct cx88_core *core = chip->core;
-	struct v4l2_control client_ctl;
-	int left = value->value.integer.value[0];
-	int right = value->value.integer.value[1];
-	int v, b;
-
-	memset(&client_ctl, 0, sizeof(client_ctl));
-
-	/* Pass volume & balance onto any WM8775 */
-	if (left >= right) {
-		v = left << 10;
-		b = left ? (0x8000 * right) / left : 0x8000;
-	} else {
-		v = right << 10;
-		b = right ? 0xffff - (0x8000 * left) / right : 0x8000;
-	}
-	client_ctl.value = v;
-	client_ctl.id = V4L2_CID_AUDIO_VOLUME;
-	call_hw(core, WM8775_GID, core, s_ctrl, &client_ctl);
-
-	client_ctl.value = b;
-	client_ctl.id = V4L2_CID_AUDIO_BALANCE;
-	call_hw(core, WM8775_GID, core, s_ctrl, &client_ctl);
-}
-
 /* OK - TODO: test it */
 static int snd_cx88_volume_put(struct snd_kcontrol *kcontrol,
 			       struct snd_ctl_elem_value *value)
@@ -617,28 +587,25 @@ static int snd_cx88_volume_put(struct snd_kcontrol *kcontrol,
 	int changed = 0;
 	u32 old;
 
-	if (core->board.audio_chip == V4L2_IDENT_WM8775)
-		snd_cx88_wm8775_volume_put(kcontrol, value);
-
 	left = value->value.integer.value[0] & 0x3f;
 	right = value->value.integer.value[1] & 0x3f;
 	b = right - left;
 	if (b < 0) {
-		v = 0x3f - left;
-		b = (-b) | 0x40;
+	    v = 0x3f - left;
+	    b = (-b) | 0x40;
 	} else {
-		v = 0x3f - right;
+	    v = 0x3f - right;
 	}
 	/* Do we really know this will always be called with IRQs on? */
 	spin_lock_irq(&chip->reg_lock);
 	old = cx_read(AUD_VOL_CTL);
 	if (v != (old & 0x3f)) {
-		cx_swrite(SHADOW_AUD_VOL_CTL, AUD_VOL_CTL, (old & ~0x3f) | v);
-		changed = 1;
+	    cx_write(AUD_VOL_CTL, (old & ~0x3f) | v);
+	    changed = 1;
 	}
-	if ((cx_read(AUD_BAL_CTL) & 0x7f) != b) {
-		cx_write(AUD_BAL_CTL, b);
-		changed = 1;
+	if (cx_read(AUD_BAL_CTL) != b) {
+	    cx_write(AUD_BAL_CTL, b);
+	    changed = 1;
 	}
 	spin_unlock_irq(&chip->reg_lock);
 
@@ -647,11 +614,11 @@ static int snd_cx88_volume_put(struct snd_kcontrol *kcontrol,
 
 static const DECLARE_TLV_DB_SCALE(snd_cx88_db_scale, -6300, 100, 0);
 
-static const struct snd_kcontrol_new snd_cx88_volume = {
+static struct snd_kcontrol_new snd_cx88_volume = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.access = SNDRV_CTL_ELEM_ACCESS_READWRITE |
 		  SNDRV_CTL_ELEM_ACCESS_TLV_READ,
-	.name = "Analog-TV Volume",
+	.name = "Playback Volume",
 	.info = snd_cx88_volume_info,
 	.get = snd_cx88_volume_get,
 	.put = snd_cx88_volume_put,
@@ -682,77 +649,29 @@ static int snd_cx88_switch_put(struct snd_kcontrol *kcontrol,
 	vol = cx_read(AUD_VOL_CTL);
 	if (value->value.integer.value[0] != !(vol & bit)) {
 		vol ^= bit;
-		cx_swrite(SHADOW_AUD_VOL_CTL, AUD_VOL_CTL, vol);
-		/* Pass mute onto any WM8775 */
-		if ((core->board.audio_chip == V4L2_IDENT_WM8775) &&
-		    ((1<<6) == bit)) {
-			struct v4l2_control client_ctl;
-
-			memset(&client_ctl, 0, sizeof(client_ctl));
-			client_ctl.value = 0 != (vol & bit);
-			client_ctl.id = V4L2_CID_AUDIO_MUTE;
-			call_hw(core, WM8775_GID, core, s_ctrl, &client_ctl);
-		}
+		cx_write(AUD_VOL_CTL, vol);
 		ret = 1;
 	}
 	spin_unlock_irq(&chip->reg_lock);
 	return ret;
 }
 
-static const struct snd_kcontrol_new snd_cx88_dac_switch = {
+static struct snd_kcontrol_new snd_cx88_dac_switch = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-	.name = "Audio-Out Switch",
+	.name = "Playback Switch",
 	.info = snd_ctl_boolean_mono_info,
 	.get = snd_cx88_switch_get,
 	.put = snd_cx88_switch_put,
 	.private_value = (1<<8),
 };
 
-static const struct snd_kcontrol_new snd_cx88_source_switch = {
+static struct snd_kcontrol_new snd_cx88_source_switch = {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-	.name = "Analog-TV Switch",
+	.name = "Capture Switch",
 	.info = snd_ctl_boolean_mono_info,
 	.get = snd_cx88_switch_get,
 	.put = snd_cx88_switch_put,
 	.private_value = (1<<6),
-};
-
-static int snd_cx88_alc_get(struct snd_kcontrol *kcontrol,
-			       struct snd_ctl_elem_value *value)
-{
-	snd_cx88_card_t *chip = snd_kcontrol_chip(kcontrol);
-	struct cx88_core *core = chip->core;
-	struct v4l2_control client_ctl;
-
-	memset(&client_ctl, 0, sizeof(client_ctl));
-	client_ctl.id = V4L2_CID_AUDIO_LOUDNESS;
-	call_hw(core, WM8775_GID, core, g_ctrl, &client_ctl);
-	value->value.integer.value[0] = client_ctl.value ? 1 : 0;
-
-	return 0;
-}
-
-static int snd_cx88_alc_put(struct snd_kcontrol *kcontrol,
-				       struct snd_ctl_elem_value *value)
-{
-	snd_cx88_card_t *chip = snd_kcontrol_chip(kcontrol);
-	struct cx88_core *core = chip->core;
-	struct v4l2_control client_ctl;
-
-	memset(&client_ctl, 0, sizeof(client_ctl));
-	client_ctl.value = 0 != value->value.integer.value[0];
-	client_ctl.id = V4L2_CID_AUDIO_LOUDNESS;
-	call_hw(core, WM8775_GID, core, s_ctrl, &client_ctl);
-
-	return 0;
-}
-
-static struct snd_kcontrol_new snd_cx88_alc_switch = {
-	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-	.name = "Line-In ALC Switch",
-	.info = snd_ctl_boolean_mono_info,
-	.get = snd_cx88_alc_get,
-	.put = snd_cx88_alc_put,
 };
 
 /****************************************************************************
@@ -764,7 +683,7 @@ static struct snd_kcontrol_new snd_cx88_alc_switch = {
  * Only boards with eeprom and byte 1 at eeprom=1 have it
  */
 
-static const struct pci_device_id const cx88_audio_pci_tbl[] __devinitdata = {
+static struct pci_device_id cx88_audio_pci_tbl[] __devinitdata = {
 	{0x14f1,0x8801,PCI_ANY_ID,PCI_ANY_ID,0,0,0},
 	{0x14f1,0x8811,PCI_ANY_ID,PCI_ANY_ID,0,0,0},
 	{0, }
@@ -805,8 +724,7 @@ static void snd_cx88_dev_free(struct snd_card * card)
 static int devno;
 static int __devinit snd_cx88_create(struct snd_card *card,
 				     struct pci_dev *pci,
-				     snd_cx88_card_t **rchip,
-				     struct cx88_core **core_ptr)
+				     snd_cx88_card_t **rchip)
 {
 	snd_cx88_card_t   *chip;
 	struct cx88_core  *core;
@@ -832,7 +750,7 @@ static int __devinit snd_cx88_create(struct snd_card *card,
 	if (!pci_dma_supported(pci,DMA_BIT_MASK(32))) {
 		dprintk(0, "%s/1: Oops: no 32bit PCI DMA ???\n",core->name);
 		err = -EIO;
-		cx88_core_put(core, pci);
+		cx88_core_put(core,pci);
 		return err;
 	}
 
@@ -868,7 +786,6 @@ static int __devinit snd_cx88_create(struct snd_card *card,
 	snd_card_set_dev(card, &pci->dev);
 
 	*rchip = chip;
-	*core_ptr = core;
 
 	return 0;
 }
@@ -878,7 +795,6 @@ static int __devinit cx88_audio_initdev(struct pci_dev *pci,
 {
 	struct snd_card  *card;
 	snd_cx88_card_t  *chip;
-	struct cx88_core *core = NULL;
 	int              err;
 
 	if (devno >= SNDRV_CARDS)
@@ -896,7 +812,7 @@ static int __devinit cx88_audio_initdev(struct pci_dev *pci,
 
 	card->private_free = snd_cx88_dev_free;
 
-	err = snd_cx88_create(card, pci, &chip, &core);
+	err = snd_cx88_create(card, pci, &chip);
 	if (err < 0)
 		goto error;
 
@@ -913,10 +829,6 @@ static int __devinit cx88_audio_initdev(struct pci_dev *pci,
 	err = snd_ctl_add(card, snd_ctl_new1(&snd_cx88_source_switch, chip));
 	if (err < 0)
 		goto error;
-
-	/* If there's a wm8775 then add a Line-In ALC switch */
-	if (core->board.audio_chip == V4L2_IDENT_WM8775)
-		snd_ctl_add(card, snd_ctl_new1(&snd_cx88_alc_switch, chip));
 
 	strcpy (card->driver, "CX88x");
 	sprintf(card->shortname, "Conexant CX%x", pci->device);

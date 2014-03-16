@@ -5,6 +5,7 @@
 #include <linux/stddef.h>
 #include <linux/poison.h>
 #include <linux/prefetch.h>
+#include <asm/system.h>
 
 /*
  * Simple doubly linked list implementation.
@@ -96,11 +97,6 @@ static inline void __list_del(struct list_head * prev, struct list_head * next)
  * in an undefined state.
  */
 #ifndef CONFIG_DEBUG_LIST
-static inline void __list_del_entry(struct list_head *entry)
-{
-	__list_del(entry->prev, entry->next);
-}
-
 static inline void list_del(struct list_head *entry)
 {
 	__list_del(entry->prev, entry->next);
@@ -108,7 +104,6 @@ static inline void list_del(struct list_head *entry)
 	entry->prev = LIST_POISON2;
 }
 #else
-extern void __list_del_entry(struct list_head *entry);
 extern void list_del(struct list_head *entry);
 #endif
 
@@ -141,7 +136,7 @@ static inline void list_replace_init(struct list_head *old,
  */
 static inline void list_del_init(struct list_head *entry)
 {
-	__list_del_entry(entry);
+	__list_del(entry->prev, entry->next);
 	INIT_LIST_HEAD(entry);
 }
 
@@ -152,7 +147,7 @@ static inline void list_del_init(struct list_head *entry)
  */
 static inline void list_move(struct list_head *list, struct list_head *head)
 {
-	__list_del_entry(list);
+	__list_del(list->prev, list->next);
 	list_add(list, head);
 }
 
@@ -164,7 +159,7 @@ static inline void list_move(struct list_head *list, struct list_head *head)
 static inline void list_move_tail(struct list_head *list,
 				  struct list_head *head)
 {
-	__list_del_entry(list);
+	__list_del(list->prev, list->next);
 	list_add_tail(list, head);
 }
 
@@ -640,12 +635,6 @@ static inline void hlist_add_after(struct hlist_node *n,
 
 	if(next->next)
 		next->next->pprev  = &next->next;
-}
-
-/* after that we'll appear to be on some hlist and hlist_del will work */
-static inline void hlist_add_fake(struct hlist_node *n)
-{
-	n->pprev = &n->next;
 }
 
 /*

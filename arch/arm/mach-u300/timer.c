@@ -9,7 +9,6 @@
  * Author: Linus Walleij <linus.walleij@stericsson.com>
  */
 #include <linux/interrupt.h>
-#include <linux/sched.h>
 #include <linux/time.h>
 #include <linux/timex.h>
 #include <linux/clockchips.h>
@@ -22,7 +21,6 @@
 #include <mach/hardware.h>
 
 /* Generic stuff */
-#include <asm/sched_clock.h>
 #include <asm/mach/map.h>
 #include <asm/mach/time.h>
 #include <asm/mach/irq.h>
@@ -354,18 +352,12 @@ static struct clocksource clocksource_u300_1mhz = {
  * this wraps around for now, since it is just a relative time
  * stamp. (Inspired by OMAP implementation.)
  */
-static DEFINE_CLOCK_DATA(cd);
-
 unsigned long long notrace sched_clock(void)
 {
-	u32 cyc = readl(U300_TIMER_APP_VBASE + U300_TIMER_APP_GPT2CC);
-	return cyc_to_sched_clock(&cd, cyc, (u32)~0);
-}
-
-static void notrace u300_update_sched_clock(void)
-{
-	u32 cyc = readl(U300_TIMER_APP_VBASE + U300_TIMER_APP_GPT2CC);
-	update_sched_clock(&cd, cyc, (u32)~0);
+	return clocksource_cyc2ns(clocksource_u300_1mhz.read(
+				  &clocksource_u300_1mhz),
+				  clocksource_u300_1mhz.mult,
+				  clocksource_u300_1mhz.shift);
 }
 
 
@@ -382,8 +374,6 @@ static void __init u300_timer_init(void)
 	BUG_ON(IS_ERR(clk));
 	clk_enable(clk);
 	rate = clk_get_rate(clk);
-
-	init_sched_clock(&cd, u300_update_sched_clock, 32, rate);
 
 	/*
 	 * Disable the "OS" and "DD" timers - these are designed for Symbian!
@@ -422,7 +412,9 @@ static void __init u300_timer_init(void)
 	writel(U300_TIMER_APP_EGPT2_TIMER_ENABLE,
 		U300_TIMER_APP_VBASE + U300_TIMER_APP_EGPT2);
 
-	if (clocksource_register_hz(&clocksource_u300_1mhz, rate))
+	clocksource_calc_mult_shift(&clocksource_u300_1mhz,
+				    rate, APPTIMER_MIN_RANGE);
+	if (clocksource_register(&clocksource_u300_1mhz))
 		printk(KERN_ERR "timer: failed to initialize clock "
 		       "source %s\n", clocksource_u300_1mhz.name);
 

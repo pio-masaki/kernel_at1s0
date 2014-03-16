@@ -26,19 +26,6 @@
 #include "edid.h"
 
 
-static const u32 tegra_dc_rgb_enable_partial_pintable[] = {
-	DC_COM_PIN_OUTPUT_ENABLE0,	0x00000000,
-	DC_COM_PIN_OUTPUT_ENABLE1,	0x00000000,
-	DC_COM_PIN_OUTPUT_ENABLE2,	0x00000000,
-	DC_COM_PIN_OUTPUT_ENABLE3,	0x00000000,
-	DC_COM_PIN_OUTPUT_POLARITY0,	0x00000000,
-	DC_COM_PIN_OUTPUT_POLARITY2,	0x00000000,
-	DC_COM_PIN_OUTPUT_DATA0,	0x00000000,
-	DC_COM_PIN_OUTPUT_DATA1,	0x00000000,
-	DC_COM_PIN_OUTPUT_DATA2,	0x00000000,
-	DC_COM_PIN_OUTPUT_DATA3,	0x00000000,
-};
-
 static const u32 tegra_dc_rgb_enable_pintable[] = {
 	DC_COM_PIN_OUTPUT_ENABLE0,	0x00000000,
 	DC_COM_PIN_OUTPUT_ENABLE1,	0x00000000,
@@ -58,14 +45,7 @@ static const u32 tegra_dc_rgb_enable_out_sel_pintable[] = {
 	DC_COM_PIN_OUTPUT_SELECT0,	0x00000000,
 	DC_COM_PIN_OUTPUT_SELECT1,	0x00000000,
 	DC_COM_PIN_OUTPUT_SELECT2,	0x00000000,
-#ifdef CONFIG_TEGRA_SILICON_PLATFORM
 	DC_COM_PIN_OUTPUT_SELECT3,	0x00000000,
-#else
-	/* The display panel sub-board used on FPGA platforms (panel 86)
-	   is non-standard. It expects the Data Enable signal on the WR
-	   pin instead of the DE pin. */
-	DC_COM_PIN_OUTPUT_SELECT3,	0x00200000,
-#endif
 	DC_COM_PIN_OUTPUT_SELECT4,	0x00210222,
 	DC_COM_PIN_OUTPUT_SELECT5,	0x00002200,
 	DC_COM_PIN_OUTPUT_SELECT6,	0x00020000,
@@ -130,15 +110,11 @@ static int tegra_dc_rgb_init(struct tegra_dc *dc)
 		dc->pdata->fb->xres = specs.modedb->xres;
 		dc->pdata->fb->yres = specs.modedb->yres;
 	}
-	
-	fb_destroy_modedb(specs.modedb);
-
 	dc->out->width = specs.max_x * 10;
 	dc->out->height = specs.max_y * 10;
 
 	return 0;
 }
-
 void tegra_dc_rgb_enable(struct tegra_dc *dc)
 {
 	int i;
@@ -150,13 +126,7 @@ void tegra_dc_rgb_enable(struct tegra_dc *dc)
 
 	tegra_dc_writel(dc, DISP_CTRL_MODE_C_DISPLAY, DC_CMD_DISPLAY_COMMAND);
 
-	if (dc->out->out_pins) {
-		tegra_dc_set_out_pin_polars(dc, dc->out->out_pins,
-			dc->out->n_out_pins);
-		tegra_dc_write_table(dc, tegra_dc_rgb_enable_partial_pintable);
-	} else {
-		tegra_dc_write_table(dc, tegra_dc_rgb_enable_pintable);
-	}
+	tegra_dc_write_table(dc, tegra_dc_rgb_enable_pintable);
 
 	memcpy(out_sel_pintable, tegra_dc_rgb_enable_out_sel_pintable,
 		sizeof(tegra_dc_rgb_enable_out_sel_pintable));

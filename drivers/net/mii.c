@@ -49,10 +49,6 @@ static u32 mii_get_an(struct mii_if_info *mii, u16 addr)
 		result |= ADVERTISED_100baseT_Half;
 	if (advert & ADVERTISE_100FULL)
 		result |= ADVERTISED_100baseT_Full;
-	if (advert & ADVERTISE_PAUSE_CAP)
-		result |= ADVERTISED_Pause;
-	if (advert & ADVERTISE_PAUSE_ASYM)
-		result |= ADVERTISED_Asym_Pause;
 
 	return result;
 }
@@ -358,7 +354,7 @@ unsigned int mii_check_media (struct mii_if_info *mii,
 	if (!new_carrier) {
 		netif_carrier_off(mii->dev);
 		if (ok_to_print)
-			netdev_info(mii->dev, "link down\n");
+			printk(KERN_INFO "%s: link down\n", mii->dev->name);
 		return 0; /* duplex did not change */
 	}
 
@@ -385,12 +381,12 @@ unsigned int mii_check_media (struct mii_if_info *mii,
 		duplex = 1;
 
 	if (ok_to_print)
-		netdev_info(mii->dev, "link up, %uMbps, %s-duplex, lpa 0x%04X\n",
-			    lpa2 & (LPA_1000FULL | LPA_1000HALF) ? 1000 :
-			    media & (ADVERTISE_100FULL | ADVERTISE_100HALF) ?
-			    100 : 10,
-			    duplex ? "full" : "half",
-			    lpa);
+		printk(KERN_INFO "%s: link up, %sMbps, %s-duplex, lpa 0x%04X\n",
+		       mii->dev->name,
+		       lpa2 & (LPA_1000FULL | LPA_1000HALF) ? "1000" :
+		       media & (ADVERTISE_100FULL | ADVERTISE_100HALF) ? "100" : "10",
+		       duplex ? "full" : "half",
+		       lpa);
 
 	if ((init_media) || (mii->full_duplex != duplex)) {
 		mii->full_duplex = duplex;

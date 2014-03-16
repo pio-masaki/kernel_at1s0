@@ -21,7 +21,6 @@
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-device.h>
 #include <linux/platform_device.h>
-#include <linux/mfd/core.h>
 #include <linux/interrupt.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
@@ -35,7 +34,6 @@ struct timbradio {
 	struct v4l2_subdev	*sd_dsp;
 	struct video_device	video_dev;
 	struct v4l2_device	v4l2_dev;
-	struct mutex		lock;
 };
 
 
@@ -144,12 +142,12 @@ static const struct v4l2_ioctl_ops timbradio_ioctl_ops = {
 
 static const struct v4l2_file_operations timbradio_fops = {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= video_ioctl2,
+	.ioctl		= video_ioctl2,
 };
 
 static int __devinit timbradio_probe(struct platform_device *pdev)
 {
-	struct timb_radio_platform_data *pdata = mfd_get_data(pdev);
+	struct timb_radio_platform_data *pdata = pdev->dev.platform_data;
 	struct timbradio *tr;
 	int err;
 
@@ -166,7 +164,6 @@ static int __devinit timbradio_probe(struct platform_device *pdev)
 	}
 
 	tr->pdata = *pdata;
-	mutex_init(&tr->lock);
 
 	strlcpy(tr->video_dev.name, "Timberdale Radio",
 		sizeof(tr->video_dev.name));
@@ -174,7 +171,6 @@ static int __devinit timbradio_probe(struct platform_device *pdev)
 	tr->video_dev.ioctl_ops = &timbradio_ioctl_ops;
 	tr->video_dev.release = video_device_release_empty;
 	tr->video_dev.minor = -1;
-	tr->video_dev.lock = &tr->lock;
 
 	strlcpy(tr->v4l2_dev.name, DRIVER_NAME, sizeof(tr->v4l2_dev.name));
 	err = v4l2_device_register(NULL, &tr->v4l2_dev);
